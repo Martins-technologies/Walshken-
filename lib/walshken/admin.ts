@@ -6,6 +6,7 @@ import {
   fail, id, integer, json, now, one, pick, requireSuper, run, scopedEmployee, stmt, str, timeZone, type Actor, type Db,
 } from "./server";
 
+const employmentStatuses = ["Active", "On leave", "Ended"] as const;
 const types = ["Full-time", "Part-time", "Fixed-term", "Contractor"] as const;
 
 export async function adminAction(db: Db, actor: Actor, area: string, action: string, data: Record<string, unknown>) {
@@ -24,7 +25,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       }
       if (manager) {
         const supervisor = await scopedEmployee(db, actor, manager);
-        if (!canManage(supervisor) || supervisor.status !== "Active") fail(400, "Choose an active manager.");
+        if (!canManage(supervisor) || supervisor.status !== "Active" || supervisor.employment_status === "Ended") fail(400, "Choose an active manager.");
       }
       const code = randomBytes(27).toString("base64url");
       await db.batch([
@@ -36,18 +37,78 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
           division || null, office || null, manager || null, country(data.country), str(data.jurisdiction,"jurisdiction",30),
           timeZone(data.timeZone), pick(data.employmentType || "Full-time",types,"employment type"),
           date(data.hireDate,"hire date",false), date(data.contractStart,"contract start date",false), str(data.phone,"phone number",40,false) || null,
-          integer(data.expectedHours || "40","expected weekly hours",0,80), pick(data.breakPolicy || "unpaid",["paid","unpaid"],"break policy"),
-          data.leaveDays ? integer(data.leaveDays,"leave days",0,365) : null),
+          integer(data.expectedHours === "" || data.expectedHours == null ? "40" : data.expectedHours,"expected weekly hours",0,80), pick(data.breakPolicy || "unpaid",["paid","unpaid"],"break policy"),
+          data.leaveDays !== "" && data.leaveDays != null ? integer(data.leaveDays,"leave days",0,365) : null),
         stmt(db, "INSERT INTO invitations (id,employee_id,code_hash,expires_at) VALUES (?,?,?,?)", id(), target, await digest(code), new Date(Date.now() + 48 * 3_600_000).toISOString()),
         audit(db, actor, "Employee created", "employee", target),
       ]);
       return json({ ok: true, code, message: "Employee created. The activation code expires in 48 hours." }, 201);
     }
     const target = str(data.id, "employee", 80);
-    const employee = await scopedEmployee(db, actor, target, false);
-    if (employee.role === "super_admin") return fail(403, "This administrator is protected.");
+    const editingOwnAdmin = action==="edit" && target===actor.id && canSuper(actor);
+    const employee = await scopedEmployee(db, actor, target, editingOwnAdmin);
+    if (employee.role === "super_admin" && !editingOwnAdmin) return fail(403, "This administrator is protected.");
+    if (action === "edit") {
+      requireSuper(actor);
+      const employeeNo = data.employeeNo === undefined ? employee.employee_no : str(data.employeeNo,"employee ID",40);
+      const workEmail = data.email === undefined ? employee.email : email(data.email);
+      const department = str(data.department, "department", 80, false);
+      const division = str(data.division, "division", 80, false);
+      const office = str(data.office, "office", 80, false);
+      const manager = str(data.manager, "manager", 80, false);
+      const hire = date(data.hireDate, "hire date", false);
+      const contract = date(data.contractStart, "contract start date", false);
+      const end = date(data.employmentEnd, "employment end date", false);
+      const employmentStatus = pick(data.employmentStatus ?? employee.employment_status ?? "Active",employmentStatuses,"employment status");
+      if (employmentStatus==="Ended" && (editingOwnAdmin || !end)) {
+        fail(400,editingOwnAdmin?"The Super Admin record must remain active.":"Record the end date before ending employment.");
+      }
+      if (end && ((hire && end < hire) || (contract && end < contract))) {
+        fail(400, "Employment end date must follow hire and contract start dates.");
+      }
+      await db.transaction(async (tx) => {
+        await one(tx, "SELECT id FROM organizations WHERE id=? FOR UPDATE", actor.org_id);
+        for (const [key, kind] of [[department, "Department"], [division, "Division"], [office, "Office"]]) {
+          if (key && !await one(tx, "SELECT id FROM units WHERE id=? AND org_id=? AND kind=?", key, actor.org_id, kind)) {
+            fail(400, `Choose a valid ${kind.toLowerCase()}.`);
+          }
+        }
+        if (manager) {
+          const supervisor = await scopedEmployee(tx, actor, manager);
+          if (supervisor.id === target || !canManage(supervisor) || supervisor.status !== "Active" || supervisor.employment_status === "Ended") fail(400, "Choose an active manager.");
+          const cycle = await one(tx, `WITH RECURSIVE chain(id,manager_id) AS (
+            SELECT id,manager_id FROM employees WHERE id=? AND org_id=?
+            UNION
+            SELECT e.id,e.manager_id FROM employees e JOIN chain c ON e.id=c.manager_id WHERE e.org_id=?
+          ) SELECT id FROM chain WHERE id=?`, manager, actor.org_id, actor.org_id, target);
+          if (cycle) fail(400, "This reporting manager would create a reporting loop.");
+        }
+        const current = await one<{email:string}>(tx,"SELECT email FROM employees WHERE id=? AND org_id=? FOR UPDATE",target,actor.org_id);
+        if (!current) return fail(404,"Employee record is unavailable.");
+        await run(tx, `UPDATE employees SET employee_no=?,email=?,name=?,title=?,department_id=?,division_id=?,office_id=?,manager_id=?,
+          country=?,jurisdiction=?,time_zone=?,employment_type=?,hire_date=?,contract_start=?,employment_end=?,
+          phone=?,expected_hours=?,break_policy=?,leave_days=?,work_schedule=?,holiday_calendar=?,holiday_days=?,employment_status=? WHERE id=? AND org_id=?`,
+          employeeNo, workEmail, str(data.name,"employee name",100), str(data.title,"job title",100,false), department || null, division || null,
+          office || null, manager || null, country(data.country), str(data.jurisdiction,"jurisdiction",30),
+          timeZone(data.timeZone), pick(data.employmentType,types,"employment type"), hire, contract, end,
+          str(data.phone,"phone number",40,false) || null, integer(data.expectedHours,"expected weekly hours",0,80),
+          pick(data.breakPolicy,["paid","unpaid"],"break policy"), data.leaveDays !== "" && data.leaveDays != null ? integer(data.leaveDays,"leave days",0,365) : null,
+          str(data.workSchedule,"work schedule",180,false) || null, str(data.holidayCalendar,"holiday calendar",100,false) || null,
+          data.holidayDays !== "" && data.holidayDays != null ? integer(data.holidayDays,"annual holiday entitlement",0,365) : null,
+          employmentStatus,target, actor.org_id);
+        if (employmentStatus==="Ended" || current.email!==workEmail) {
+          const at=now();
+          await run(tx,"UPDATE sessions SET ended_at=? WHERE employee_id=? AND ended_at IS NULL",at,target);
+          await run(tx,"UPDATE invitations SET consumed_at=? WHERE employee_id=? AND consumed_at IS NULL",at,target);
+        }
+        await audit(tx, actor, "Employee profile updated", "employee", target).run();
+        if (current.email!==workEmail) await audit(tx,actor,"Staff sign-in email updated","identity",target).run();
+      });
+      return json({ ok: true, message: "Employee profile updated." });
+    }
     if (action === "status") {
       const status = pick(data.status, ["Active","Suspended"], "account status");
+      if (status==="Active" && employee.employment_status==="Ended") return fail(409,"Update employment status before reactivating access.");
       await db.batch([
         stmt(db, "UPDATE employees SET status=? WHERE id=?", status, target),
         stmt(db, "UPDATE sessions SET ended_at=? WHERE employee_id=? AND ended_at IS NULL AND ?='Suspended'", now(), target, status),
@@ -63,7 +124,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     }
     if (action === "invite") {
       requireSuper(actor);
-      if (employee.status !== "Active") return fail(409, "Reactivate this employee first.");
+      if (employee.status !== "Active" || employee.employment_status==="Ended") return fail(409, "Reactivate this employee first.");
       const code = randomBytes(27).toString("base64url");
       await db.batch([
         stmt(db,"UPDATE invitations SET consumed_at=? WHERE employee_id=? AND consumed_at IS NULL",now(),target),

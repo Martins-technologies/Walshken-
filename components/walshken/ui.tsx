@@ -1,15 +1,7 @@
 "use client";
 
-import { createContext, useContext, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { Icon } from "./brand";
-
-export const PreviewContext = createContext<"admin"|"employee"|null>(null);
-export const usePreview = () => useContext(PreviewContext);
-export function useWorkspaceHref() {
-  const preview = usePreview();
-  return (path: string) => preview && path.startsWith("/staff")
-    ? path.replace(/^\/staff/, "/preview") + (preview==="employee"?"?role=employee":"") : path;
-}
 
 export type RecordRow = Record<string, string | number | null>;
 export type ResponseData = { ok?: boolean; message?: string; code?: string; error?: string; id?: string; url?: string };
@@ -69,11 +61,9 @@ export function FieldInput({field}:{field:Field}){
 export function ActionForm({path,fields,submit,refresh,extra={},file=false,onDone,reset=true}:{
   path:string;fields:Field[];submit:string;refresh?:()=>void;extra?:Record<string,unknown>;file?:boolean;onDone?:(data:ResponseData)=>void;reset?:boolean;
 }){
-  const preview=usePreview();
   const [busy,setBusy]=useState(false),[status,setStatus]=useState(""),[code,setCode]=useState(""),[error,setError]=useState(false);
   async function send(event:FormEvent<HTMLFormElement>){
     event.preventDefault();
-    if(preview) return;
     const form=event.currentTarget, formData=new FormData(form);
     setBusy(true);setStatus("");setCode("");setError(false);
     try{
@@ -88,7 +78,7 @@ export function ActionForm({path,fields,submit,refresh,extra={},file=false,onDon
   }
   return <form className="staff-form" method="post" onSubmit={send}>
     <div className="staff-fields">{fields.map((field)=><FieldInput key={field.name} field={field}/>)}</div>
-    <button className="btn btn-blue btn-small" disabled={busy||Boolean(preview)}>{busy?"Working…":submit}</button>
+    <button className="btn btn-blue btn-small" disabled={busy}>{busy?"Working…":submit}</button>
     {status&&<p className={error?"form-error":"form-success"} role="status">{status}</p>}
     {code&&<div className="access-code"><strong>One-time code</strong><code>{code}</code><small>Share privately with the employee. This code is shown once.</small></div>}
   </form>;
@@ -96,7 +86,6 @@ export function ActionForm({path,fields,submit,refresh,extra={},file=false,onDon
 export function Quick({path,data={},children,refresh,variant="outline",onDone}:{
   path:string;data?:Record<string,unknown>;children:ReactNode;refresh?:()=>void;variant?:string;onDone?:(data:ResponseData)=>void;
 }){
-  const preview=usePreview();
   const [error,setError]=useState(""),[busy,setBusy]=useState(false);
   async function click(){
     setBusy(true);setError("");
@@ -104,7 +93,7 @@ export function Quick({path,data={},children,refresh,variant="outline",onDone}:{
     catch(e){setError(e instanceof Error?e.message:"Please try again.");}
     finally{setBusy(false);}
   }
-  return <span className="quick-action"><button type="button" className={`btn btn-${variant} btn-small`} disabled={busy||Boolean(preview)} onClick={click}>{busy?"Working…":children}</button>
+  return <span className="quick-action"><button type="button" className={`btn btn-${variant} btn-small`} disabled={busy} onClick={click}>{busy?"Working…":children}</button>
     {error&&<small className="form-error" role="alert">{error}</small>}</span>;
 }
 export function Disclosure({title,children}:{title:string;children:ReactNode}){

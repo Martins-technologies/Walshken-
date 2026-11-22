@@ -1,4 +1,4 @@
-import { bigint, integer, pgTable, text, check, uniqueIndex, index, customType } from "drizzle-orm/pg-core";
+import { bigint, integer, pgTable, text, check, uniqueIndex, index, customType, primaryKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 const key = () => text("id").primaryKey().notNull();
@@ -21,8 +21,11 @@ export const employees = pgTable("employees", {
   timeZone: text("time_zone").notNull().default("America/Edmonton"), employmentType: text("employment_type").notNull().default("Full-time"),
   hireDate: text("hire_date"), contractStart: text("contract_start"), employmentEnd: text("employment_end"), phone: text("phone"),
   expectedHours: integer("expected_hours").notNull().default(40), breakPolicy: text("break_policy").notNull().default("unpaid"),
-  leaveDays: integer("leave_days"), createdAt: stamp(), activatedAt: text("activated_at"), lastLoginAt: text("last_login_at"),
-}, (t) => [uniqueIndex("org_employee_no_unique").on(t.orgId, t.employeeNo), index("employee_manager_idx").on(t.orgId, t.managerId)]);
+  employmentStatus: text("employment_status").notNull().default("Active"),
+  leaveDays: integer("leave_days"), holidayDays: integer("holiday_days"), workSchedule: text("work_schedule"), holidayCalendar: text("holiday_calendar"),
+  firstLoginAt: text("first_login_at"), createdAt: stamp(), activatedAt: text("activated_at"), lastLoginAt: text("last_login_at"),
+}, (t) => [uniqueIndex("org_employee_no_unique").on(t.orgId, t.employeeNo), index("employee_manager_idx").on(t.orgId, t.managerId),
+  check("employee_employment_status", sql`${t.employmentStatus} in ('Active','On leave','Ended')`)]);
 export const sessions = pgTable("sessions", {
   id: key(), employeeId: text("employee_id").notNull().references(() => employees.id),
   createdAt: stamp(), expiresAt: text("expires_at").notNull(), endedAt: text("ended_at"), agent: text("agent").notNull(),
@@ -187,6 +190,19 @@ export const fileObjects = pgTable("file_objects", {
 export const credentials = pgTable("credentials", {
   employeeId: text("employee_id").primaryKey().references(() => employees.id),
   passwordHash: text("password_hash").notNull(), updatedAt: stamp("updated_at"),
+});
+export const staffMfa = pgTable("staff_mfa", {
+  employeeId: text("employee_id").primaryKey().references(() => employees.id, { onDelete: "cascade" }),
+  secret: text("secret").notNull(), pendingSecret: text("pending_secret"), setupExpiresAt: text("setup_expires_at").notNull(),
+  confirmedAt: text("confirmed_at"), lastStep: integer("last_step").notNull().default(-1),
+});
+export const staffRecoveryCodes = pgTable("staff_recovery_codes", {
+  employeeId: text("employee_id").notNull().references(() => staffMfa.employeeId, { onDelete: "cascade" }),
+  codeHash: text("code_hash").notNull(),
+}, (table) => [primaryKey({ columns: [table.employeeId, table.codeHash] })]);
+export const staffAvatars = pgTable("staff_avatars", {
+  employeeId: text("employee_id").primaryKey().references(() => employees.id, { onDelete: "cascade" }),
+  mime: text("mime").notNull(), content: bytea("content").notNull(), updatedAt: stamp("updated_at"),
 });
 export const invitations = pgTable("invitations", {
   id: key(), employeeId: text("employee_id").notNull().references(() => employees.id),
