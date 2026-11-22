@@ -28,7 +28,15 @@ export default async function Staff({ params }: { params: Promise<{ section?: st
       initial=setupAllowed()&&!workspaceInitialized;
     }
   } catch (error) {
-    console.error("Walshken staff connection failed",error instanceof Error?error.name:"UnknownError");
+    const code = error instanceof Error ? (error as NodeJS.ErrnoException).code : undefined;
+    const safeCode = code && /^[A-Z0-9_]{1,50}$/.test(code) ? code : "unknown";
+    const errorType = !(error instanceof Error) ? "unknown" :
+      /certificate|ssl|tls/i.test(error.message) ? "tls" :
+      /tenant|user not found/i.test(error.message) ? "pooler identity" :
+      /password|scram|authquery/i.test(error.message) ? "authentication" :
+      /permission denied/i.test(error.message) ? "permissions" :
+      /timeout|timed out/i.test(error.message) ? "timeout" : "unclassified";
+    console.error("Walshken staff connection failed", safeCode, errorType);
     return <SignIn ready={false} initial={false}/>;
   }
   if(!actor) return <SignIn ready initial={initial}/>;
