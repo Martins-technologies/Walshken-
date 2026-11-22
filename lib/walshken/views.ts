@@ -1,3 +1,5 @@
+import {workforceEnabled} from './workforce';
+import {workforceData} from './workforce-data';
 import { collaborationRelease, releasedSections } from "./release";
 import { documentsEnabled } from "./document-access";
 import { documentList } from "./documents";
@@ -10,9 +12,10 @@ import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
-  if(collaborationRelease()&&!releasedSections.has(section)&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
+  if(collaborationRelease()&&!releasedSections.has(section)&&!(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section))&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
   if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
+  if(workforceEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
   if(["payroll","holidays"].includes(section)) return canPayroll(actor);
   if(section==="employees") return canManage(actor)&&actor.role!=="manager";
   if(["scheduling","approvals","reports"].includes(section)) return canManage(actor);
@@ -76,6 +79,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
     ]);
     return json({tasks,shifts:shiftRows,alerts,active,drafts:unsubmitted?.count??0});
   }
+  if(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section)){const query=new URLSearchParams(params);if(!query.has("team")&&["scheduling","approvals","reports","holidays"].includes(section))query.set("team","1");return workforceData(db,actor,query);}
   if(section==="tasks") return tasksEnabled()?taskDashboard(db,actor,params):json({rows:await taskRows(db,actor),staff:canManage(actor)?await staffChoices(db,actor):[],projects:await projectRows(db,actor)});
   if(section==="projects") return json({rows:await projectRows(db,actor)});
   if(["attendance","shifts","scheduling","timesheets","approvals","leave"].includes(section)){

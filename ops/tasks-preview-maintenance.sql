@@ -24,12 +24,12 @@ BEGIN
  END LOOP;
  WITH candidates AS (
   SELECT t.id AS task_id,t.title,t.due_date,e.name AS employee,recipient.id AS recipient,
-   to_char(now() AT TIME ZONE t.task_timezone,'YYYY-MM-DD') AS alert_day
+   to_char(now() AT TIME ZONE (CASE WHEN t.task_timezone IN('America/Edmonton','Canada/Mountain') AND now()>='2026-11-01T00:00:00Z'::timestamptz THEN 'Etc/GMT+6' ELSE t.task_timezone END),'YYYY-MM-DD') AS alert_day
   FROM public.tasks t JOIN public.employees e ON e.id=t.employee_id AND e.org_id=t.org_id
   JOIN public.employees recipient ON recipient.org_id=t.org_id AND recipient.status='Active' AND recipient.employment_status<>'Ended' AND recipient.role<>'guest'
   WHERE t.org_id='walshken' AND t.release_stage='preview' AND t.workflow_version=1
   AND e.status='Active' AND e.employment_status<>'Ended' AND t.status NOT IN('Completed','Cancelled') AND t.due_date IS NOT NULL
-  AND t.due_date<to_char(now() AT TIME ZONE t.task_timezone,'YYYY-MM-DD')
+  AND t.due_date<to_char(now() AT TIME ZONE (CASE WHEN t.task_timezone IN('America/Edmonton','Canada/Mountain') AND now()>='2026-11-01T00:00:00Z'::timestamptz THEN 'Etc/GMT+6' ELSE t.task_timezone END),'YYYY-MM-DD')
   AND (recipient.id=e.id OR recipient.role='super_admin' OR (recipient.role='manager' AND e.manager_id=recipient.id)
    OR (recipient.role IN('admin','hr') AND (recipient.department_id IS NOT NULL OR recipient.division_id IS NOT NULL)
     AND (recipient.department_id IS NULL OR recipient.department_id=e.department_id)

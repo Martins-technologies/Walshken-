@@ -1,3 +1,4 @@
+import "@/components/walshken/workforce.css";
 import type { Metadata } from "next";
 import { metadataOrigin } from "@/lib/walshken/seo";
 import "./globals.css";

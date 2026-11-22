@@ -17,7 +17,8 @@
     "test:staff": "NODE_ENV=test node --import tsx tests/verify-staff.mjs",
     "test:messages": "NODE_ENV=test node --import tsx tests/verify-messages.mjs",
     "test:documents": "NODE_ENV=test node --import tsx tests/verify-documents.mjs",
-    "test:tasks": "NODE_ENV=test node --import tsx tests/verify-tasks.mjs"
+    "test:tasks": "NODE_ENV=test node --import tsx tests/verify-tasks.mjs",
+    "test:workforce": "NODE_ENV=test node --import tsx tests/verify-workforce.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1175.0",

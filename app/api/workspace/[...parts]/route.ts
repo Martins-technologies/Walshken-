@@ -1,3 +1,4 @@
+import {workforceEnabled} from '@/lib/walshken/workforce';
 import { collaborationRelease, releasedMutationAreas } from "@/lib/walshken/release";
 import { documentsEnabled } from "@/lib/walshken/document-access";
 import { tasksEnabled } from "@/lib/walshken/tasks";
@@ -42,6 +43,7 @@ export async function POST(request: Request, context: Context) {
   try {
     checkOrigin(request);
     const [area, action] = (await context.params).parts;
+    if(workforceEnabled()&&["attendance","timesheets","shifts","leave","corrections","holidays"].includes(area))return fail(404,"Use the reviewed attendance and scheduling workflow.");
     if(tasksEnabled()&&area==="tasks")return fail(404,"Use the secure task workflow.");
     if(documentsEnabled()&&area==="documents")return fail(404,"Use the secure document management endpoint.");
     if(area==="session"&&["login","bootstrap","activate","recover"].includes(action)) return await login(request,pick(action,["login","bootstrap","activate","recover"],"access method"),await payload(request));

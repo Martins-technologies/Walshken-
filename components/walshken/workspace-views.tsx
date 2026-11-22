@@ -2,6 +2,7 @@
 import { Calls } from "./calls";
 import { Messages } from "./messages";
 import { DocumentWorkspace } from "./documents";
+import {WorkforceWorkspace} from "./workforce";
 import { TaskWorkspace } from "./tasks";
 import { StaffSecurity } from "./staff-security";
 
@@ -13,7 +14,7 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
-  managedTasks?:boolean;taskSummary?:{today:number;overdue:number;pending:number;open:number};
+  managedWorkforce?:boolean;managedTasks?:boolean;taskSummary?:{today:number;overdue:number;pending:number;open:number};
   managedDocuments?:boolean;documentStorageEnabled?:boolean;documentBucket?:string;
   collaborationOverview?:boolean; conversations?:RecordRow[];
   rows?:RecordRow[]; row?:RecordRow; staff?:RecordRow[]; projects?:RecordRow[]; shifts?:RecordRow[]; tasks?:RecordRow[];
@@ -214,6 +215,7 @@ function LegacyDocumentView({actor,data,refresh,admin=false}:{actor:Viewer;data:
 
 export function WorkspaceViews({section,actor,data,refresh}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void}){
   const rows=data.rows??[];
+  if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
   if(section==="dashboard")return <Overview actor={actor} data={data} refresh={refresh}/>;
   if(section==="tasks")return data.managedTasks?<TaskWorkspace actor={actor} initial={data}/>:<Tasks actor={actor} data={data} refresh={refresh}/>;
   if(["attendance","shifts","timesheets","leave"].includes(section))return <TimeViews section={section} actor={actor} data={data} refresh={refresh}/>;

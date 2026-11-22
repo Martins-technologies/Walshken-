@@ -5,6 +5,7 @@ import {
 } from "./server";
 
 export function localDate(iso: string, zone: string) {
+  if(["America/Edmonton","Canada/Mountain"].includes(zone)&&Date.parse(iso)>=Date.parse("2026-11-01T00:00:00Z"))zone="Etc/GMT+6";
   const pieces = new Intl.DateTimeFormat("en-CA", { year:"numeric", month:"2-digit", day:"2-digit", timeZone:zone }).formatToParts(new Date(iso));
   return ["year","month","day"].map((key) => pieces.find((part) => part.type===key)?.value).join("-");
 }
