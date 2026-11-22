@@ -41,6 +41,8 @@ export const roleNames: Record<Role, string> = {
   manager: "Coordinator / Manager", employee: "Employee", guest: "External Client / Guest",
 };
 
+export const messageReactions = ["👍","❤️","🎉","✅","👀"] as const;
+
 export const taskStatuses = ["Not Started", "In Progress", "Waiting for Review", "On Hold", "Completed", "Cancelled"] as const;
 
 export const providers = [

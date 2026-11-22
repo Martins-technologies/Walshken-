@@ -23,7 +23,7 @@ export async function GET(request: Request, context: Context) {
     if (area === "profile" && action === "photo") return await staffAvatar(db, actor);
     if (area === "view") return await view(db,actor,action,params);
     if (area === "files") return await downloadDocument(db,actor,action,params.get("mode")==="preview");
-    if (area === "conversation") { requireStaff(actor); return await messagesFor(db,actor,action,params.get("q")??""); }
+    if (area === "conversation") return await messagesFor(db,actor,action,params.get("q")??"",params.get("before")??"");
     if (area === "task-comments") { requireStaff(actor); return json({rows:await taskDetails(db,actor,action)}); }
     return fail(404,"This workspace endpoint is unavailable.");
   } catch (error) { return handleError(error); }
@@ -48,7 +48,7 @@ export async function POST(request: Request, context: Context) {
     const data=await payload(request);
     if(area==="mfa") return await staffMfaAction(request,db,actor,action,data);
     if(area==="session"&&action==="password") return await changePassword(request,db,actor,data);
-    if(["employees","organization","website","integrations","holidays"].includes(area)) return await adminAction(db,actor,area,action,data);
+    if(["employees","organization","website","integrations","holidays","communication-policy"].includes(area)) return await adminAction(db,actor,area,action,data);
     if(["attendance","timesheets","shifts","leave","corrections"].includes(area)) return await timeAction(db,actor,area,action,data);
     if(["tasks","projects","notifications"].includes(area)) return await workAction(db,actor,area,action,data);
     if(area==="messages") return await messageAction(db,actor,action,data);

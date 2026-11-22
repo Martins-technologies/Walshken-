@@ -1,11 +1,11 @@
 import { adminNav, staffNav } from "./catalog";
-import { teamOptions } from "./collaboration";
+import { messageViews, teamOptions } from "./collaboration";
 import { all, canManage, canPayroll, canSuper, fail, json, loadCatalog, needsStaffMfa, now, one, requireStaff, requireSuper, scope, staffMfaRequired, type Actor, type Db, type Row } from "./server";
 import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
-  if(actor.role==="guest") return ["dashboard","profile","calls","documents","notifications"].includes(section);
+  if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
   if(["payroll","holidays"].includes(section)) return canPayroll(actor);
   if(section==="employees") return canManage(actor)&&actor.role!=="manager";
@@ -92,14 +92,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
   }
   if(section==="directory") return json({rows:await teamOptions(db,actor)});
   if(section==="notifications") return json({rows:await notifications(db,actor)});
-  if(section==="messages") return json({
-    rows:await all(db,`SELECT c.id,CASE WHEN c.kind='Direct' THEN COALESCE((SELECT e.name FROM conversation_members n JOIN employees e ON e.id=n.employee_id WHERE n.conversation_id=c.id AND n.employee_id<>? LIMIT 1),c.title)
-      ELSE c.title END AS title,c.kind,c.created_by,m.archived,
-      (SELECT count(*)::int FROM messages msg WHERE msg.conversation_id=c.id AND msg.sender_id<>? AND msg.deleted_at IS NULL AND (m.last_read_at IS NULL OR msg.created_at>m.last_read_at)) AS unread
-      FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id WHERE c.org_id=? AND m.employee_id=? ORDER BY c.created_at DESC`,
-      actor.id,actor.id,actor.org_id,actor.id),
-    staff:await teamOptions(db,actor),
-  });
+  if(section==="messages") return messageViews(db,actor);
   if(section==="calls") return json({rows:await meetings(db,actor),staff:await teamOptions(db,actor),
     provider:Boolean(await one(db,"SELECT id FROM integrations WHERE id='daily' AND enabled=1"))});
   if(section==="documents"||section==="document-security"){

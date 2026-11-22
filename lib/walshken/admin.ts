@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
 import { divisions, providers, roles } from "./catalog";
+import { communicationPolicy, retentionCutoff } from "./collaboration";
 import {
   all, audit, canManage, canPayroll, canSuper, country, date, destination, digest, email, encryptSettings,
   fail, id, integer, json, now, one, pick, requireSuper, run, scopedEmployee, stmt, str, timeZone, type Actor, type Db,
@@ -146,6 +147,42 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     ]);
     return json({ ok:true, message:`${kind} added.` },201);
   }
+  if (area === "communication-policy") {
+    requireSuper(actor);
+    if (action === "save") {
+      await db.batch([
+        stmt(db,`UPDATE organizations SET group_creation=?,group_approval=?,member_management=?,message_forwarding=?,
+          message_retention_days=?,external_messaging=?,message_changes=? WHERE id=?`,
+          pick(data.creation,["Super Admin","Managers","All staff"],"group creation policy"),
+          pick(data.approval,["0","1"],"approval policy")==="1"?1:0,
+          pick(data.members,["Super Admin","Owners","Members"],"participant management policy"),
+          pick(data.forwarding,["Disabled","Managers","All staff"],"forwarding policy"),
+          integer(data.retentionDays,"message retention days",0,3650),
+          pick(data.external,["0","1"],"guest messaging policy")==="1"?1:0,
+          pick(data.messageChanges,["Sender","Sender or Super Admin","Locked"],"message editing policy"),actor.org_id),
+        audit(db,actor,"Communication policy changed","organization",actor.org_id),
+      ]);
+      return json({ok:true,message:"Communication policy saved."});
+    }
+    if (action === "apply-retention") {
+      if(data.confirmation!=="ERASE") return fail(400,"Type ERASE to confirm permanent removal of expired message content.");
+      await db.transaction(async (tx) => {
+        await one(tx,"SELECT id FROM organizations WHERE id=? FOR UPDATE",actor.org_id);
+        const policy=await communicationPolicy(tx,actor);
+        if(!policy.message_retention_days) return fail(409,"Set a message retention period first.");
+        const cutoff=retentionCutoff(policy.message_retention_days);
+        await run(tx,`DELETE FROM message_reactions WHERE message_id IN (
+          SELECT m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.org_id=? AND m.created_at<?
+        )`,actor.org_id,cutoff);
+        await run(tx,`UPDATE messages SET body='',deleted_at=?,pinned=0 WHERE deleted_at IS NULL AND created_at<?
+          AND conversation_id IN (SELECT id FROM conversations WHERE org_id=?)`,now(),cutoff,actor.org_id);
+        await audit(tx,actor,"Message retention applied","organization",actor.org_id).run();
+      });
+      return json({ok:true,message:"Expired message content cleared."});
+    }
+    return fail(404,"Communication policy action unavailable.");
+  }
+
   if (area === "website") {
     requireSuper(actor);
     if (action === "inquiry") {

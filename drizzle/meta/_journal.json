@@ -43,6 +43,13 @@
       "when": 1795307362040,
       "tag": "0005_authenticator_replacement",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795340916266,
+      "tag": "0006_staff_communication",
+      "breakpoints": true
     }
   ]
 }

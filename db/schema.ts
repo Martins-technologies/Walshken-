@@ -6,6 +6,13 @@ const stamp = (name = "created_at") => text(name).notNull().default(sql`(to_char
 
 export const organizations = pgTable("organizations", {
   id: key(), name: text("name").notNull(), timeZone: text("time_zone").notNull().default("America/Edmonton"),
+  groupCreation: text("group_creation").notNull().default("Managers"),
+  groupApproval: integer("group_approval").notNull().default(0),
+  memberManagement: text("member_management").notNull().default("Owners"),
+  messageForwarding: text("message_forwarding").notNull().default("Disabled"),
+  messageRetentionDays: integer("message_retention_days").notNull().default(0),
+  externalMessaging: integer("external_messaging").notNull().default(0),
+  messageChanges: text("message_changes").notNull().default("Sender"),
 });
 export const units = pgTable("units", {
   id: key(), orgId: text("org_id").notNull().references(() => organizations.id),
@@ -122,6 +129,11 @@ export const leave = pgTable("leave_requests", {
 export const conversations = pgTable("conversations", {
   id: key(), orgId: text("org_id").notNull().references(() => organizations.id), title: text("title").notNull(), kind: text("kind").notNull(),
   createdBy: text("created_by").notNull().references(() => employees.id), createdAt: stamp(),
+  status: text("status").notNull().default("Active"),
+  departmentId: text("department_id").references(() => units.id),
+  projectId: text("project_id").references(() => projects.id),
+  country: text("country"),
+  closesAt: text("closes_at"),
 });
 export const members = pgTable("conversation_members", {
   id: key(), conversationId: text("conversation_id").notNull().references(() => conversations.id),
@@ -130,7 +142,7 @@ export const members = pgTable("conversation_members", {
 export const messages = pgTable("messages", {
   id: key(), conversationId: text("conversation_id").notNull().references(() => conversations.id),
   senderId: text("sender_id").notNull().references(() => employees.id), body: text("body").notNull(),
-  replyTo: text("reply_to"), editedAt: text("edited_at"), deletedAt: text("deleted_at"), pinned: integer("pinned").notNull().default(0), createdAt: stamp(),
+  forwarded: integer("forwarded").notNull().default(0), replyTo: text("reply_to"), editedAt: text("edited_at"), deletedAt: text("deleted_at"), pinned: integer("pinned").notNull().default(0), createdAt: stamp(),
 }, (t) => [index("messages_by_conversation_time").on(t.conversationId, t.createdAt)]);
 export const reactions = pgTable("message_reactions", {
   id: key(), messageId: text("message_id").notNull().references(() => messages.id),
