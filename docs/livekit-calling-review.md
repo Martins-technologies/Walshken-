@@ -32,3 +32,11 @@ Run `npm run test:calls`, `npm run typecheck` and `npm run build` using Node.js 
 Manual connected-provider acceptance still required: two browsers with microphone/camera, one-to-one audio/video, group calls, screen and system-audio sharing where supported by the browser, device denial and reconnect, host admission/removal/permissions, real webhook delivery, recording upload/playback/deletion, and scheduled expiry while all browsers are closed. Do not label the feature 100% complete before these connected-provider checks pass.
 
 LiveKit traffic uses encrypted WebRTC transport. Optional server-side composite recording requires the media to be available to the recorder; this implementation does not claim end-to-end encryption.
+
+## Active review delivery
+
+The owner approved an expiring share link on the `walshken` review deployment. The existing Supabase project hosts `walshken-livekit-review`, which validates LiveKit JWT signatures and body checksums before forwarding to the authenticated review endpoint. Its deployment access and versioned encryption key are encrypted in Supabase Vault; source code contains no credentials. The owner added this function URL as the LiveKit project webhook.
+
+Supabase Cron calls the same relay every minute for the authenticated maintenance endpoint, using a 90-second HMAC signature so the long-lived maintenance secret is not written into the pg_net queue. The review job automatically stops when the approved deployment share expires. Production uses the Vercel cron configuration after owner approval. Renew review access or launch before retained review recordings require cleanup beyond the temporary review window.
+
+Verified live: provider API authentication, private bucket creation and upload/delete probe, live password authentication for both new review accounts, signed webhook forwarding (200), tampered webhook rejection (401), and authenticated maintenance (200). Real two-browser microphone/camera and recording acceptance remain for manual review. Local native-browser launch was blocked by the execution environment, so no visual browser pass is claimed.
