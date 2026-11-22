@@ -1,5 +1,11 @@
 # Part D review
 
+## Approved production release
+
+The owner approved merging Part D into production on 23 November 2026 (Pakistan time). Apply `ops/documents-production-runtime.sql` to give the existing production runtime the same document operations, scoped to the Walshken organization. No existing document, ACL, credential or authenticator records are changed. Audit events and file versions remain append-only; anonymous Data API access stays closed.
+
+Production environment additions: `WALSHKEN_DOCUMENTS_ENABLED=1`, `WALSHKEN_RELEASE_SCOPE=staff-documents`, `WALSHKEN_DOCUMENT_BUCKET=walshken-documents-review`, `WALSHKEN_DOCUMENT_STORAGE_ID=document-storage-review`. Preserve the current private bucket and integration ID so documents saved during review remain readable. Keep the existing production database URL and encryption keys. The prior Preview-only setup below describes the review phase.
+
 Scope: private PDF, DOCX, XLSX and image upload, content previews, versioned replacement, metadata editing, categories, folders, internal forwarding, authenticated external recipients, server-side access controls, revocation and append-only audit.
 
 The existing review branch enables WALSHKEN_DOCUMENTS_ENABLED=1 and reuses its protected Preview configuration without exporting encryption keys. Production stays on the current Part B/C release. The new doc_* tables are additive; only the existing review login receives their server-side grants. The production login does not inherit that review login. The old document endpoints are disabled in the review build to prevent bypasses. Files live in a separate private review bucket, using the existing S3 connection server-side, or dedicated document credentials configured in Integrations. Disabling an explicitly configured document integration never falls back to another connection.
