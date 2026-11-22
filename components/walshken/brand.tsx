@@ -3,7 +3,7 @@ import {
   CircleAlert, Clock3, Compass, FileText, FolderKanban, Globe2, GraduationCap, History, LayoutGrid, ListChecks, LockKeyhole,
   MapPin, Menu, MessageSquare, Monitor, Paperclip, Plane, Plus, Plug, ReceiptText, Scale, Search, Settings2, ShieldCheck, SlidersHorizontal,
   TimerReset, Users, UserRound, Video, Wallet, X, BriefcaseBusiness, BookOpenCheck, ChartNoAxesCombined, Coffee, LogOut,
-  CalendarOff, Landmark, Mail, MoveUpRight, Send, Download, CircleCheck, CircleHelp, Ellipsis, Hash, CircleDot, PanelLeftClose,
+  CalendarOff, Landmark, Mail, MoveUpRight, Send, Download, CircleCheck, CircleHelp, Ellipsis, Hash, CircleDot, PanelLeftClose, Phone,
 } from "lucide-react";
 
 const icons = {
@@ -15,7 +15,7 @@ const icons = {
   leave: CalendarOff, file: FileText, users: Users, bell: Bell, user: UserRound, building: Building2, shield: ShieldCheck, lock: LockKeyhole,
   chart: ChartNoAxesCombined, history: History, settings: Settings2, plug: Plug, filter: SlidersHorizontal, attachment: Paperclip,
   coffee: Coffee, logout: LogOut, mail: Mail, move: MoveUpRight, send: Send, download: Download, success: CircleCheck,
-  more: Ellipsis, hash: Hash, dot: CircleDot, panel: PanelLeftClose,
+  phone: Phone, more: Ellipsis, hash: Hash, dot: CircleDot, panel: PanelLeftClose,
 };
 
 export function Icon({ name, size = 20, className }: { name: string; size?: number; className?: string }) {

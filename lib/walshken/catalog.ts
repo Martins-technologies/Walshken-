@@ -41,10 +41,13 @@ export const roleNames: Record<Role, string> = {
   manager: "Coordinator / Manager", employee: "Employee", guest: "External Client / Guest",
 };
 
+export const messageReactions = ["👍","❤️","🎉","✅","👀"] as const;
+
 export const taskStatuses = ["Not Started", "In Progress", "Waiting for Review", "On Hold", "Completed", "Cancelled"] as const;
 
 export const providers = [
-  { id: "daily", name: "Daily", category: "Video & audio", description: "Private meeting rooms and browser calling.", fields: [["domain", "Daily subdomain"], ["apiKey", "API key"]] },
+  { id: "livekit", name: "LiveKit", category: "Video & audio", description: "Secure browser calls, meetings, screen sharing and verified attendance.", fields: [["url", "LiveKit WebSocket URL"], ["apiKey", "API key"], ["apiSecret", "API secret"]] },
+  { id: "recording-storage", name: "Private recording storage", category: "Meeting recordings", description: "Private Supabase, S3 or R2 bucket. Credentials stay encrypted on the server.", fields: [["endpoint", "S3 endpoint"], ["region", "Region"], ["bucket", "Private bucket name"], ["accessKey", "S3 access key"], ["secretKey", "S3 secret key"]] },
   { id: "twilio", name: "Twilio", category: "SMS", description: "SMS alerts for workflows that are enabled later.", fields: [["accountSid", "Account SID"], ["authToken", "Auth token"], ["from", "Sender number"]] },
   { id: "resend", name: "Resend", category: "Email", description: "Transactional email and staff notifications.", fields: [["apiKey", "API key"], ["from", "Verified sender address"]] },
   { id: "payroll", name: "Payroll provider", category: "Payroll", description: "Configuration for a validated payroll provider.", fields: [["account", "Provider account or reference"], ["apiKey", "API key"]] },

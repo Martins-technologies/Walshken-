@@ -12,17 +12,28 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs"
+    "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs",
+    "test:calls": "NODE_ENV=test node --import tsx tests/verify-livekit.mjs",
+    "test:staff": "NODE_ENV=test node --import tsx tests/verify-staff.mjs",
+    "test:messages": "NODE_ENV=test node --import tsx tests/verify-messages.mjs"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "3.1175.0",
+    "@aws-sdk/s3-request-presigner": "3.1175.0",
     "@electric-sql/pglite": "0.5.16",
+    "@livekit/components-react": "2.9.26",
+    "@livekit/components-styles": "1.2.0",
+    "@livekit/protocol": "1.53.0",
     "@vercel/functions": "3.11.1",
+    "livekit-client": "2.25.0",
+    "livekit-server-sdk": "2.20.1",
     "lucide-react": "1.31.0",
     "next": "16.3.4",
     "pg": "8.23.1",
     "postgres": "3.4.7",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "@smithy/fetch-http-handler": "5.8.1"
   },
   "devDependencies": {
     "@types/node": "22.19.19",
@@ -31,6 +42,7 @@
     "@types/react-dom": "19.2.3",
     "drizzle-kit": "0.31.10",
     "drizzle-orm": "0.45.2",
+    "tsx": "4.23.15",
     "typescript": "5.9.3"
   }
 }

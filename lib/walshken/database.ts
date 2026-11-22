@@ -42,8 +42,19 @@ function postgresAdapter(pool: Pool): Adapter {
 }
 
 function pooledPostgres(url: string) {
+  const ca = process.env.WALSHKEN_DATABASE_CA?.trim();
+  const config: import("pg").PoolConfig = { connectionString: url };
+  if (ca) {
+    const connection = new URL(url);
+    // pg lets SSL options in the URL override the configured CA.
+    for (const key of ["ssl", "sslmode", "sslcert", "sslkey", "sslrootcert"]) {
+      connection.searchParams.delete(key);
+    }
+    config.connectionString = connection.toString();
+    config.ssl = { ca, rejectUnauthorized: true };
+  }
   const pool = new Pool({
-    connectionString: url,
+    ...config,
     max: 3,
     connectionTimeoutMillis: 8_000,
     idleTimeoutMillis: 5_000,

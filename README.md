@@ -4,7 +4,7 @@ Standalone corporate website and staff operations workspace built with Next.js, 
 
 ## Frontend review
 
-Open the corporate homepage at `/`, the service directory at `/services`, country availability at `/countries`, and the About and Contact pages at `/about` and `/contact`. Every published catalog entry has a division page, and every supported ISO country has a direct availability link. The read-only staff design preview is at `/preview`. The preview has separate Admin and Employee views with sample records and uses no staff APIs. It is enabled on the frontend-only deployment and in local development.
+Open the corporate homepage at `/`, the service directory at `/services`, country availability at `/countries`, and the About and Contact pages at `/about` and `/contact`. Every published catalog entry has a division page, and every supported ISO country has a direct availability link. Open the database-backed staff portal at `/staff`.
 
 ## Local development
 
@@ -17,8 +17,8 @@ Open the corporate homepage at `/`, the service directory at `/services`, countr
 
 - Create a dedicated PostgreSQL database for Walshken. Keep Preview and Production databases separate.
 - Run `npm run db:migrate` with a direct or session-pooler database URL before enabling staff access. Apply migrations using the schema owner.
-- Add `DATABASE_URL` to the matching Vercel environment. Use the Supabase transaction pooler for serverless requests. The adapter disables prepared statements.
-- Configure `WALSHKEN_ADMIN_EMAIL`, `WALSHKEN_SETUP_CODE`, and a separate 32-byte base64 `WALSHKEN_INTEGRATION_KEY` as protected environment variables. Remove the bootstrap code after initialization and redeploy.
+- Add `DATABASE_URL` to the matching Vercel environment. Configure Preview with its own database and apply the staff migrations there before review. Use the Supabase transaction pooler for serverless requests. The adapter disables prepared statements.
+- Configure `WALSHKEN_ADMIN_EMAIL`, `WALSHKEN_SETUP_CODE`, and a separate 32-byte base64 `WALSHKEN_INTEGRATION_KEY` as protected environment variables. Remove the bootstrap code after initialization and redeploy. Set `WALSHKEN_REQUIRE_STAFF_MFA=1` to require enrollment before staff can use the workspace. Recover accounts with an admin-issued reset code or a saved authenticator recovery code.
 - The company site can render the initial catalog while the database is pending. Staff access and inquiry submissions require the database.
 - The Data API can stay disabled. Only the server connects to PostgreSQL. The initial schema enables RLS and revokes Data API role grants on the workspace tables. Review the database runtime grants before handling production records.
 
@@ -40,3 +40,7 @@ Open the corporate homepage at `/`, the service directory at `/services`, countr
 ## Production readiness
 
 Before employee onboarding, verify managed MFA and recovery, database runtime permissions, backup and recovery, retention, and load capacity. The current private document store uses PostgreSQL for files up to 3 MB. Configure production file storage and malware scanning before handling confidential documents. Live Daily calls need a configured account. Twilio, transactional email and compliant payroll workflows need provider wiring and verification. Statutory holiday pay, payroll finalization, approved payslips and payments remain separate work.
+
+## LiveKit calls and meetings
+
+See [calling review and connection instructions](docs/livekit-calling-review.md). Configure LiveKit and private recording storage through the encrypted admin Integrations screen. Run `npm run test:calls` for backend authorization, signatures, attendance and recording-policy regression checks. Actual media and storage acceptance require the connected providers and two browser sessions.

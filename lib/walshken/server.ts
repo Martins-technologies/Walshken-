@@ -11,9 +11,11 @@ export type Row = Record<string, string | number | null>;
 export type Actor = {
   id: string; org_id: string; auth_id: string | null; email: string; name: string; role: Role; status: string;
   employee_no: string; department_id: string | null; division_id: string | null; manager_id: string | null;
-  office_id: string | null; country: string; jurisdiction: string; time_zone: string; break_policy: string;
+  office_id: string | null; country: string; jurisdiction: string; time_zone: string; break_policy: string; employment_status?: string; mfa_enabled?: number;
 };
 export const orgId = "walshken";
+export const staffMfaRequired = () => process.env.WALSHKEN_REQUIRE_STAFF_MFA === "1";
+export const needsStaffMfa = (actor: Actor) => staffMfaRequired() && !actor.mfa_enabled;
 export const sessionCookie = "walshken_session";
 export const now = () => new Date().toISOString();
 export const id = () => crypto.randomUUID();
@@ -129,13 +131,15 @@ export function sessionSet(request: Request, value: string, maxAge: number, name
 }
 export async function actorFor(db: Db, token: string): Promise<Actor | null> {
   if (!/^[0-9a-f-]{72}$/.test(token)) return null;
-  return one<Actor>(db, `SELECT e.* FROM employees e JOIN sessions s ON s.employee_id=e.id
-    WHERE e.status='Active' AND s.id=? AND s.ended_at IS NULL AND s.expires_at>?`, await digest(token), now());
+  return one<Actor>(db, `SELECT e.*, CASE WHEN EXISTS (SELECT 1 FROM staff_mfa m WHERE m.employee_id=e.id AND m.confirmed_at IS NOT NULL)
+      THEN 1 ELSE 0 END AS mfa_enabled
+    FROM employees e JOIN sessions s ON s.employee_id=e.id
+    WHERE e.status='Active' AND e.employment_status<>'Ended' AND s.id=? AND s.ended_at IS NULL AND s.expires_at>?`, await digest(token), now());
 }
 export async function currentActor(db: Db, request: Request) {
   return actorFor(db, cookieValue(request.headers.get("cookie")));
 }
-export async function issueSession(request: Request, db: Db, actor: Actor, passwordHash: string) {
+export async function issueSession(request: Request, db: Db, actor: Actor, passwordHash: string, verify?: (tx: Db) => Promise<void>) {
   const token = id() + id();
   const tokenHash = await digest(token);
   const started = now();
@@ -143,9 +147,10 @@ export async function issueSession(request: Request, db: Db, actor: Actor, passw
   await db.transaction(async (tx) => {
     const credential = await one<{ password_hash: string }>(tx, "SELECT password_hash FROM credentials WHERE employee_id=? FOR UPDATE", actor.id);
     if (credential?.password_hash !== passwordHash) return fail(401, "Sign in with your current password.");
-    await run(tx, "UPDATE employees SET activated_at=COALESCE(activated_at,?), last_login_at=? WHERE id=? AND status='Active'", started, started, actor.id);
-    await run(tx, "INSERT INTO sessions (id,employee_id,expires_at,agent) SELECT ?,id,?,? FROM employees WHERE id=? AND status='Active'",
-      tokenHash, expiry, (request.headers.get("user-agent") ?? "Browser").slice(0, 240), actor.id);
+    if (verify) await verify(tx);
+    await run(tx, "UPDATE employees SET activated_at=COALESCE(activated_at,?), first_login_at=COALESCE(first_login_at,?), last_login_at=? WHERE id=? AND status='Active' AND employment_status<>'Ended' AND email=?", started, started, started, actor.id, actor.email);
+    await run(tx, "INSERT INTO sessions (id,employee_id,expires_at,agent) SELECT ?,id,?,? FROM employees WHERE id=? AND status='Active' AND employment_status<>'Ended' AND email=?",
+      tokenHash, expiry, (request.headers.get("user-agent") ?? "Browser").slice(0, 240), actor.id, actor.email);
     await run(tx, "INSERT INTO audit (id,org_id,actor_id,action,entity,target_id) SELECT ?,?,employee_id,'Signed in','session',NULL FROM sessions WHERE id=?", id(), actor.org_id, tokenHash);
   });
   if (!await actorFor(db, token)) return fail(403, "This identity does not have active staff access.");
@@ -222,20 +227,23 @@ export const loadCatalog = cache(async (): Promise<SiteCatalog> => {
 
 function base64(bytes: Uint8Array) { return btoa(String.fromCharCode(...bytes)); }
 function unbase64(value: string) { return Uint8Array.from(atob(value), (character) => character.charCodeAt(0)); }
-async function encryptionKey() {
-  if (!process.env.WALSHKEN_INTEGRATION_KEY) return fail(503, "Secure integration storage is awaiting environment configuration.");
-  const raw = unbase64(process.env.WALSHKEN_INTEGRATION_KEY);
+async function encryptionKey(version: "legacy" | "v2") {
+  const value=version==="v2"?process.env.WALSHKEN_INTEGRATION_KEY_V2:process.env.WALSHKEN_INTEGRATION_KEY;
+  if (!value) return fail(503, version==="legacy"?"Your existing authenticator data must be migrated from the earlier preview before it can be used here.":"Secure integration storage is awaiting environment configuration.");
+  const raw = unbase64(value);
   if (raw.byteLength !== 32) return fail(503, "Secure integration storage is awaiting environment configuration.");
   return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 export async function encryptSettings(provider: string, settings: Record<string, string>) {
+  const version=process.env.WALSHKEN_INTEGRATION_KEY_V2?"v2":"legacy";
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(provider) },
-    await encryptionKey(), new TextEncoder().encode(JSON.stringify(settings)));
-  return `${base64(iv)}.${base64(new Uint8Array(ciphertext))}`;
+    await encryptionKey(version), new TextEncoder().encode(JSON.stringify(settings)));
+  return `${version==="v2"?"v2.":""}${base64(iv)}.${base64(new Uint8Array(ciphertext))}`;
 }
 export async function decryptSettings(provider: string, value: string) {
-  const [iv, ciphertext] = value.split(".");
-  const clear = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unbase64(iv), additionalData: new TextEncoder().encode(provider) }, await encryptionKey(), unbase64(ciphertext));
+  const version=value.startsWith("v2.")?"v2":"legacy";
+  const [iv, ciphertext] = (version==="v2"?value.slice(3):value).split(".");
+  const clear = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unbase64(iv), additionalData: new TextEncoder().encode(provider) }, await encryptionKey(version), unbase64(ciphertext));
   return JSON.parse(new TextDecoder().decode(clear)) as Record<string, string>;
 }

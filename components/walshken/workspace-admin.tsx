@@ -16,14 +16,26 @@ const roleColumn={key:"role",title:"Role",render:(row:RecordRow)=>roleNames[valu
 const companyTypes=["Full-time","Part-time","Fixed-term","Contractor"];
 const switches=[["0","Coming Soon"],["1","Available"]] as const;
 
-function Employees({actor,data,refresh,rolesOnly}:{actor:Viewer;data:ViewData;refresh:()=>void;rolesOnly:boolean}){
+function Employees({actor,data,refresh,rolesOnly,setQuery}:{actor:Viewer;data:ViewData;refresh:()=>void;rolesOnly:boolean;setQuery:(query:string)=>void}){
   const [selected,setSelected]=useState("");
   const row=data.rows?.find((r)=>r.id===selected);
+  const registry=data.registry;
+  function showPage(page:number,query=registry?.query??"") {
+    setSelected("");
+    setQuery(new URLSearchParams({page:String(page),q:query}).toString());
+  }
   return <>
     {rolesOnly&&<Panel title="Role hierarchy" note="Roles are enforced by the server and combined with employee and department scope.">
       <div className="role-grid">{roles.map((role,index)=><div className="person-card" key={role}><span className="icon-tile"><Icon name="shield" size={17}/></span><div><strong>{roleNames[role]}</strong><small>{["Organization-wide settings and permissions","Administration within assigned scope","Compensation and payroll within assigned scope","Assigned staff and operational approvals","Own records and granted collaboration","Explicitly granted resources"][index]}</small></div></div>)}</div>
     </Panel>}
     <Panel title={rolesOnly?"Role assignments":"Employee registry"}>
+      <form className="table-filter" onSubmit={(event)=>{
+        event.preventDefault();
+        showPage(1,String(new FormData(event.currentTarget).get("q")??""));
+      }}>
+        <label>Search employees<input name="q" type="search" defaultValue={registry?.query} maxLength={100}/></label>
+        <button className="btn btn-blue btn-small">Search</button>
+      </form>
       {!rolesOnly&&actor.role==="super_admin"&&<Disclosure title="Add an employee"><ActionForm path="employees/add" fields={[
         field("name","Full name"),field("email","Work email","email"),field("employeeNo","Employee ID"),field("title","Position","text",false),
         {name:"role",label:"Staff role",options:roleChoices,value:"employee",required:true},
@@ -38,17 +50,47 @@ function Employees({actor,data,refresh,rolesOnly}:{actor:Viewer;data:ViewData;re
         field("leaveDays","Annual leave days","number",false),
       ]} submit="Create employee and invite" refresh={refresh}/></Disclosure>}
       <Table rows={data.rows??[]} columns={[column("employee_no","ID"),column("name","Name"),roleColumn,column("department","Department"),dateColumn("hire_date","Original hire date"),status]}
-        actions={(employee)=>employee.id!==actor.id&&employee.role!=="super_admin"&&<button type="button" className="btn btn-outline btn-small" onClick={()=>setSelected(value(employee,"id"))}>Manage</button>}/>
+        actions={(employee)=>(employee.id!==actor.id&&employee.role!=="super_admin"
+          || employee.id===actor.id&&actor.role==="super_admin"&&!rolesOnly)&&<button type="button" className="btn btn-outline btn-small" onClick={()=>setSelected(value(employee,"id"))}>Manage</button>}/>
+      {registry&&<div className="row-actions">
+        <button className="btn btn-outline btn-small" type="button" disabled={registry.page<=1} onClick={()=>showPage(registry.page-1)}>Previous</button>
+        <span>{registry.total} employees · Page {registry.page} of {registry.pages}</span>
+        <button className="btn btn-outline btn-small" type="button" disabled={registry.page>=registry.pages} onClick={()=>showPage(registry.page+1)}>Next</button>
+      </div>}
     </Panel>
     {row&&<Panel title={value(row,"name")} note={value(row,"email")}>
-      <div className="row-actions">
+      {row.id!==actor.id&&<div className="row-actions">
         <Quick path="employees/status" data={{id:row.id,status:row.status==="Active"?"Suspended":"Active"}} refresh={refresh}
           variant={row.status==="Active"?"danger":"outline"}>{row.status==="Active"?"Suspend access":"Reactivate"}</Quick>
-      </div>
+      </div>}
       {actor.role==="super_admin"&&<>
-        <Disclosure title="Assign role"><ActionForm path="employees/role" fields={[{name:"role",label:"Role",options:roleChoices,value:row.role,required:true}]}
+        {!rolesOnly&&<Disclosure title="Edit employee profile"><ActionForm key={value(row,"id")} path="employees/edit" fields={[
+          { ...field("employeeNo","Employee ID"),value:row.employee_no },
+          { ...field("name","Full name"),value:row.name },{ ...field("title","Position","text",false),value:row.title },
+          { ...field("email","Work email","email"),value:row.email },
+          { ...field("phone","Contact number","tel",false),value:row.phone },
+          ...["Department","Division","Office"].map((kind)=>({name:kind.toLowerCase(),label:kind,
+            options:options((data.units??[]).filter((r)=>r.kind===kind)),value:row[kind.toLowerCase()+"_id"]})),
+          {name:"manager",label:"Reporting manager",options:options((data.staff??[]).filter((person)=>person.id!==row.id)),value:row.manager_id},
+          {name:"country",label:"Country",options:countryChoices,value:row.country,required:true},
+          { ...field("jurisdiction","Employment jurisdiction"),value:row.jurisdiction },
+          { ...field("timeZone","IANA time zone"),value:row.time_zone },
+          {name:"employmentType",label:"Employment type",options:companyTypes,value:row.employment_type,required:true},
+          { ...field("hireDate","Original hire date","date",false),value:row.hire_date },
+          { ...field("contractStart","Contract start date","date",false),value:row.contract_start },
+          { ...field("employmentEnd","Employment end date","date",false),value:row.employment_end },
+          {name:"employmentStatus",label:"Employment status",options:row.id===actor.id?["Active","On leave"]:["Active","On leave","Ended"],value:row.employment_status,required:true},
+          {name:"expectedHours",label:"Expected weekly hours",type:"number",value:row.expected_hours,min:0,max:80,required:true},
+          {name:"breakPolicy",label:"Break policy",options:[["unpaid","Unpaid"],["paid","Paid"]],value:row.break_policy,required:true},
+          {name:"leaveDays",label:"Annual leave days",type:"number",value:row.leave_days,min:0,max:365},
+          { ...field("workSchedule","Assigned work schedule","text",false),value:row.work_schedule },
+          { ...field("holidayCalendar","Holiday calendar","text",false),value:row.holiday_calendar },
+          {name:"holidayDays",label:"Annual holiday entitlement (days)",type:"number",min:0,max:365,value:row.holiday_days},
+        ]} extra={{id:row.id}} submit="Save profile" refresh={refresh} reset={false}
+          onDone={()=>{if(row.id===actor.id)window.location.reload();}}/></Disclosure>}
+        {row.id!==actor.id&&<><Disclosure title="Assign role"><ActionForm path="employees/role" fields={[{name:"role",label:"Role",options:roleChoices,value:row.role,required:true}]}
           extra={{id:row.id}} submit="Save role" refresh={refresh} reset={false}/></Disclosure>
-        <Disclosure title="Issue activation or reset code"><ActionForm path="employees/invite" fields={[]} extra={{id:row.id}} submit="Generate code" refresh={refresh}/></Disclosure>
+        <Disclosure title="Issue activation or reset code"><ActionForm path="employees/invite" fields={[]} extra={{id:row.id}} submit="Generate code" refresh={refresh}/></Disclosure></>}
       </>}
     </Panel>}
   </>;
@@ -130,18 +172,20 @@ function Countries({data,refresh}:{data:ViewData;refresh:()=>void}){
 function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
   return <>
     {!data.secureStorage&&<p className="workspace-alert">Set the environment encryption key to enable secure credential storage.</p>}
-    <div className="integration-grid">{providers.map((provider)=>{
+    {data.encryptionMigrationReady&&<Panel title="Move preview access securely" note="Re-encrypts stored authenticator data inside this server so the main review project can use the same passwords and authenticator codes. No encryption key or authenticator secret is returned.">
+      <Disclosure title="Complete encryption migration"><ActionForm path="integrations/migrate-encryption" fields={[{name:"password",label:"Current password",type:"password",required:true,autoComplete:"current-password"},{name:"code",label:"Fresh authenticator or saved recovery code",required:true,autoComplete:"one-time-code"}]} submit="Migrate encrypted access data" refresh={refresh}/></Disclosure>
+    </Panel>}
+    <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage"].includes(provider.id)).map((provider)=>{
       const current=data.rows?.find((row)=>row.id===provider.id);
       return <Panel key={provider.id} title={provider.name} note={provider.description} action={<Status>{current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
         <div className="integration-label"><Icon name="plug" size={17}/>{provider.category}</div>
         {data.secureStorage&&<Disclosure title={current?"Update credentials":"Add credentials"}>
           <ActionForm path="integrations/save" fields={[
-            ...provider.fields.map(([name,label])=>field(name,label,/key|token|sid/i.test(name)?"password":"text")),
+            ...provider.fields.map(([name,label])=>field(name,label,/key|secret|token|sid/i.test(name)?"password":"text")),
             {name:"enabled",label:"Status",options:[["0","Save disabled"],["1","Enable"]],value:current?.enabled??0,required:true},
           ]} extra={{provider:provider.id}} submit="Save credentials" refresh={refresh}/>
         </Disclosure>}
         {Boolean(current?.enabled)&&<Quick path="integrations/disable" data={{provider:provider.id}} refresh={refresh}>Disable</Quick>}
-        {provider.id!=="daily"&&<p className="form-note">Credential configuration is available. This provider’s live workflows are pending.</p>}
       </Panel>;
     })}</div>
   </>;
@@ -170,7 +214,7 @@ function Payroll({data,refresh}:{data:ViewData;refresh:()=>void}){
 
 export function AdminViews({section,actor,data,refresh,setQuery}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void;setQuery:(query:string)=>void}){
   const rows=data.rows??[];
-  if(section==="employees"||section==="roles")return <Employees actor={actor} data={data} refresh={refresh} rolesOnly={section==="roles"}/>;
+  if(section==="employees"||section==="roles")return <Employees actor={actor} data={data} refresh={refresh} rolesOnly={section==="roles"} setQuery={setQuery}/>;
   if(section==="scheduling"||section==="approvals")return <TimeViews section={section} actor={actor} data={data} refresh={refresh}/>;
   if(section==="document-security")return <DocumentView actor={actor} data={data} refresh={refresh} admin/>;
   if(section==="website")return <Website data={data} refresh={refresh}/>;

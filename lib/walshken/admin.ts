@@ -1,11 +1,16 @@
+import { passwordMatches } from "./passwords";
+import { verifyStaffMfa } from "./staff-mfa";
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
 import { divisions, providers, roles } from "./catalog";
+import { communicationAdmin, communicationPolicy, retentionCutoff } from "./collaboration";
+import { verifyLiveKitConnection, verifyRecordingStorage, validateLiveKit, validateStorage, type LiveKitSettings, type RecordingStorage } from "./livekit";
 import {
-  all, audit, canManage, canPayroll, canSuper, country, date, destination, digest, email, encryptSettings,
-  fail, id, integer, json, now, one, pick, requireSuper, run, scopedEmployee, stmt, str, timeZone, type Actor, type Db,
+  all, audit, canManage, canPayroll, canSuper, country, date, destination, digest, email, decryptSettings, encryptSettings,
+  fail, id, integer, json, now, one, pick, requireSuper, run, scopedEmployee, stmt, str, throttle, timeZone, type Actor, type Db,
 } from "./server";
 
+const employmentStatuses = ["Active", "On leave", "Ended"] as const;
 const types = ["Full-time", "Part-time", "Fixed-term", "Contractor"] as const;
 
 export async function adminAction(db: Db, actor: Actor, area: string, action: string, data: Record<string, unknown>) {
@@ -24,7 +29,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       }
       if (manager) {
         const supervisor = await scopedEmployee(db, actor, manager);
-        if (!canManage(supervisor) || supervisor.status !== "Active") fail(400, "Choose an active manager.");
+        if (!canManage(supervisor) || supervisor.status !== "Active" || supervisor.employment_status === "Ended") fail(400, "Choose an active manager.");
       }
       const code = randomBytes(27).toString("base64url");
       await db.batch([
@@ -36,18 +41,78 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
           division || null, office || null, manager || null, country(data.country), str(data.jurisdiction,"jurisdiction",30),
           timeZone(data.timeZone), pick(data.employmentType || "Full-time",types,"employment type"),
           date(data.hireDate,"hire date",false), date(data.contractStart,"contract start date",false), str(data.phone,"phone number",40,false) || null,
-          integer(data.expectedHours || "40","expected weekly hours",0,80), pick(data.breakPolicy || "unpaid",["paid","unpaid"],"break policy"),
-          data.leaveDays ? integer(data.leaveDays,"leave days",0,365) : null),
+          integer(data.expectedHours === "" || data.expectedHours == null ? "40" : data.expectedHours,"expected weekly hours",0,80), pick(data.breakPolicy || "unpaid",["paid","unpaid"],"break policy"),
+          data.leaveDays !== "" && data.leaveDays != null ? integer(data.leaveDays,"leave days",0,365) : null),
         stmt(db, "INSERT INTO invitations (id,employee_id,code_hash,expires_at) VALUES (?,?,?,?)", id(), target, await digest(code), new Date(Date.now() + 48 * 3_600_000).toISOString()),
         audit(db, actor, "Employee created", "employee", target),
       ]);
       return json({ ok: true, code, message: "Employee created. The activation code expires in 48 hours." }, 201);
     }
     const target = str(data.id, "employee", 80);
-    const employee = await scopedEmployee(db, actor, target, false);
-    if (employee.role === "super_admin") return fail(403, "This administrator is protected.");
+    const editingOwnAdmin = action==="edit" && target===actor.id && canSuper(actor);
+    const employee = await scopedEmployee(db, actor, target, editingOwnAdmin);
+    if (employee.role === "super_admin" && !editingOwnAdmin) return fail(403, "This administrator is protected.");
+    if (action === "edit") {
+      requireSuper(actor);
+      const employeeNo = data.employeeNo === undefined ? employee.employee_no : str(data.employeeNo,"employee ID",40);
+      const workEmail = data.email === undefined ? employee.email : email(data.email);
+      const department = str(data.department, "department", 80, false);
+      const division = str(data.division, "division", 80, false);
+      const office = str(data.office, "office", 80, false);
+      const manager = str(data.manager, "manager", 80, false);
+      const hire = date(data.hireDate, "hire date", false);
+      const contract = date(data.contractStart, "contract start date", false);
+      const end = date(data.employmentEnd, "employment end date", false);
+      const employmentStatus = pick(data.employmentStatus ?? employee.employment_status ?? "Active",employmentStatuses,"employment status");
+      if (employmentStatus==="Ended" && (editingOwnAdmin || !end)) {
+        fail(400,editingOwnAdmin?"The Super Admin record must remain active.":"Record the end date before ending employment.");
+      }
+      if (end && ((hire && end < hire) || (contract && end < contract))) {
+        fail(400, "Employment end date must follow hire and contract start dates.");
+      }
+      await db.transaction(async (tx) => {
+        await one(tx, "SELECT id FROM organizations WHERE id=? FOR UPDATE", actor.org_id);
+        for (const [key, kind] of [[department, "Department"], [division, "Division"], [office, "Office"]]) {
+          if (key && !await one(tx, "SELECT id FROM units WHERE id=? AND org_id=? AND kind=?", key, actor.org_id, kind)) {
+            fail(400, `Choose a valid ${kind.toLowerCase()}.`);
+          }
+        }
+        if (manager) {
+          const supervisor = await scopedEmployee(tx, actor, manager);
+          if (supervisor.id === target || !canManage(supervisor) || supervisor.status !== "Active" || supervisor.employment_status === "Ended") fail(400, "Choose an active manager.");
+          const cycle = await one(tx, `WITH RECURSIVE chain(id,manager_id) AS (
+            SELECT id,manager_id FROM employees WHERE id=? AND org_id=?
+            UNION
+            SELECT e.id,e.manager_id FROM employees e JOIN chain c ON e.id=c.manager_id WHERE e.org_id=?
+          ) SELECT id FROM chain WHERE id=?`, manager, actor.org_id, actor.org_id, target);
+          if (cycle) fail(400, "This reporting manager would create a reporting loop.");
+        }
+        const current = await one<{email:string}>(tx,"SELECT email FROM employees WHERE id=? AND org_id=? FOR UPDATE",target,actor.org_id);
+        if (!current) return fail(404,"Employee record is unavailable.");
+        await run(tx, `UPDATE employees SET employee_no=?,email=?,name=?,title=?,department_id=?,division_id=?,office_id=?,manager_id=?,
+          country=?,jurisdiction=?,time_zone=?,employment_type=?,hire_date=?,contract_start=?,employment_end=?,
+          phone=?,expected_hours=?,break_policy=?,leave_days=?,work_schedule=?,holiday_calendar=?,holiday_days=?,employment_status=? WHERE id=? AND org_id=?`,
+          employeeNo, workEmail, str(data.name,"employee name",100), str(data.title,"job title",100,false), department || null, division || null,
+          office || null, manager || null, country(data.country), str(data.jurisdiction,"jurisdiction",30),
+          timeZone(data.timeZone), pick(data.employmentType,types,"employment type"), hire, contract, end,
+          str(data.phone,"phone number",40,false) || null, integer(data.expectedHours,"expected weekly hours",0,80),
+          pick(data.breakPolicy,["paid","unpaid"],"break policy"), data.leaveDays !== "" && data.leaveDays != null ? integer(data.leaveDays,"leave days",0,365) : null,
+          str(data.workSchedule,"work schedule",180,false) || null, str(data.holidayCalendar,"holiday calendar",100,false) || null,
+          data.holidayDays !== "" && data.holidayDays != null ? integer(data.holidayDays,"annual holiday entitlement",0,365) : null,
+          employmentStatus,target, actor.org_id);
+        if (employmentStatus==="Ended" || current.email!==workEmail) {
+          const at=now();
+          await run(tx,"UPDATE sessions SET ended_at=? WHERE employee_id=? AND ended_at IS NULL",at,target);
+          await run(tx,"UPDATE invitations SET consumed_at=? WHERE employee_id=? AND consumed_at IS NULL",at,target);
+        }
+        await audit(tx, actor, "Employee profile updated", "employee", target).run();
+        if (current.email!==workEmail) await audit(tx,actor,"Staff sign-in email updated","identity",target).run();
+      });
+      return json({ ok: true, message: "Employee profile updated." });
+    }
     if (action === "status") {
       const status = pick(data.status, ["Active","Suspended"], "account status");
+      if (status==="Active" && employee.employment_status==="Ended") return fail(409,"Update employment status before reactivating access.");
       await db.batch([
         stmt(db, "UPDATE employees SET status=? WHERE id=?", status, target),
         stmt(db, "UPDATE sessions SET ended_at=? WHERE employee_id=? AND ended_at IS NULL AND ?='Suspended'", now(), target, status),
@@ -63,7 +128,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     }
     if (action === "invite") {
       requireSuper(actor);
-      if (employee.status !== "Active") return fail(409, "Reactivate this employee first.");
+      if (employee.status !== "Active" || employee.employment_status==="Ended") return fail(409, "Reactivate this employee first.");
       const code = randomBytes(27).toString("base64url");
       await db.batch([
         stmt(db,"UPDATE invitations SET consumed_at=? WHERE employee_id=? AND consumed_at IS NULL",now(),target),
@@ -85,6 +150,42 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     ]);
     return json({ ok:true, message:`${kind} added.` },201);
   }
+  if (area === "communication-policy") {
+    if(!communicationAdmin(actor))return fail(403,"Administrator access is required.");
+    if (action === "save") {
+      await db.batch([
+        stmt(db,`UPDATE organizations SET group_creation=?,group_approval=?,member_management=?,message_forwarding=?,
+          message_retention_days=?,external_messaging=?,message_changes=? WHERE id=?`,
+          pick(data.creation,["Super Admin","Managers","All staff"],"group creation policy"),
+          pick(data.approval,["0","1"],"approval policy")==="1"?1:0,
+          pick(data.members,["Super Admin","Owners","Members"],"participant management policy"),
+          pick(data.forwarding,["Disabled","Managers","All staff"],"forwarding policy"),
+          integer(data.retentionDays,"message retention days",0,3650),
+          pick(data.external,["0","1"],"guest messaging policy")==="1"?1:0,
+          pick(data.messageChanges,["Sender","Sender or Super Admin","Locked"],"message editing policy"),actor.org_id),
+        audit(db,actor,"Communication policy changed","organization",actor.org_id),
+      ]);
+      return json({ok:true,message:"Communication policy saved."});
+    }
+    if (action === "apply-retention") {
+      if(data.confirmation!=="ERASE") return fail(400,"Type ERASE to confirm permanent removal of expired message content.");
+      await db.transaction(async (tx) => {
+        await one(tx,"SELECT id FROM organizations WHERE id=? FOR UPDATE",actor.org_id);
+        const policy=await communicationPolicy(tx,actor);
+        if(!policy.message_retention_days) return fail(409,"Set a message retention period first.");
+        const cutoff=retentionCutoff(policy.message_retention_days);
+        await run(tx,`DELETE FROM message_reactions WHERE message_id IN (
+          SELECT m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.org_id=? AND m.created_at<?
+        )`,actor.org_id,cutoff);
+        await run(tx,`UPDATE messages SET body='',deleted_at=?,pinned=0 WHERE deleted_at IS NULL AND created_at<?
+          AND conversation_id IN (SELECT id FROM conversations WHERE org_id=?)`,now(),cutoff,actor.org_id);
+        await audit(tx,actor,"Message retention applied","organization",actor.org_id).run();
+      });
+      return json({ok:true,message:"Expired message content cleared."});
+    }
+    return fail(404,"Communication policy action unavailable.");
+  }
+
   if (area === "website") {
     requireSuper(actor);
     if (action === "inquiry") {
@@ -150,17 +251,51 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       return json({ ok:true, message:"Service availability saved." });
     }
   }
+  if(area==="integrations"&&action==="migrate-encryption"){
+    requireSuper(actor);
+    if(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION!=="1")return fail(409,"Legacy key migration is not enabled on this deployment.");
+    if(!process.env.WALSHKEN_INTEGRATION_KEY||!process.env.WALSHKEN_INTEGRATION_KEY_V2)return fail(409,"Run this migration in the earlier preview after both encryption keys are configured there.");
+    await throttle(db,`staff-mfa:${actor.id}`,8,300000);
+    return db.transaction(async tx=>{
+      const credential=await one<{password_hash:string}>(tx,"SELECT password_hash FROM credentials WHERE employee_id=? FOR UPDATE",actor.id);
+      const password=str(data.password,"current password",160);
+      if(!await passwordMatches(password,credential?.password_hash))return fail(401,"Current password is incorrect.");
+      await verifyStaffMfa(tx,actor.id,data.code,true);
+      const factors=await all<{employee_id:string;secret:string;pending_secret:string|null}>(tx,"SELECT f.employee_id,f.secret,f.pending_secret FROM staff_mfa f JOIN employees e ON e.id=f.employee_id WHERE e.org_id=? FOR UPDATE OF f",actor.org_id);
+      let migrated=0;
+      for(const factor of factors){
+        const secret=factor.secret.startsWith("v2.")?factor.secret:await encryptSettings(`staff-mfa:${factor.employee_id}`,await decryptSettings(`staff-mfa:${factor.employee_id}`,factor.secret));
+        const pending=factor.pending_secret&&!factor.pending_secret.startsWith("v2.")?await encryptSettings(`staff-mfa:${factor.employee_id}`,await decryptSettings(`staff-mfa:${factor.employee_id}`,factor.pending_secret)):factor.pending_secret;
+        if(secret!==factor.secret||pending!==factor.pending_secret){await run(tx,"UPDATE staff_mfa SET secret=?,pending_secret=? WHERE employee_id=?",secret,pending,factor.employee_id);migrated++;}
+      }
+      for(const integration of await all<{id:string;configuration:string}>(tx,"SELECT id,configuration FROM integrations FOR UPDATE"))if(!integration.configuration.startsWith("v2."))
+        await run(tx,"UPDATE integrations SET configuration=?,updated_at=? WHERE id=?",await encryptSettings(integration.id,await decryptSettings(integration.id,integration.configuration)),now(),integration.id);
+      await audit(tx,actor,"Encrypted staff factors and integrations migrated without changing authenticator secrets","security migration").run();
+      return json({ok:true,message:`Encryption migration completed for ${migrated} authenticator records. Passwords and authenticator codes are unchanged.`});
+    });
+  }
   if (area === "integrations" && (action === "save" || action === "disable")) {
     requireSuper(actor);
     const provider = providers.find((item) => item.id === data.provider);
     if (!provider) return fail(400,"Choose a listed integration.");
+    if(provider.id==="livekit"&&await one(db,"SELECT id FROM meetings WHERE provider='livekit' AND provider_room IS NOT NULL AND ended_at IS NULL AND cancelled_at IS NULL LIMIT 1"))return fail(409,"End active LiveKit meetings before changing the connection.");
+    if(provider.id==="livekit"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Wait for recordings to finish before changing the LiveKit connection.");
+    if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE deleted_at IS NULL LIMIT 1"))return fail(409,"Keep the current storage connection until all retained recordings are deleted. This prevents inaccessible recordings.");
     if (action === "disable") {
+      if(provider.id==="recording-storage"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Stop active recordings before disabling storage.");
       await db.batch([stmt(db,"UPDATE integrations SET enabled=0,updated_at=? WHERE id=?",now(),provider.id),audit(db,actor,"Integration disabled","integration",provider.id)]);
       return json({ ok:true,message:"Integration disabled." });
     }
     const settings: Record<string,string> = {};
     for (const [key, label] of provider.fields) settings[key] = str(data[key],label,400);
-    if (provider.id === "daily" && !/^[a-z0-9][a-z0-9-]{1,60}$/i.test(settings.domain)) return fail(400,"Enter the Daily subdomain without .daily.co.");
+    if(provider.id==="livekit") {
+      validateLiveKit(settings as LiveKitSettings);
+      if(data.enabled==="1") await verifyLiveKitConnection(settings as LiveKitSettings);
+    }
+    if(provider.id==="recording-storage") {
+      validateStorage(settings as RecordingStorage);
+      if(data.enabled==="1") await verifyRecordingStorage(settings as RecordingStorage);
+    }
     const protectedValue = await encryptSettings(provider.id, settings);
     await db.batch([
       stmt(db,`INSERT INTO integrations (id,configuration,enabled,updated_at) VALUES (?,?,?,?)

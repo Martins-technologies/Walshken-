@@ -1,0 +1,42 @@
+# Walshken calling review
+
+This change replaces the unused Daily integration with LiveKit. Production deployment requires owner approval after the review branch has been tested.
+
+## Owner setup
+
+1. Create a LiveKit Cloud project. Keep the API secret private. In Walshken, sign in as Super Admin and open Integrations → LiveKit. Enter the project's `wss://...livekit.cloud` URL, API key and API secret, then enable it. Enabling checks the API credentials against LiveKit. No key is bundled into the browser.
+2. In Supabase project `ssggjxyexwkshtcypsaq`, create a **private** Storage bucket named `walshken-call-recordings`. Keep “Public bucket” off. Under Storage S3 settings, enable the S3 connection and generate S3 credentials. The region is `us-west-2`. Copy the exact S3 endpoint shown by Supabase.
+3. In Integrations → Private recording storage, enter the S3 endpoint, region, bucket, S3 access key and S3 secret key. Enabling checks upload access and rejects a publicly readable verification object. Credentials are encrypted using the server integration key. Keep recording disabled if storage or billing is not ready.
+4. In LiveKit Cloud → Settings → Webhooks, add `https://REVIEW_OR_PRODUCTION_HOST/api/livekit/webhook` and select the same API key as the integration's signing key. Enable room, participant and egress events. This endpoint authenticates the raw payload signature and checksum, deduplicates events, and records actual media connections. A Preview protected by Vercel Authentication needs an approved provider-access arrangement before LiveKit can deliver webhooks. Do not disable website protection as a workaround.
+5. Set a strong `CRON_SECRET` privately on the deployment. The Vercel cron endpoint is `/api/livekit/maintenance`, scheduled every minute by `vercel.json`. Vercel Cron runs on Production deployments only; review requires a separately configured scheduler for this authenticated endpoint. Before launch, confirm the Vercel plan supports a minute schedule or use an authorized scheduler with the same Bearer secret. Maintenance closes overdue rooms, reconciles revoked users and egress state, and deletes expired recording objects. Recording expiry is enforced on download even before the next deletion sweep. Failures return non-200 and remain retryable.
+6. This review is restricted to the existing `walshken` Vercel project. The earlier preview project is not being changed. New review accounts use the versioned encryption key and require MFA enrollment. Existing accounts and their factors remain unchanged; accounts encrypted with the unavailable legacy key require a saved recovery code or separately approved recovery.
+
+For a future owner-approved key migration only: existing MFA factors use the legacy `WALSHKEN_INTEGRATION_KEY`. If its original value is unavailable, keep it configured on the original preview, add the same new `WALSHKEN_INTEGRATION_KEY_V2` to both review environments, and deploy the compatibility update to the original preview with owner approval. A Super Admin then signs in there and completes Integrations → Move preview access securely using their current password and a fresh authenticator or saved recovery code. The transaction re-encrypts all existing factors and integrations without changing passwords or authenticator secrets. The old key is never returned. Both prefixes remain readable by the compatibility deployment, and the main review reads the new prefix. Do not remove keys or roll back to older code that lacks versioned decryption before completing and verifying the migration.
+
+## Implementation
+
+- Scheduling and instant audio/video calls for one person or up to 99 invitees, with calendar entries and in-app invitation notifications.
+- Dedicated device check, browser camera/microphone selectors and controls, audio-only camera restrictions, screen presentation focus and responsive participant grid.
+- Private invite links resolve to authenticated Walshken membership. Links do not grant call access by themselves. External invitations require the company policy and an existing, active guest account. Anonymous outside visitors cannot bypass staff access or waiting rooms.
+- Host and co-host controls cover admission/denial, room locking, adding/removing participants, microphone mute and publishing/screen-sharing permissions. Browser tokens never receive room-admin or recording grants. Audio-only and screen-sharing limits are also encoded in server-issued permissions.
+- Short initial tokens, provider-side removal and token revocation, and server checks for account suspension, ended employment, removed membership and disabled external access. LiveKit Cloud is the supported deployment for immediate token revocation.
+- Signed participant events drive start/end times and attendance sessions. Reconnects have separate session records; repeated webhook deliveries are idempotent. Hosts and authorized invited administrators can export attendance as CSV. Clicked invitations do not count as attendance.
+- Recording is off by default. Super Admin configures authorized recording roles and retention. An authorized creator must explicitly allow recording for that meeting. Every non-removed invitee must consent individually before the server starts Egress. Consent withdrawal requests recording stop before saving withdrawal. Membership changes are blocked while recording is active or processing. Co-host access alone does not grant recording permission.
+- Recording-start intent is durable before the provider request, so timeouts can be reconciled without starting duplicate jobs. Egress callbacks and maintenance update actual processing/completion/failure state. Credentials cannot be rotated while doing so would orphan active calls or retained recordings.
+- Recordings are server-authorized downloads, with signed links valid for at most 60 seconds and never beyond retention expiry. Only invited hosts and administrators can download; only administrators can permanently delete. Storage deletion is retried on failure, preserving the pending record.
+
+## Automated verification
+
+Run `npm run test:calls`, `npm run typecheck` and `npm run build` using Node.js 22. The calling test uses real app routes, a fresh isolated PostgreSQL-compatible database, real JWT signing/verification and real webhook signatures. External LiveKit responses are simulated in the test only. Production code uses the official SDK and no simulated media or meeting data.
+
+Manual connected-provider acceptance still required: two browsers with microphone/camera, one-to-one audio/video, group calls, screen and system-audio sharing where supported by the browser, device denial and reconnect, host admission/removal/permissions, real webhook delivery, recording upload/playback/deletion, and scheduled expiry while all browsers are closed. Do not label the feature 100% complete before these connected-provider checks pass.
+
+LiveKit traffic uses encrypted WebRTC transport. Optional server-side composite recording requires the media to be available to the recorder; this implementation does not claim end-to-end encryption.
+
+## Active review delivery
+
+The owner approved an expiring share link on the `walshken` review deployment. The existing Supabase project hosts `walshken-livekit-review`, which validates LiveKit JWT signatures and body checksums before forwarding to the authenticated review endpoint. Its deployment access and versioned encryption key are encrypted in Supabase Vault; source code contains no credentials. The owner added this function URL as the LiveKit project webhook.
+
+Supabase Cron calls the same relay every minute for the authenticated maintenance endpoint, using a 90-second HMAC signature so the long-lived maintenance secret is not written into the pg_net queue. The review job automatically stops when the approved deployment share expires. Production uses the Vercel cron configuration after owner approval. Renew review access or launch before retained review recordings require cleanup beyond the temporary review window.
+
+Verified live: provider API authentication, private bucket creation and upload/delete probe, live password authentication for both new review accounts, signed webhook forwarding (200), tampered webhook rejection (401), and authenticated maintenance (200). Real two-browser microphone/camera and recording acceptance remain for manual review. Local native-browser launch was blocked by the execution environment, so no visual browser pass is claimed.

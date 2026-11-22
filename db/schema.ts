@@ -1,4 +1,4 @@
-import { bigint, integer, pgTable, text, check, uniqueIndex, index, customType } from "drizzle-orm/pg-core";
+import { bigint, integer, pgTable, text, check, uniqueIndex, index, customType, primaryKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 const key = () => text("id").primaryKey().notNull();
@@ -6,6 +6,16 @@ const stamp = (name = "created_at") => text(name).notNull().default(sql`(to_char
 
 export const organizations = pgTable("organizations", {
   id: key(), name: text("name").notNull(), timeZone: text("time_zone").notNull().default("America/Edmonton"),
+  groupCreation: text("group_creation").notNull().default("Managers"),
+  groupApproval: integer("group_approval").notNull().default(0),
+  memberManagement: text("member_management").notNull().default("Owners"),
+  messageForwarding: text("message_forwarding").notNull().default("Disabled"),
+  messageRetentionDays: integer("message_retention_days").notNull().default(0),
+  externalMessaging: integer("external_messaging").notNull().default(0),
+  externalMeetings: integer("external_meetings").notNull().default(0),
+  recordingPolicy: text("recording_policy").notNull().default("Disabled"),
+  recordingRetentionDays: integer("recording_retention_days").notNull().default(30),
+  messageChanges: text("message_changes").notNull().default("Sender"),
 });
 export const units = pgTable("units", {
   id: key(), orgId: text("org_id").notNull().references(() => organizations.id),
@@ -21,8 +31,11 @@ export const employees = pgTable("employees", {
   timeZone: text("time_zone").notNull().default("America/Edmonton"), employmentType: text("employment_type").notNull().default("Full-time"),
   hireDate: text("hire_date"), contractStart: text("contract_start"), employmentEnd: text("employment_end"), phone: text("phone"),
   expectedHours: integer("expected_hours").notNull().default(40), breakPolicy: text("break_policy").notNull().default("unpaid"),
-  leaveDays: integer("leave_days"), createdAt: stamp(), activatedAt: text("activated_at"), lastLoginAt: text("last_login_at"),
-}, (t) => [uniqueIndex("org_employee_no_unique").on(t.orgId, t.employeeNo), index("employee_manager_idx").on(t.orgId, t.managerId)]);
+  employmentStatus: text("employment_status").notNull().default("Active"),
+  leaveDays: integer("leave_days"), holidayDays: integer("holiday_days"), workSchedule: text("work_schedule"), holidayCalendar: text("holiday_calendar"),
+  firstLoginAt: text("first_login_at"), createdAt: stamp(), activatedAt: text("activated_at"), lastLoginAt: text("last_login_at"),
+}, (t) => [uniqueIndex("org_employee_no_unique").on(t.orgId, t.employeeNo), index("employee_manager_idx").on(t.orgId, t.managerId),
+  check("employee_employment_status", sql`${t.employmentStatus} in ('Active','On leave','Ended')`)]);
 export const sessions = pgTable("sessions", {
   id: key(), employeeId: text("employee_id").notNull().references(() => employees.id),
   createdAt: stamp(), expiresAt: text("expires_at").notNull(), endedAt: text("ended_at"), agent: text("agent").notNull(),
@@ -119,6 +132,11 @@ export const leave = pgTable("leave_requests", {
 export const conversations = pgTable("conversations", {
   id: key(), orgId: text("org_id").notNull().references(() => organizations.id), title: text("title").notNull(), kind: text("kind").notNull(),
   createdBy: text("created_by").notNull().references(() => employees.id), createdAt: stamp(),
+  status: text("status").notNull().default("Active"),
+  departmentId: text("department_id").references(() => units.id),
+  projectId: text("project_id").references(() => projects.id),
+  country: text("country"),
+  closesAt: text("closes_at"),
 });
 export const members = pgTable("conversation_members", {
   id: key(), conversationId: text("conversation_id").notNull().references(() => conversations.id),
@@ -127,7 +145,7 @@ export const members = pgTable("conversation_members", {
 export const messages = pgTable("messages", {
   id: key(), conversationId: text("conversation_id").notNull().references(() => conversations.id),
   senderId: text("sender_id").notNull().references(() => employees.id), body: text("body").notNull(),
-  replyTo: text("reply_to"), editedAt: text("edited_at"), deletedAt: text("deleted_at"), pinned: integer("pinned").notNull().default(0), createdAt: stamp(),
+  forwarded: integer("forwarded").notNull().default(0), replyTo: text("reply_to"), editedAt: text("edited_at"), deletedAt: text("deleted_at"), pinned: integer("pinned").notNull().default(0), createdAt: stamp(),
 }, (t) => [index("messages_by_conversation_time").on(t.conversationId, t.createdAt)]);
 export const reactions = pgTable("message_reactions", {
   id: key(), messageId: text("message_id").notNull().references(() => messages.id),
@@ -139,11 +157,41 @@ export const meetings = pgTable("meetings", {
   organizerId: text("organizer_id").notNull().references(() => employees.id),
   title: text("title").notNull(), startsAt: text("starts_at").notNull(), endsAt: text("ends_at").notNull(),
   providerRoom: text("provider_room"), createdAt: stamp(),
-});
+  mode: text("mode").notNull().default("Video"),
+  waitingRoom: integer("waiting_room").notNull().default(0),
+  screenSharing: text("screen_sharing").notNull().default("Everyone"),
+  cancelledAt: text("cancelled_at"),
+  provider: text("provider").notNull().default("livekit"),
+  startedAt: text("started_at"), endedAt: text("ended_at"), endReason: text("end_reason"),
+  lockedAt: text("locked_at"), recordingEnabled: integer("recording_enabled").notNull().default(0),
+  recordingRetentionDays: integer("recording_retention_days").notNull().default(30),
+}, (t) => [index("meeting_org_expiry").on(t.orgId,t.endsAt),index("meeting_organizer").on(t.organizerId)]);
 export const meetingMembers = pgTable("meeting_members", {
   id: key(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
   employeeId: text("employee_id").notNull().references(() => employees.id),
-}, (t) => [uniqueIndex("meeting_member_unique").on(t.meetingId, t.employeeId)]);
+  requestedAt: text("requested_at"),
+  admittedAt: text("admitted_at"),
+  removedAt: text("removed_at"), canPublish: integer("can_publish").notNull().default(1),
+  canShare: integer("can_share").notNull().default(1), coHost: integer("co_host").notNull().default(0),
+  recordingConsent: integer("recording_consent"), consentAt: text("consent_at"),
+}, (t) => [uniqueIndex("meeting_member_unique").on(t.meetingId, t.employeeId),index("meeting_member_employee").on(t.employeeId)]);
+
+export const meetingAttendance = pgTable("meeting_attendance", {
+  id: key(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
+  employeeId: text("employee_id").notNull().references(() => employees.id),
+  participantSid: text("participant_sid").notNull(), joinedAt: text("joined_at"), leftAt: text("left_at"), reason: text("reason"),
+}, (t) => [uniqueIndex("meeting_attendance_sid").on(t.participantSid), index("meeting_attendance_meeting").on(t.meetingId),index("meeting_attendance_employee").on(t.employeeId,t.meetingId)]);
+export const meetingRecordings = pgTable("meeting_recordings", {
+  id: key(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
+  createdBy: text("created_by").notNull().references(() => employees.id),
+  egressId: text("egress_id"), objectKey: text("object_key").notNull(), storageId: text("storage_id").notNull().default("recording-storage"),
+  status: text("status").notNull(), startedAt: text("started_at"), endedAt: text("ended_at"),
+  expiresAt: text("expires_at").notNull(), deletedAt: text("deleted_at"), createdAt: stamp(),
+}, (t) => [uniqueIndex("meeting_recording_egress").on(t.egressId), index("meeting_recording_expiry").on(t.expiresAt),index("meeting_recording_creator").on(t.createdBy),uniqueIndex("meeting_one_active_recording").on(t.meetingId).where(sql`${t.status} in ('Starting','Active','Stopping')`)]);
+export const meetingEvents = pgTable("meeting_events", {
+  id: text("id").primaryKey(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
+  event: text("event").notNull(), receivedAt: stamp(),
+}, (t) => [index("meeting_event_meeting").on(t.meetingId)]);
 
 export const documents = pgTable("documents", {
   id: key(), orgId: text("org_id").notNull().references(() => organizations.id),
@@ -187,6 +235,19 @@ export const fileObjects = pgTable("file_objects", {
 export const credentials = pgTable("credentials", {
   employeeId: text("employee_id").primaryKey().references(() => employees.id),
   passwordHash: text("password_hash").notNull(), updatedAt: stamp("updated_at"),
+});
+export const staffMfa = pgTable("staff_mfa", {
+  employeeId: text("employee_id").primaryKey().references(() => employees.id, { onDelete: "cascade" }),
+  secret: text("secret").notNull(), pendingSecret: text("pending_secret"), setupExpiresAt: text("setup_expires_at").notNull(),
+  confirmedAt: text("confirmed_at"), lastStep: integer("last_step").notNull().default(-1),
+});
+export const staffRecoveryCodes = pgTable("staff_recovery_codes", {
+  employeeId: text("employee_id").notNull().references(() => staffMfa.employeeId, { onDelete: "cascade" }),
+  codeHash: text("code_hash").notNull(),
+}, (table) => [primaryKey({ columns: [table.employeeId, table.codeHash] })]);
+export const staffAvatars = pgTable("staff_avatars", {
+  employeeId: text("employee_id").primaryKey().references(() => employees.id, { onDelete: "cascade" }),
+  mime: text("mime").notNull(), content: bytea("content").notNull(), updatedAt: stamp("updated_at"),
 });
 export const invitations = pgTable("invitations", {
   id: key(), employeeId: text("employee_id").notNull().references(() => employees.id),

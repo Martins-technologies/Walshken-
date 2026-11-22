@@ -22,6 +22,55 @@
       "when": 1794414708702,
       "tag": "0002_customer_portal",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795305031327,
+      "tag": "0003_staff_profiles_and_security",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795306431119,
+      "tag": "0004_employment_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1795307362040,
+      "tag": "0005_authenticator_replacement",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795340916266,
+      "tag": "0006_staff_communication",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795341658686,
+      "tag": "0007_staff_meetings",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795345749967,
+      "tag": "0008_low_goliath",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795346909417,
+      "tag": "0009_abnormal_mindworm",
+      "breakpoints": true
     }
   ]
 }

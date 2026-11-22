@@ -1,11 +1,14 @@
+import { collaborationRelease, releasedSections } from "./release";
+import { meetingViews, meetings } from "./meetings";
 import { adminNav, staffNav } from "./catalog";
-import { teamOptions } from "./collaboration";
-import { all, canManage, canPayroll, canSuper, fail, json, loadCatalog, now, one, requireStaff, requireSuper, scope, type Actor, type Db, type Row } from "./server";
+import { messageViews, teamOptions } from "./collaboration";
+import { all, canManage, canPayroll, canSuper, fail, json, loadCatalog, needsStaffMfa, now, one, requireStaff, requireSuper, scope, staffMfaRequired, type Actor, type Db, type Row } from "./server";
 import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
-  if(actor.role==="guest") return ["dashboard","profile","calls","documents","notifications"].includes(section);
+  if(collaborationRelease()&&!releasedSections.has(section))return false;
+  if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
   if(["payroll","holidays"].includes(section)) return canPayroll(actor);
   if(section==="employees") return canManage(actor)&&actor.role!=="manager";
@@ -31,23 +34,33 @@ async function taskRows(db:Db,actor:Actor,ownOnly=false){
     WHERE t.org_id=? AND ${scopeWhere.sql} ORDER BY CASE WHEN t.status IN ('Completed','Cancelled') THEN 1 ELSE 0 END,
     t.due_date ASC NULLS LAST,t.created_at DESC LIMIT 150`,actor.org_id,...scopeWhere.args);
 }
-async function meetings(db:Db,actor:Actor){
-  return all(db,`SELECT m.id,m.title,m.starts_at,m.ends_at,e.name AS organizer FROM meetings m
-    JOIN meeting_members p ON p.meeting_id=m.id JOIN employees e ON e.id=m.organizer_id WHERE m.org_id=? AND p.employee_id=?
-    ORDER BY m.starts_at DESC LIMIT 100`,actor.org_id,actor.id);
-}
 async function notifications(db:Db,actor:Actor){
   return all(db,"SELECT id,title,body,href,read_at,created_at FROM notifications WHERE employee_id=? ORDER BY created_at DESC LIMIT 70",actor.id);
 }
 
 export async function view(db:Db,actor:Actor,section:string,params:URLSearchParams){
   if(!canOpen(actor,section)) return fail(403,"You do not have access to this section.");
-  if(section==="profile") return json({row:await one(db,`SELECT e.employee_no,e.name,e.email,e.title,e.role,e.country,e.jurisdiction,e.time_zone,
-    e.hire_date,e.contract_start,e.employment_end,e.employment_type,e.phone,e.expected_hours,e.break_policy,e.leave_days,e.created_at,e.activated_at,e.last_login_at,
-    d.name AS department,v.name AS division,o.name AS office,m.name AS manager
-    FROM employees e LEFT JOIN units d ON d.id=e.department_id LEFT JOIN units v ON v.id=e.division_id LEFT JOIN units o ON o.id=e.office_id
-    LEFT JOIN employees m ON m.id=e.manager_id WHERE e.id=?`,actor.id),
-    sessions:await all(db,"SELECT created_at,expires_at,ended_at,agent FROM sessions WHERE employee_id=? ORDER BY created_at DESC LIMIT 15",actor.id)});
+  if(section==="profile"){
+    const mfaRequired = staffMfaRequired();
+    if(needsStaffMfa(actor)) return json({mfaRequired,enrollmentOnly:true});
+    const [row,sessions,compensation]=await Promise.all([
+      one(db,`SELECT e.employee_no,e.name,e.email,e.title,e.role,e.country,e.jurisdiction,e.time_zone,
+        e.hire_date,e.contract_start,e.employment_end,e.employment_type,e.phone,e.expected_hours,e.break_policy,
+        e.leave_days,e.holiday_days,e.work_schedule,e.holiday_calendar,e.employment_status,e.status,e.created_at,e.activated_at,e.first_login_at,e.last_login_at,
+        (SELECT a.updated_at FROM staff_avatars a WHERE a.employee_id=e.id) AS photo_version,
+        d.name AS department,v.name AS division,o.name AS office,m.name AS manager
+        FROM employees e LEFT JOIN units d ON d.id=e.department_id LEFT JOIN units v ON v.id=e.division_id
+        LEFT JOIN units o ON o.id=e.office_id LEFT JOIN employees m ON m.id=e.manager_id WHERE e.id=? AND e.org_id=?`,actor.id,actor.org_id),
+      all(db,"SELECT created_at,expires_at,ended_at,agent FROM sessions WHERE employee_id=? ORDER BY created_at DESC LIMIT 30",actor.id),
+      actor.role==="guest"?Promise.resolve(null):one(db,`SELECT kind,amount_cents,currency,effective_on FROM compensation
+        WHERE employee_id=? AND effective_on<=? ORDER BY effective_on DESC LIMIT 1`,actor.id,localDate(now(),actor.time_zone)),
+    ]);
+    return json({row:row&&{...row,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired});
+  }
+  if(section==="dashboard"&&collaborationRelease()){
+    const [conversations,events,alerts]=await Promise.all([messageViews(db,actor).then(response=>response.json()),meetings(db,actor),notifications(db,actor)]);
+    return json({collaborationOverview:true,conversations:conversations.rows,meetings:events.filter(row=>!row.ended_at&&!row.cancelled_at&&String(row.ends_at)>now()),alerts});
+  }
   if(section==="dashboard"){
     const [tasks,shiftRows,alerts,active,unsubmitted]=await Promise.all([
       taskRows(db,actor,true),
@@ -81,16 +94,8 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
   }
   if(section==="directory") return json({rows:await teamOptions(db,actor)});
   if(section==="notifications") return json({rows:await notifications(db,actor)});
-  if(section==="messages") return json({
-    rows:await all(db,`SELECT c.id,CASE WHEN c.kind='Direct' THEN COALESCE((SELECT e.name FROM conversation_members n JOIN employees e ON e.id=n.employee_id WHERE n.conversation_id=c.id AND n.employee_id<>? LIMIT 1),c.title)
-      ELSE c.title END AS title,c.kind,c.created_by,m.archived,
-      (SELECT count(*)::int FROM messages msg WHERE msg.conversation_id=c.id AND msg.sender_id<>? AND msg.deleted_at IS NULL AND (m.last_read_at IS NULL OR msg.created_at>m.last_read_at)) AS unread
-      FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id WHERE c.org_id=? AND m.employee_id=? ORDER BY c.created_at DESC`,
-      actor.id,actor.id,actor.org_id,actor.id),
-    staff:await teamOptions(db,actor),
-  });
-  if(section==="calls") return json({rows:await meetings(db,actor),staff:await teamOptions(db,actor),
-    provider:Boolean(await one(db,"SELECT id FROM integrations WHERE id='daily' AND enabled=1"))});
+  if(section==="messages") return messageViews(db,actor);
+  if(section==="calls") return meetingViews(db,actor);
   if(section==="documents"||section==="document-security"){
     const global=section==="document-security";
     return json({
@@ -115,12 +120,25 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
   if(section==="holidays") return json({rows:await all(db,"SELECT id,name,on_date,jurisdiction,type FROM holidays WHERE org_id=? ORDER BY on_date DESC LIMIT 150",actor.org_id)});
   if(section==="employees"||section==="roles"){
     const scoped=scope(actor);
-    return json({rows:await all(db,`SELECT e.id,e.name,e.employee_no,e.role,e.status,e.title,e.email,e.hire_date,e.activated_at,e.last_login_at,
-      e.created_at,u.name AS department FROM employees e LEFT JOIN units u ON u.id=e.department_id
-      WHERE e.org_id=? AND ${scoped.sql} ORDER BY e.name LIMIT 250`,actor.org_id,...scoped.args),
-      units:canSuper(actor)?await all(db,"SELECT id,kind,name FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id):[],
-      staff:canSuper(actor)?await all(db,"SELECT id,name FROM employees WHERE org_id=? AND status='Active' AND role IN ('super_admin','admin','hr','manager') ORDER BY name",actor.org_id):[],
-    });
+    const query=(params.get("q")??"").trim().slice(0,100);
+    const requestedPage=Number(params.get("page")??"1");
+    const pageSize=30;
+    const filter=`e.org_id=? AND ${scoped.sql}
+      AND (?='' OR strpos(lower(e.name),lower(?))>0 OR strpos(lower(e.email),lower(?))>0 OR strpos(lower(e.employee_no),lower(?))>0)`;
+    const args=[actor.org_id,...scoped.args,query,query,query,query];
+    const total=(await one<{count:number}>(db,`SELECT count(*)::int AS count FROM employees e WHERE ${filter}`,...args))?.count??0;
+    const pages=Math.max(1,Math.ceil(total/pageSize));
+    const page=Number.isSafeInteger(requestedPage)?Math.min(pages,Math.max(1,requestedPage)):1;
+    const [rows,units,staff]=await Promise.all([
+      all(db,`SELECT e.id,e.name,e.employee_no,e.role,e.status,e.title,e.email,e.hire_date,e.activated_at,e.last_login_at,
+        e.created_at,e.first_login_at,e.contract_start,e.employment_end,e.phone,e.employment_type,e.country,e.jurisdiction,
+        e.time_zone,e.expected_hours,e.break_policy,e.leave_days,e.holiday_days,e.work_schedule,e.holiday_calendar,e.employment_status,e.manager_id,e.department_id,e.division_id,e.office_id,
+        u.name AS department FROM employees e LEFT JOIN units u ON u.id=e.department_id
+        WHERE ${filter} ORDER BY e.name,e.id LIMIT ? OFFSET ?`,...args,pageSize,(page-1)*pageSize),
+      canSuper(actor)?all(db,"SELECT id,kind,name FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id):[],
+      canSuper(actor)?all(db,"SELECT id,name FROM employees WHERE org_id=? AND status='Active' AND role IN ('super_admin','admin','hr','manager') ORDER BY name",actor.org_id):[],
+    ]);
+    return json({rows,units,staff,registry:{query,page,pages,total}});
   }
   if(section==="departments") return json({rows:await all(db,"SELECT id,kind,name,country,region,time_zone FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id)});
   if(section==="audit"){
@@ -140,7 +158,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       inquiries:section==="website"?await all(db,"SELECT id,kind,name,email,country,service,message,created_at,status,customer_update,CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END AS customer_request FROM inquiries ORDER BY created_at DESC LIMIT 120"):[],
     });
   }
-  if(section==="integrations") return json({rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY)});
+  if(section==="integrations") return json({rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
   if(section==="reports"){
     const scoped=scope(actor);
     const today=localDate(now(),actor.time_zone);

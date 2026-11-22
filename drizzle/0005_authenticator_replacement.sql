@@ -1,0 +1,1 @@
+ALTER TABLE "staff_mfa" ADD COLUMN "pending_secret" text;
