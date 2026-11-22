@@ -1,4 +1,5 @@
 import { passwordMatches } from "./passwords";
+import { documentsEnabled } from "./document-access";
 import { verifyStaffMfa } from "./staff-mfa";
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
@@ -278,6 +279,10 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     requireSuper(actor);
     const provider = providers.find((item) => item.id === data.provider);
     if (!provider) return fail(400,"Choose a listed integration.");
+    if(provider.id==="document-storage-review"){
+      if(!documentsEnabled())return fail(404,"Document storage is not enabled on this deployment.");
+      if(action==="save"&&(await one(db,"SELECT v.id FROM doc_versions v JOIN doc_entries d ON d.id=v.document_id WHERE d.deleted_at IS NULL LIMIT 1")||await one(db,"SELECT id FROM doc_object_cleanup LIMIT 1")))return fail(409,"Keep the current bucket while document versions exist. A planned storage migration is required to rotate its connection.");
+    }
     if(provider.id==="livekit"&&await one(db,"SELECT id FROM meetings WHERE provider='livekit' AND provider_room IS NOT NULL AND ended_at IS NULL AND cancelled_at IS NULL LIMIT 1"))return fail(409,"End active LiveKit meetings before changing the connection.");
     if(provider.id==="livekit"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Wait for recordings to finish before changing the LiveKit connection.");
     if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE deleted_at IS NULL LIMIT 1"))return fail(409,"Keep the current storage connection until all retained recordings are deleted. This prevents inaccessible recordings.");
@@ -292,8 +297,9 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       validateLiveKit(settings as LiveKitSettings);
       if(data.enabled==="1") await verifyLiveKitConnection(settings as LiveKitSettings);
     }
-    if(provider.id==="recording-storage") {
+    if(provider.id==="recording-storage"||provider.id==="document-storage-review") {
       validateStorage(settings as RecordingStorage);
+      if(provider.id==="document-storage-review"&&settings.bucket==="walshken-call-recordings")return fail(400,"Use a separate private document bucket.");
       if(data.enabled==="1") await verifyRecordingStorage(settings as RecordingStorage);
     }
     const protectedValue = await encryptSettings(provider.id, settings);

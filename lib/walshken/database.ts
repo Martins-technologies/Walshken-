@@ -84,13 +84,15 @@ async function localAdapter() {
   await mkdir(directory, { recursive: true });
   const connection = new PGlite(directory);
   await connection.exec("CREATE TABLE IF NOT EXISTS walshken_migrations (name text PRIMARY KEY)");
-  for (const file of (await readdir(join(process.cwd(), "drizzle"))).filter((name) => name.endsWith(".sql")).sort()) {
+  for (const directory of ["drizzle","supabase/migrations"]) {
+  for (const file of (await readdir(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ process.cwd(), directory)).catch(()=>[])).filter((name) => name.endsWith(".sql")).sort()) {
     await connection.transaction(async (transaction) => {
       if ((await transaction.query("SELECT name FROM walshken_migrations WHERE name=$1", [file])).rows.length) return;
-      const sql = await readFile(join(process.cwd(), "drizzle", file), "utf8");
+      const sql = await readFile(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ process.cwd(), directory, file), "utf8");
       for (const part of sql.split("--> statement-breakpoint")) if (part.trim()) await transaction.exec(part);
       await transaction.query("INSERT INTO walshken_migrations (name) VALUES ($1)", [file]);
     });
+  }
   }
   return pgliteAdapter(connection);
 }

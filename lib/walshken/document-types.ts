@@ -1,0 +1,12 @@
+export const documentPermissions=["view","upload","edit","delete","forward","download","print","external","manage"] as const;
+export type DocumentPermission=typeof documentPermissions[number];
+export const permissionLabels:Record<DocumentPermission,string>={view:"View",upload:"Upload",edit:"Edit",delete:"Delete",forward:"Forward internally",download:"Download original",print:"Print",external:"Share externally",manage:"Manage permissions"};
+export const permissionBit=(permission:DocumentPermission)=>1<<documentPermissions.indexOf(permission);
+export const allDocumentPermissions=(1<<documentPermissions.length)-1;
+export const documentCategories=["Project document","Work instruction","Internal form","General document"] as const;
+export const documentLimits={bytes:3*1024*1024,pages:200,expandedBytes:40*1024*1024,zipEntries:2000,cells:100000};
+export const documentSafetyNotice="Browser restrictions cannot fully prevent screenshots, photography or information copying. Stronger data-loss protection may require managed devices. Revocation prevents future server access; it cannot recall information already viewed, printed or downloaded.";
+export type DocumentEntry={id:string;org_id:string;folder_id:string|null;department_id:string|null;group_id:string|null;owner_id:string;name:string;description:string;category:string;current_version:string|null;watermark:number;revoked_at:string|null;deleted_at:string|null;created_at:string;updated_at:string};
+export type FolderEntry={id:string;org_id:string;parent_id:string|null;name:string;department_id:string|null;group_id:string|null;created_by:string;revoked_at:string|null;created_at:string};
+export type DocumentRule={id:string;org_id:string;scope_type:string;scope_id:string;principal_type:string;principal_id:string;effect:string;mask:number;expires_at:string|null;created_by:string;source_document:string|null;source_actor:string|null;created_at:string};
+export type DocumentVersion={id:string;document_id:string;org_id:string;version:number;filename:string;mime:string;bytes:number;sha256:string;storage_key:string;page_count:number;created_by:string;created_at:string;note:string};

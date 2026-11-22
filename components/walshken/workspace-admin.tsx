@@ -175,10 +175,11 @@ function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
     {data.encryptionMigrationReady&&<Panel title="Move preview access securely" note="Re-encrypts stored authenticator data inside this server so the main review project can use the same passwords and authenticator codes. No encryption key or authenticator secret is returned.">
       <Disclosure title="Complete encryption migration"><ActionForm path="integrations/migrate-encryption" fields={[{name:"password",label:"Current password",type:"password",required:true,autoComplete:"current-password"},{name:"code",label:"Fresh authenticator or saved recovery code",required:true,autoComplete:"one-time-code"}]} submit="Migrate encrypted access data" refresh={refresh}/></Disclosure>
     </Panel>}
-    <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage"].includes(provider.id)).map((provider)=>{
+    <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage",...(data.documentStorageEnabled?["document-storage-review"]:[])].includes(provider.id)).map((provider)=>{
       const current=data.rows?.find((row)=>row.id===provider.id);
       return <Panel key={provider.id} title={provider.name} note={provider.description} action={<Status>{current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
         <div className="integration-label"><Icon name="plug" size={17}/>{provider.category}</div>
+        {provider.id==="document-storage-review"&&!current&&data.documentBucket&&<p className="form-note">Using the existing encrypted storage connection with the separate private bucket {data.documentBucket}. Dedicated document credentials can be configured here.</p>}
         {data.secureStorage&&<Disclosure title={current?"Update credentials":"Add credentials"}>
           <ActionForm path="integrations/save" fields={[
             ...provider.fields.map(([name,label])=>field(name,label,/key|secret|token|sid/i.test(name)?"password":"text")),
