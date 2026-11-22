@@ -13,7 +13,9 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node --env-file-if-exists=.env.local scripts/migrate.mjs",
-    "test:calls": "NODE_ENV=test node --import tsx tests/verify-livekit.mjs"
+    "test:calls": "NODE_ENV=test node --import tsx tests/verify-livekit.mjs",
+    "test:staff": "NODE_ENV=test node --import tsx tests/verify-staff.mjs",
+    "test:messages": "NODE_ENV=test node --import tsx tests/verify-messages.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1175.0",

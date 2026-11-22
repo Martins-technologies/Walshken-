@@ -1,3 +1,4 @@
+import { collaborationRelease, releasedSections } from "./release";
 import { meetingViews, meetings } from "./meetings";
 import { adminNav, staffNav } from "./catalog";
 import { messageViews, teamOptions } from "./collaboration";
@@ -6,6 +7,7 @@ import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
+  if(collaborationRelease()&&!releasedSections.has(section))return false;
   if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
   if(["payroll","holidays"].includes(section)) return canPayroll(actor);
@@ -54,6 +56,10 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
         WHERE employee_id=? AND effective_on<=? ORDER BY effective_on DESC LIMIT 1`,actor.id,localDate(now(),actor.time_zone)),
     ]);
     return json({row:row&&{...row,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired});
+  }
+  if(section==="dashboard"&&collaborationRelease()){
+    const [conversations,events,alerts]=await Promise.all([messageViews(db,actor).then(response=>response.json()),meetings(db,actor),notifications(db,actor)]);
+    return json({collaborationOverview:true,conversations:conversations.rows,meetings:events.filter(row=>!row.ended_at&&!row.cancelled_at&&String(row.ends_at)>now()),alerts});
   }
   if(section==="dashboard"){
     const [tasks,shiftRows,alerts,active,unsubmitted]=await Promise.all([
@@ -152,7 +158,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       inquiries:section==="website"?await all(db,"SELECT id,kind,name,email,country,service,message,created_at,status,customer_update,CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END AS customer_request FROM inquiries ORDER BY created_at DESC LIMIT 120"):[],
     });
   }
-  if(section==="integrations") return json({rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
+  if(section==="integrations") return json({rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
   if(section==="reports"){
     const scoped=scope(actor);
     const today=localDate(now(),actor.time_zone);

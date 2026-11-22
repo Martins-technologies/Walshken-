@@ -1,3 +1,4 @@
+import { collaborationRelease, releasedMutationAreas } from "@/lib/walshken/release";
 import { attendanceReport, meetingDetail, meetingAction } from "@/lib/walshken/meetings";
 import { staffMfaAction } from "@/lib/walshken/staff-mfa";
 import { closeOtherSessions, removeAvatar, staffAvatar, updateAvatar } from "@/lib/walshken/staff-profile";
@@ -20,6 +21,7 @@ export async function GET(request: Request, context: Context) {
     if (needsStaffMfa(actor) && (area !== "view" || action !== "profile")) {
       return fail(403, "Set up your authenticator before using the staff workspace.");
     }
+    if(collaborationRelease()&&["files","task-comments"].includes(area))return fail(404,"This feature is not released yet.");
     const params = new URL(request.url).searchParams;
     if (area === "profile" && action === "photo") return await staffAvatar(db, actor);
     if (area === "meeting") return await meetingDetail(db,actor,action);
@@ -48,6 +50,7 @@ export async function POST(request: Request, context: Context) {
     if(area==="profile"&&action==="photo") return await updateAvatar(db,actor,request);
     if(area==="profile"&&action==="remove-photo") return await removeAvatar(db,actor);
     if(area==="documents"&&action==="upload") return await uploadDocument(db,actor,request);
+    if(collaborationRelease()&&!releasedMutationAreas.has(area))return fail(404,"This feature is not released yet.");
     const data=await payload(request);
     if(area==="mfa") return await staffMfaAction(request,db,actor,action,data);
     if(area==="session"&&action==="password") return await changePassword(request,db,actor,data);

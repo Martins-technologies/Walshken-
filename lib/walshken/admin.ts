@@ -253,6 +253,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
   }
   if(area==="integrations"&&action==="migrate-encryption"){
     requireSuper(actor);
+    if(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION!=="1")return fail(409,"Legacy key migration is not enabled on this deployment.");
     if(!process.env.WALSHKEN_INTEGRATION_KEY||!process.env.WALSHKEN_INTEGRATION_KEY_V2)return fail(409,"Run this migration in the earlier preview after both encryption keys are configured there.");
     await throttle(db,`staff-mfa:${actor.id}`,8,300000);
     return db.transaction(async tx=>{
