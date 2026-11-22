@@ -1,6 +1,7 @@
 import { collaborationRelease, releasedSections } from "./release";
 import { documentsEnabled } from "./document-access";
 import { documentList } from "./documents";
+import { tasksEnabled,taskDashboard } from "./tasks";
 import { meetingViews, meetings } from "./meetings";
 import { adminNav, staffNav } from "./catalog";
 import { messageViews, teamOptions } from "./collaboration";
@@ -9,7 +10,7 @@ import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
-  if(collaborationRelease()&&!releasedSections.has(section)&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
+  if(collaborationRelease()&&!releasedSections.has(section)&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
   if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
   if(["payroll","holidays"].includes(section)) return canPayroll(actor);
@@ -61,7 +62,8 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
   }
   if(section==="dashboard"&&collaborationRelease()){
     const [conversations,events,alerts]=await Promise.all([messageViews(db,actor).then(response=>response.json()),meetings(db,actor),notifications(db,actor)]);
-    return json({collaborationOverview:true,conversations:conversations.rows,meetings:events.filter(row=>!row.ended_at&&!row.cancelled_at&&String(row.ends_at)>now()),alerts});
+    const taskData=tasksEnabled()&&actor.role!=="guest"?await taskDashboard(db,actor).then(r=>r.json()):null;
+    return json({collaborationOverview:true,conversations:conversations.rows,meetings:events.filter(row=>!row.ended_at&&!row.cancelled_at&&String(row.ends_at)>now()),alerts,taskSummary:taskData?.stats});
   }
   if(section==="dashboard"){
     const [tasks,shiftRows,alerts,active,unsubmitted]=await Promise.all([
@@ -74,7 +76,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
     ]);
     return json({tasks,shifts:shiftRows,alerts,active,drafts:unsubmitted?.count??0});
   }
-  if(section==="tasks") return json({rows:await taskRows(db,actor),staff:canManage(actor)?await staffChoices(db,actor):[],projects:await projectRows(db,actor)});
+  if(section==="tasks") return tasksEnabled()?taskDashboard(db,actor,params):json({rows:await taskRows(db,actor),staff:canManage(actor)?await staffChoices(db,actor):[],projects:await projectRows(db,actor)});
   if(section==="projects") return json({rows:await projectRows(db,actor)});
   if(["attendance","shifts","scheduling","timesheets","approvals","leave"].includes(section)){
     const rows=await timeRows(db,actor,section);

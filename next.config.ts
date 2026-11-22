@@ -3,7 +3,7 @@ import type { NextConfig } from "next";
 const config: NextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ["@electric-sql/pglite", "postgres", "pg", "pdfjs-dist", "@napi-rs/canvas", "mammoth", "exceljs", "yauzl"],
-  outputFileTracingIncludes: {"/api/documents/*":["./public/inter-latin.woff2","./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs","./node_modules/pdfjs-dist/standard_fonts/**/*","./node_modules/pdfjs-dist/cmaps/**/*","./node_modules/pdfjs-dist/wasm/**/*","./node_modules/@napi-rs/canvas-linux-x64-gnu/**/*"]},
+  outputFileTracingIncludes: {"/api/documents/*":["./public/inter-latin.woff2","./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs","./node_modules/pdfjs-dist/standard_fonts/**/*","./node_modules/pdfjs-dist/cmaps/**/*","./node_modules/pdfjs-dist/wasm/**/*","./node_modules/@napi-rs/canvas-linux-x64-gnu/**/*"],"/api/tasks/*":["./public/inter-latin.woff2","./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs","./node_modules/pdfjs-dist/standard_fonts/**/*","./node_modules/pdfjs-dist/cmaps/**/*","./node_modules/pdfjs-dist/wasm/**/*","./node_modules/@napi-rs/canvas-linux-x64-gnu/**/*"]},
   async headers() {
     return [{
       source: "/:path*",

@@ -1,5 +1,6 @@
 import { collaborationRelease, releasedMutationAreas } from "@/lib/walshken/release";
 import { documentsEnabled } from "@/lib/walshken/document-access";
+import { tasksEnabled } from "@/lib/walshken/tasks";
 import { attendanceReport, meetingDetail, meetingAction } from "@/lib/walshken/meetings";
 import { staffMfaAction } from "@/lib/walshken/staff-mfa";
 import { closeOtherSessions, removeAvatar, staffAvatar, updateAvatar } from "@/lib/walshken/staff-profile";
@@ -16,6 +17,7 @@ type Context = { params: Promise<{ parts: string[] }> };
 export async function GET(request: Request, context: Context) {
   try {
     const [area, action] = (await context.params).parts;
+    if(tasksEnabled()&&area==="task-comments")return fail(404,"Use the secure task workflow.");
     if(documentsEnabled()&&area==="files")return fail(404,"Use the secure document viewer.");
     const db = database();
     const actor = await currentActor(db, request);
@@ -40,6 +42,7 @@ export async function POST(request: Request, context: Context) {
   try {
     checkOrigin(request);
     const [area, action] = (await context.params).parts;
+    if(tasksEnabled()&&area==="tasks")return fail(404,"Use the secure task workflow.");
     if(documentsEnabled()&&area==="documents")return fail(404,"Use the secure document management endpoint.");
     if(area==="session"&&["login","bootstrap","activate","recover"].includes(action)) return await login(request,pick(action,["login","bootstrap","activate","recover"],"access method"),await payload(request));
     const db=database();

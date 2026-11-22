@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { metadataOrigin } from "@/lib/walshken/seo";
 import "./globals.css";
 import "@/components/walshken/documents.css";
+import "@/components/walshken/tasks.css";
 
 export const metadata: Metadata = {
   metadataBase: metadataOrigin,
