@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
 import { divisions, providers, roles } from "./catalog";
-import { communicationPolicy, retentionCutoff } from "./collaboration";
+import { communicationAdmin, communicationPolicy, retentionCutoff } from "./collaboration";
 import { verifyDailyConnection } from "./meetings";
 import {
   all, audit, canManage, canPayroll, canSuper, country, date, destination, digest, email, encryptSettings,
@@ -149,7 +149,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     return json({ ok:true, message:`${kind} added.` },201);
   }
   if (area === "communication-policy") {
-    requireSuper(actor);
+    if(!communicationAdmin(actor))return fail(403,"Administrator access is required.");
     if (action === "save") {
       await db.batch([
         stmt(db,`UPDATE organizations SET group_creation=?,group_approval=?,member_management=?,message_forwarding=?,

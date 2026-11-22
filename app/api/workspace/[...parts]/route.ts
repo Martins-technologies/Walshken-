@@ -24,7 +24,7 @@ export async function GET(request: Request, context: Context) {
     if (area === "profile" && action === "photo") return await staffAvatar(db, actor);
     if (area === "view") return await view(db,actor,action,params);
     if (area === "files") return await downloadDocument(db,actor,action,params.get("mode")==="preview");
-    if (area === "conversation") return await messagesFor(db,actor,action,params.get("q")??"",params.get("before")??"");
+    if (area === "conversation") return await messagesFor(db,actor,action,params.get("q")??"",params.get("before")??"",params.get("pinned")==="1");
     if (area === "task-comments") { requireStaff(actor); return json({rows:await taskDetails(db,actor,action)}); }
     return fail(404,"This workspace endpoint is unavailable.");
   } catch (error) { return handleError(error); }

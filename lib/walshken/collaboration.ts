@@ -12,6 +12,7 @@ type CommunicationPolicy = {
   group_creation: string; group_approval: number; member_management: string;
   message_forwarding: string; message_retention_days: number; external_messaging: number; message_changes: string;
 };
+export const communicationAdmin = (actor: Actor) => actor.role==="super_admin"||actor.role==="admin";
 type ChannelScope = { kind: string; department_id: string | null; project_id: string | null; country: string | null; closes_at: string | null };
 const conversationKinds = ["Direct","Group","Department","Project","Company","Country","Temporary","Private","External"] as const;
 export async function communicationPolicy(db: Db, actor: Actor) {
@@ -20,12 +21,12 @@ export async function communicationPolicy(db: Db, actor: Actor) {
   if (!policy) return fail(404, "Workspace policy is unavailable.");
   return policy;
 }
-export const canCreateGroups = (actor: Actor, policy: CommunicationPolicy) => canSuper(actor)
+export const canCreateGroups = (actor: Actor, policy: CommunicationPolicy) => communicationAdmin(actor)
   || actor.role !== "guest" && (policy.group_creation === "All staff" || (policy.group_creation === "Managers" && canManage(actor)));
 export const canForwardMessages = (actor: Actor, policy: CommunicationPolicy) => actor.role !== "guest"
   && (policy.message_forwarding === "All staff" || (policy.message_forwarding === "Managers" && canManage(actor)));
 export const canManageGroupMembers = (actor: Actor, owner: string, policy: CommunicationPolicy) =>
-  canSuper(actor) || actor.role !== "guest" && ((policy.member_management !== "Super Admin" && owner === actor.id) || policy.member_management === "Members");
+  communicationAdmin(actor) || actor.role !== "guest" && ((policy.member_management !== "Super Admin" && owner === actor.id) || policy.member_management === "Members");
 
 export function retentionCutoff(days: number) {
   return days ? new Date(Date.now() - days * 86_400_000).toISOString() : "";
@@ -51,7 +52,7 @@ async function channel(db:Db, actor:Actor, target:string, policy:CommunicationPo
   if(!row) return fail(404,"Conversation not found.");
   return row;
 }
-export async function messagesFor(db:Db,actor:Actor,target:string,query:string,before:string){
+export async function messagesFor(db:Db,actor:Actor,target:string,query:string,before:string,pinned=false){
   const q=str(query,"search",100,false);
   const cursor=str(before,"history cursor",150,false);
   return db.transaction(async tx=>{
@@ -65,10 +66,12 @@ export async function messagesFor(db:Db,actor:Actor,target:string,query:string,b
       LEFT JOIN messages quote ON quote.id=m.reply_to AND quote.conversation_id=m.conversation_id AND quote.deleted_at IS NULL AND quote.created_at>=?
       LEFT JOIN employees author ON author.id=quote.sender_id
       WHERE m.conversation_id=? AND m.created_at>=?
+      AND (?=0 OR (m.pinned=1 AND m.deleted_at IS NULL))
       AND (?='' OR m.created_at || '/' || m.id < ?)
       AND (?='' OR (m.deleted_at IS NULL AND strpos(lower(m.body),lower(?))>0))
-      ORDER BY m.created_at DESC,m.id DESC LIMIT 51`,cutoff,target,cutoff,cursor,cursor,q,q);
-    const members=await all(tx,`SELECT e.id,e.name,m.last_read_at FROM conversation_members m JOIN employees e ON e.id=m.employee_id WHERE m.conversation_id=? ORDER BY e.name`,target);
+      ORDER BY m.created_at DESC,m.id DESC LIMIT 51`,cutoff,target,cutoff,pinned?1:0,cursor,cursor,q,q);
+    const members=await all(tx,`SELECT e.id,e.name,e.role,m.last_read_at FROM conversation_members m JOIN employees e ON e.id=m.employee_id
+      WHERE m.conversation_id=? AND e.status='Active' AND e.employment_status<>'Ended' ORDER BY e.name`,target);
     const page=rows.slice(0,50), last=page.at(-1);
     return json({rows:page.reverse(),members,next:rows.length>50&&last?`${last.created_at}/${last.id}`:null});
   });
@@ -77,28 +80,36 @@ export async function messageViews(db:Db,actor:Actor) {
   const policy=await communicationPolicy(db,actor),filter=activeChannels(actor,policy);
   const rows=await all(db,`SELECT c.id,CASE WHEN c.kind='Direct' THEN COALESCE((SELECT e.name FROM conversation_members n JOIN employees e ON e.id=n.employee_id WHERE n.conversation_id=c.id AND n.employee_id<>? LIMIT 1),c.title)
       ELSE c.title END AS title,c.kind,c.created_by,c.closes_at,m.archived,
+      (SELECT MAX(msg.created_at) FROM messages msg WHERE msg.conversation_id=c.id AND msg.created_at>=?) AS last_message_at,
+      (SELECT CASE WHEN msg.deleted_at IS NULL THEN left(msg.body,90) ELSE 'Message removed' END
+        FROM messages msg WHERE msg.conversation_id=c.id AND msg.created_at>=?
+        ORDER BY msg.created_at DESC,msg.id DESC LIMIT 1) AS preview,
       (SELECT count(*)::int FROM messages msg WHERE msg.conversation_id=c.id AND msg.sender_id<>? AND msg.deleted_at IS NULL AND msg.created_at>=? AND (m.last_read_at IS NULL OR msg.created_at>m.last_read_at)) AS unread
-      FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id WHERE c.org_id=? AND m.employee_id=? AND ${filter.sql} ORDER BY c.created_at DESC`,actor.id,actor.id,retentionCutoff(policy.message_retention_days),actor.org_id,actor.id,...filter.args);
+      FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id WHERE c.org_id=? AND m.employee_id=? AND ${filter.sql}
+      ORDER BY COALESCE((SELECT MAX(msg.created_at) FROM messages msg WHERE msg.conversation_id=c.id),c.created_at) DESC,c.id`,
+      actor.id,retentionCutoff(policy.message_retention_days),retentionCutoff(policy.message_retention_days),actor.id,retentionCutoff(policy.message_retention_days),actor.org_id,actor.id,...filter.args);
   const staff=await teamOptions(db,actor);
-  if (canSuper(actor)&&policy.external_messaging) {
+  if (communicationAdmin(actor)&&policy.external_messaging) {
     staff.push(...await all<Row>(db,`SELECT id,name,'Guest' AS role FROM employees WHERE org_id=? AND role='guest' AND status='Active' AND employment_status<>'Ended' ORDER BY name`,actor.org_id));
   }
   return json({rows,staff,
     groups:canCreateGroups(actor,policy)?conversationKinds.filter(kind=>kind!=="Direct"
-      && ((kind!=="Company"&&kind!=="External")||canSuper(actor))
+      && ((kind!=="Company"&&kind!=="External")||communicationAdmin(actor))
       && (kind!=="Private"||canManage(actor))
       && (kind!=="External"||policy.external_messaging)) : [],
     departments:canCreateGroups(actor,policy)?await all(db,`SELECT id,name FROM units WHERE org_id=? AND kind='Department' AND (?=1 OR id=?) ORDER BY name`,actor.org_id,canSuper(actor)?1:0,actor.department_id):[],
     projects:canCreateGroups(actor,policy)?await all(db,`SELECT id,name FROM projects WHERE org_id=? AND (?=1 OR owner_id=? OR department_id=?) ORDER BY name`,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id):[],
     canForwardMessages:canForwardMessages(actor,policy),memberManagement:policy.member_management,messageChanges:policy.message_changes,
-    communicationPolicy:canSuper(actor)?policy:undefined,
-    pendingGroups:canSuper(actor)?await all(db,`SELECT c.id,c.title,c.kind,e.name,c.created_at FROM conversations c JOIN employees e ON e.id=c.created_by
-      WHERE c.org_id=? AND c.status='Pending' AND (c.closes_at IS NULL OR c.closes_at>?) ORDER BY c.created_at`,actor.org_id,now()):[],
+    communicationPolicy:communicationAdmin(actor)?policy:undefined,
+    pendingGroups:communicationAdmin(actor)?await all(db,`SELECT c.id,c.title,c.kind,e.name,c.created_at FROM conversations c JOIN employees e ON e.id=c.created_by
+      WHERE c.org_id=? AND c.status='Pending' AND (c.closes_at IS NULL OR c.closes_at>?)
+      AND (?=1 OR e.department_id=? OR e.manager_id=?) ORDER BY c.created_at`,actor.org_id,now(),canSuper(actor)?1:0,actor.department_id,actor.id):[],
   });
 }
 async function eligibleParticipant(db:Db,actor:Actor,target:string,scope:ChannelScope) {
   if(scope.kind==="External") {
-    const employee=await one<Actor>(db,`SELECT * FROM employees WHERE id=? AND org_id=? AND status='Active' AND employment_status<>'Ended'`,target,actor.org_id);
+    const employee=await one<Actor>(db,`SELECT * FROM employees WHERE id=? AND org_id=? AND status='Active' AND employment_status<>'Ended'
+      AND (?=1 OR role='guest' OR department_id=? OR manager_id=? OR id=?)`,target,actor.org_id,canSuper(actor)?1:0,actor.department_id,actor.id,actor.id);
     if(!employee) return fail(404,"Participant is unavailable.");
     return employee;
   }
@@ -119,12 +130,18 @@ export async function messageAction(db:Db,actor:Actor,action:string,data:Record<
 async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string,unknown>){
   const policy = await communicationPolicy(db,actor);
   if(action==="review"){
-    if(!canSuper(actor)) return fail(403,"Group review requires Super Admin access.");
+    if(!communicationAdmin(actor)) return fail(403,"Administrator access is required.");
     const target = str(data.conversation,"conversation",80);
     const status = pick(data.status,["Active","Rejected"],"approval decision");
     await db.transaction(async (tx) => {
       const group = await one<{created_by:string}>(tx,"SELECT created_by FROM conversations WHERE id=? AND org_id=? AND status='Pending' AND (closes_at IS NULL OR closes_at>?) FOR UPDATE",target,actor.org_id,now());
       if (!group) return fail(404,"Group request not found.");
+      if(!canSuper(actor)) {
+        const invalid=await one(tx,`SELECT m.id FROM conversation_members m JOIN employees e ON e.id=m.employee_id
+          WHERE m.conversation_id=? AND NOT (e.id=? OR e.department_id IS NOT DISTINCT FROM ? AND ?::text IS NOT NULL OR e.manager_id=?)
+          LIMIT 1`,target,actor.id,actor.department_id,actor.department_id,actor.id);
+        if(invalid) return fail(403,"The group includes employees outside your administration scope.");
+      }
       await run(tx,"UPDATE conversations SET status=? WHERE id=?",status,target);
       await audit(tx,actor,status==="Active"?"Group approved":"Group rejected","conversation",target).run();
       await notify(tx,group.created_by,"Group request reviewed",status==="Active"?"Your group is ready to use.":"Your group request was declined.","/staff/messages").run();
@@ -136,7 +153,7 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
     requireStaff(actor);
     const kind=pick(data.kind,conversationKinds,"conversation type");
     if(kind!=="Direct"&&!canCreateGroups(actor,policy)) return fail(403,"You do not have permission to create groups.");
-    if((kind==="Company"||kind==="External")&&!canSuper(actor)) return fail(403,"This group requires Super Admin access.");
+    if((kind==="Company"||kind==="External")&&!communicationAdmin(actor)) return fail(403,"This group requires administrator access.");
     if(kind==="Private"&&!canManage(actor)) return fail(403,"Management access is required for this group.");
     if(kind==="External"&&!policy.external_messaging) return fail(403,"Guest conversations are disabled.");
     const selection=kind==="Direct"&&typeof data.members==="string"?[data.members]:data.members;
@@ -161,19 +178,21 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
       if(exists) return json({ok:true,id:exists.id,message:"Conversation opened."});
     }
     const target=id(),title=kind==="Direct"?people[0].name:str(data.title,"channel name",100);
-    const status = kind!=="Direct" && policy.group_approval && !canSuper(actor) ? "Pending" : "Active";
+    const status = kind!=="Direct" && policy.group_approval && !communicationAdmin(actor) ? "Pending" : "Active";
     await db.batch([
       stmt(db,"INSERT INTO conversations (id,org_id,title,kind,created_by,status,department_id,project_id,country,closes_at) VALUES (?,?,?,?,?,?,?,?,?,?)",target,actor.org_id,title,kind,actor.id,status,department,project,market,closes),
       ...[actor.id,...participants].map((employee)=>stmt(db,"INSERT INTO conversation_members (id,conversation_id,employee_id) VALUES (?,?,?)",id(),target,employee)),
       audit(db,actor,status==="Active"?"Conversation created":"Group requested","conversation",target),
+      ...[actor.id,...participants].map(employee=>audit(db,actor,"Conversation participant invited","conversation membership",`${target}/${employee}`)),
     ]);
     if (status==="Active") await notifyConversation(db,actor,target,"You were added to a conversation");
     else await run(db,`INSERT INTO notifications (id,employee_id,title,body,href)
       SELECT ? || id,id,'Group request awaiting review','Review the request in Messages.','/staff/messages'
-      FROM employees WHERE org_id=? AND role='super_admin' AND status='Active' AND employment_status<>'Ended'`,id(),actor.org_id);
+      FROM employees WHERE org_id=? AND role IN ('super_admin','admin') AND status='Active' AND employment_status<>'Ended'
+      AND (role='super_admin' OR department_id=? OR id=?)`,id(),actor.org_id,actor.department_id,actor.manager_id);
     return json(status==="Active"
       ? {ok:true,id:target,message:"Conversation created."}
-      : {ok:true,message:"Group request sent to a Super Admin."},201);
+      : {ok:true,message:"Group request sent for administrator approval."},201);
   }
   const target=str(data.conversation,"conversation",80);
   const conversation=await channel(db,actor,target,policy);
@@ -203,20 +222,23 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
     const reply=str(data.reply,"reply",80,false);
     if(reply&&!await one(db,"SELECT id FROM messages WHERE id=? AND conversation_id=? AND deleted_at IS NULL AND created_at>=?",reply,target,retentionCutoff(policy.message_retention_days))) return fail(400,"The message you are replying to is unavailable.");
     const mention = str(data.mention,"mention",80,false);
+    const selected=memberIds(data.mentions??[],20);
+    if(mention&&!selected.includes(mention))selected.push(mention);
     const message=id(),body=str(data.body,"message",4000);
     await db.transaction(async (tx) => {
       const membership = await one(tx,"SELECT id FROM conversation_members WHERE conversation_id=? AND employee_id=? FOR KEY SHARE",target,actor.id);
       if (!membership) return fail(404,"Conversation not found.");
       let text = body;
-      if (mention) {
+      for (const person of selected) {
         const member = await one<{name:string}>(tx,`SELECT e.name FROM conversation_members m JOIN employees e ON e.id=m.employee_id
-          WHERE m.conversation_id=? AND m.employee_id=? AND e.status='Active' AND e.employment_status<>'Ended' AND e.id<>? FOR KEY SHARE OF m`,target,mention,actor.id);
+          WHERE m.conversation_id=? AND m.employee_id=? AND e.status='Active' AND e.employment_status<>'Ended' AND e.id<>? FOR KEY SHARE OF m`,target,person,actor.id);
         if (!member) return fail(400,"Choose a permitted participant to mention.");
-        text = str(`@${member.name} ${body}`,"message",4000);
-        await notify(tx,mention,"Mentioned in a conversation",`${actor.name} mentioned you.`,`/staff/messages?conversation=${target}`).run();
+        if(person===mention&&!text.includes(`@${member.name}`))text=str(`@${member.name} ${text}`,"message",4000);
+        if(!text.includes(`@${member.name}`))return fail(400,"Insert the selected mention into your message.");
+        await notify(tx,person,"Mentioned in a conversation",`${actor.name} mentioned you.`,`/staff/messages?conversation=${target}`).run();
       }
       await run(tx,"INSERT INTO messages (id,conversation_id,sender_id,body,reply_to) VALUES (?,?,?,?,?)",message,target,actor.id,text,reply||null);
-      await notifyConversation(tx,actor,target,"New message",mention);
+      await notifyConversation(tx,actor,target,"New message",selected);
     });
     return json({ok:true,id:message},201);
   }
@@ -232,7 +254,7 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
     return json({ok:true});
   }
   if(action==="member"){
-    if(conversation.kind==="Direct"||(!canSuper(actor)&&conversation.kind==="External")||!canManageGroupMembers(actor,conversation.created_by,policy)) return fail(403,"You cannot manage this conversation.");
+    if(conversation.kind==="Direct"||(!communicationAdmin(actor)&&conversation.kind==="External")||!canManageGroupMembers(actor,conversation.created_by,policy)) return fail(403,"You cannot manage this conversation.");
     const employee=str(data.employee,"employee",80);
     if(employee===conversation.created_by) return fail(400,"The conversation owner must remain a member.");
     const operation=pick(data.operation,["add","remove"],"membership action");
@@ -260,13 +282,16 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
     return json({ok:true});
   }
   if(action==="pin"){
-    if(conversation.created_by!==actor.id&&!canSuper(actor)) return fail(403,"Only the conversation owner can pin messages.");
+    if(conversation.created_by!==actor.id&&!communicationAdmin(actor)) return fail(403,"Only the conversation owner or an administrator can pin messages.");
     await run(db,"UPDATE messages SET pinned=? WHERE id=?",data.pinned==="1"?1:0,message);
     return json({ok:true});
   }
   if(policy.message_changes==="Locked") return fail(403,"Editing and removal are disabled by your workspace policy.");
   if(row.sender_id!==actor.id&&!(action==="delete"&&policy.message_changes==="Sender or Super Admin"&&canSuper(actor))) return fail(403,"You do not have permission to edit or remove this message.");
-  if(action==="edit") await run(db,"UPDATE messages SET body=?,edited_at=? WHERE id=?",str(data.body,"message",4000),now(),message);
+  if(action==="edit") {
+    await run(db,"UPDATE messages SET body=?,edited_at=? WHERE id=?",str(data.body,"message",4000),now(),message);
+    await audit(db,actor,"Message edited","message",message).run();
+  }
   else if(action==="delete") {
     await run(db,"UPDATE messages SET body='',deleted_at=?,pinned=0 WHERE id=?",now(),message);
     await audit(db,actor,"Message removed","message",message).run();
@@ -275,12 +300,13 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
   return json({ok:true});
 }
 
-async function notifyConversation(db:Db,actor:Actor,target:string,title:string,excluded=actor.id) {
+async function notifyConversation(db:Db,actor:Actor,target:string,title:string,excluded:string|string[]=actor.id) {
+  const exclusions=[actor.id,...(Array.isArray(excluded)?excluded:[excluded])];
   await run(db,`INSERT INTO notifications (id,employee_id,title,body,href)
     SELECT ? || m.id,e.id,?,'Open Messages to view the conversation.',?
     FROM conversation_members m JOIN employees e ON e.id=m.employee_id
-    WHERE m.conversation_id=? AND e.org_id=? AND e.id<>? AND e.id<>? AND e.status='Active' AND e.employment_status<>'Ended'`,
-    id(),title,`/staff/messages?conversation=${target}`,target,actor.org_id,actor.id,excluded||actor.id);
+    WHERE m.conversation_id=? AND e.org_id=? AND e.id NOT IN (${exclusions.map(()=>"?").join(",")}) AND e.status='Active' AND e.employment_status<>'Ended'`,
+    id(),title,`/staff/messages?conversation=${target}`,target,actor.org_id,...exclusions);
 }
 
 const allowedFiles:Record<string,string>={pdf:"application/pdf",png:"image/png",jpg:"image/jpeg",jpeg:"image/jpeg",
