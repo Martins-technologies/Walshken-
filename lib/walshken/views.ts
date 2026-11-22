@@ -1,4 +1,6 @@
 import { collaborationRelease, releasedSections } from "./release";
+import { documentsEnabled } from "./document-access";
+import { documentList } from "./documents";
 import { meetingViews, meetings } from "./meetings";
 import { adminNav, staffNav } from "./catalog";
 import { messageViews, teamOptions } from "./collaboration";
@@ -7,7 +9,7 @@ import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
-  if(collaborationRelease()&&!releasedSections.has(section))return false;
+  if(collaborationRelease()&&!releasedSections.has(section)&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
   if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
   if(["payroll","holidays"].includes(section)) return canPayroll(actor);
@@ -97,6 +99,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
   if(section==="messages") return messageViews(db,actor);
   if(section==="calls") return meetingViews(db,actor);
   if(section==="documents"||section==="document-security"){
+    if(documentsEnabled())return documentList(db,actor);
     const global=section==="document-security";
     return json({
       rows:await all(db,`SELECT d.id,d.name,d.mime,d.bytes,d.owner_id,d.revoked_at,d.created_at,e.name AS owner,
@@ -158,7 +161,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       inquiries:section==="website"?await all(db,"SELECT id,kind,name,email,country,service,message,created_at,status,customer_update,CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END AS customer_request FROM inquiries ORDER BY created_at DESC LIMIT 120"):[],
     });
   }
-  if(section==="integrations") return json({rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
+  if(section==="integrations") return json({documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
   if(section==="reports"){
     const scoped=scope(actor);
     const today=localDate(now(),actor.time_zone);

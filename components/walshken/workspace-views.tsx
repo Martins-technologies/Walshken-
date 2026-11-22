@@ -1,6 +1,7 @@
 "use client";
 import { Calls } from "./calls";
 import { Messages } from "./messages";
+import { DocumentWorkspace } from "./documents";
 import { StaffSecurity } from "./staff-security";
 
 import { useCallback, useEffect, useState } from "react";
@@ -11,6 +12,7 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  managedDocuments?:boolean;documentStorageEnabled?:boolean;documentBucket?:string;
   collaborationOverview?:boolean; conversations?:RecordRow[];
   rows?:RecordRow[]; row?:RecordRow; staff?:RecordRow[]; projects?:RecordRow[]; shifts?:RecordRow[]; tasks?:RecordRow[];
   alerts?:RecordRow[]; corrections?:RecordRow[]; meetings?:RecordRow[]; leave?:RecordRow[]; holidays?:RecordRow[];
@@ -184,6 +186,10 @@ function Calendar({data,actor}:{data:ViewData;actor:Viewer}){
 }
 
 export function DocumentView({actor,data,refresh,admin=false}:{actor:Viewer;data:ViewData;refresh:()=>void;admin?:boolean}){
+  if(data.managedDocuments)return <DocumentWorkspace actor={actor} initial={data} admin={admin}/>;
+  return <LegacyDocumentView actor={actor} data={data} refresh={refresh} admin={admin}/>;
+}
+function LegacyDocumentView({actor,data,refresh,admin=false}:{actor:Viewer;data:ViewData;refresh:()=>void;admin?:boolean}){
   const [share,setShare]=useState("");
   return <Panel title={admin?"Private document registry":"Your documents"} note="Files are available only to authorized staff.">
     {!admin&&actor.role!=="guest"&&<Disclosure title="Upload a document"><ActionForm path="documents/upload" fields={[field("file","PDF, Office document or image, up to 3 MB","file")]} submit="Upload privately" refresh={refresh} file/></Disclosure>}
