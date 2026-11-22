@@ -1,4 +1,4 @@
-import { meetingAction } from "@/lib/walshken/meetings";
+import { attendanceReport, meetingDetail, meetingAction } from "@/lib/walshken/meetings";
 import { staffMfaAction } from "@/lib/walshken/staff-mfa";
 import { closeOtherSessions, removeAvatar, staffAvatar, updateAvatar } from "@/lib/walshken/staff-profile";
 import { adminAction } from "@/lib/walshken/admin";
@@ -22,6 +22,8 @@ export async function GET(request: Request, context: Context) {
     }
     const params = new URL(request.url).searchParams;
     if (area === "profile" && action === "photo") return await staffAvatar(db, actor);
+    if (area === "meeting") return await meetingDetail(db,actor,action);
+    if (area === "meeting-attendance") return await attendanceReport(db,actor,action);
     if (area === "view") return await view(db,actor,action,params);
     if (area === "files") return await downloadDocument(db,actor,action,params.get("mode")==="preview");
     if (area === "conversation") return await messagesFor(db,actor,action,params.get("q")??"",params.get("before")??"",params.get("pinned")==="1");

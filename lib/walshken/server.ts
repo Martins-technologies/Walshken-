@@ -227,20 +227,23 @@ export const loadCatalog = cache(async (): Promise<SiteCatalog> => {
 
 function base64(bytes: Uint8Array) { return btoa(String.fromCharCode(...bytes)); }
 function unbase64(value: string) { return Uint8Array.from(atob(value), (character) => character.charCodeAt(0)); }
-async function encryptionKey() {
-  if (!process.env.WALSHKEN_INTEGRATION_KEY) return fail(503, "Secure integration storage is awaiting environment configuration.");
-  const raw = unbase64(process.env.WALSHKEN_INTEGRATION_KEY);
+async function encryptionKey(version: "legacy" | "v2") {
+  const value=version==="v2"?process.env.WALSHKEN_INTEGRATION_KEY_V2:process.env.WALSHKEN_INTEGRATION_KEY;
+  if (!value) return fail(503, version==="legacy"?"Your existing authenticator data must be migrated from the earlier preview before it can be used here.":"Secure integration storage is awaiting environment configuration.");
+  const raw = unbase64(value);
   if (raw.byteLength !== 32) return fail(503, "Secure integration storage is awaiting environment configuration.");
   return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]);
 }
 export async function encryptSettings(provider: string, settings: Record<string, string>) {
+  const version=process.env.WALSHKEN_INTEGRATION_KEY_V2?"v2":"legacy";
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: new TextEncoder().encode(provider) },
-    await encryptionKey(), new TextEncoder().encode(JSON.stringify(settings)));
-  return `${base64(iv)}.${base64(new Uint8Array(ciphertext))}`;
+    await encryptionKey(version), new TextEncoder().encode(JSON.stringify(settings)));
+  return `${version==="v2"?"v2.":""}${base64(iv)}.${base64(new Uint8Array(ciphertext))}`;
 }
 export async function decryptSettings(provider: string, value: string) {
-  const [iv, ciphertext] = value.split(".");
-  const clear = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unbase64(iv), additionalData: new TextEncoder().encode(provider) }, await encryptionKey(), unbase64(ciphertext));
+  const version=value.startsWith("v2.")?"v2":"legacy";
+  const [iv, ciphertext] = (version==="v2"?value.slice(3):value).split(".");
+  const clear = await crypto.subtle.decrypt({ name: "AES-GCM", iv: unbase64(iv), additionalData: new TextEncoder().encode(provider) }, await encryptionKey(version), unbase64(ciphertext));
   return JSON.parse(new TextDecoder().decode(clear)) as Record<string, string>;
 }

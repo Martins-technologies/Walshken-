@@ -1,4 +1,5 @@
 "use client";
+import { Calls } from "./calls";
 import { Messages } from "./messages";
 import { StaffSecurity } from "./staff-security";
 
@@ -14,11 +15,11 @@ export type ViewData = {
   alerts?:RecordRow[]; corrections?:RecordRow[]; meetings?:RecordRow[]; leave?:RecordRow[]; holidays?:RecordRow[];
   sessions?:RecordRow[]; units?:RecordRow[]; rates?:RecordRow[]; availability?:RecordRow[]; inquiries?:RecordRow[];
   registry?: { query: string; page: number; pages: number; total: number };
-  pendingAttendees?:RecordRow[]; guestMeetings?:boolean;
+  pendingAttendees?:RecordRow[]; guestMeetings?:boolean; recordingStorage?:boolean; meetingPolicy?:RecordRow;
   groups?:string[]; departments?:RecordRow[]; canForwardMessages?:boolean; messageChanges?:string;
   memberManagement?:string; pendingGroups?:RecordRow[]; communicationPolicy?:RecordRow;
   enrollmentOnly?:boolean; mfaRequired?:boolean; compensation?:RecordRow|null;
-  active?:RecordRow|null; drafts?:number; provider?:boolean; secureStorage?:boolean; catalog?:SiteCatalog;
+  active?:RecordRow|null; drafts?:number; provider?:boolean; secureStorage?:boolean; encryptionMigrationReady?:boolean; catalog?:SiteCatalog;
 };
 export const manages=(actor:Viewer)=>["super_admin","admin","manager","hr"].includes(actor.role);
 export const employeeField=(staff:RecordRow[],name="employee",label="Employee"):Field=>({name,label,options:options(staff),required:true});
@@ -170,68 +171,6 @@ function Calendar({data,actor}:{data:ViewData;actor:Viewer}){
           <span className="calendar-event" title={`${event.type}: ${event.title}`} key={`${event.type}-${event.id}`}>{event.title}</span>)}
       </div>;})}
     </div></div>
-  </Panel>;
-}
-
-function Calls({data,actor,refresh}:{data:ViewData;actor:Viewer;refresh:()=>void}){
-  const [focus,setFocus]=useState(""),[notice,setNotice]=useState("");
-  useEffect(()=>{
-    setFocus(new URLSearchParams(window.location.search).get("meeting")??"");
-  },[]);
-  useEffect(()=>{
-    const timer=setInterval(()=>{if(document.visibilityState==="visible")refresh();},12000);
-    return()=>clearInterval(timer);
-  },[refresh]);
-  async function copyLink(id:string){
-    try {
-      const link=new URL("/staff/calls",window.location.origin);
-      link.searchParams.set("meeting",id);
-      await navigator.clipboard.writeText(link.href);
-      setNotice("Invite link copied. Only invited accounts can open the meeting.");
-    } catch {
-      setNotice("The meeting link could not be copied.");
-    }
-  }
-  const common:Field[]=[
-    field("title","Meeting title"),
-    {name:"type",label:"Call size",options:["One-to-one","Group"],value:"Group",required:true},
-    {name:"mode",label:"Call mode",options:["Audio","Video"],value:"Video",required:true},
-    {name:"waiting",label:"Admission",options:[["0","Invited participants join directly"],["1","Host admits invited participants"]],value:"0",required:true},
-    {name:"screenSharing",label:"Screen sharing",options:["Everyone","Host","Disabled"],value:"Everyone",required:true},
-    {name:"members",label:"Invite participants",options:options((data.staff??[]).filter(row=>row.id!==actor.id)),multiple:true,required:true},
-  ];
-  const ordered=[...(data.rows??[])].sort((a,b)=>Number(b.id===focus)-Number(a.id===focus));
-  return <Panel title="Meetings" note={!data.provider?"Scheduling is available. A Super Admin can connect Daily in Integrations to enable browser calls.":undefined}>
-    {actor.role==="super_admin"&&<Disclosure title="Guest invitations">
-      <ActionForm path="calls/guest-policy" fields={[
-        {name:"enabled",label:"External guest accounts",options:[["0","Disabled"],["1","Super Admin can invite guests"]],value:data.guestMeetings?"1":"0",required:true},
-      ]} submit="Save guest policy" refresh={refresh} reset={false}/>
-    </Disclosure>}
-    {actor.role!=="guest"&&<Disclosure title="Schedule a meeting"><ActionForm path="calls/schedule" fields={[
-      ...common,field("startsAt","Starts","datetime-local"),field("endsAt","Ends","datetime-local"),
-    ]} submit="Schedule meeting" refresh={refresh} onDone={result=>setFocus(result.id??"")}/></Disclosure>}
-    {actor.role!=="guest"&&data.provider&&<Disclosure title="Start an instant call">
-      <ActionForm path="calls/start" fields={common} submit="Create instant call" refresh={refresh} onDone={result=>setFocus(result.id??"")}/>
-    </Disclosure>}
-    {Boolean(data.pendingAttendees?.length)&&<Disclosure title="Participants waiting to join"><Table rows={data.pendingAttendees??[]}
-      columns={[column("name","Participant"),column("title","Meeting"),dateColumn("requested_at","Requested",true,actor.timeZone)]}
-      actions={row=><Quick path="calls/admit" data={{id:row.meeting,employee:row.employee}} refresh={refresh}>Admit</Quick>}/>
-    </Disclosure>}
-    <Table rows={ordered} columns={[
-      {key:"title",title:"Meeting",render:row=><>{row.id===focus&&<strong>Selected · </strong>}{row.title}</>},
-      column("mode","Mode"),dateColumn("starts_at","Starts",true,actor.timeZone),dateColumn("ends_at","Ends",true,actor.timeZone),column("organizer","Host"),
-      {key:"status",title:"Access",render:row=><Status>{row.cancelled_at?"Cancelled":Date.parse(value(row,"ends_at"))<=Date.now()?"Ended":row.admitted_at?"Admitted":row.requested_at?"Waiting for host":"Invited"}</Status>},
-    ]} actions={row=>!row.cancelled_at&&Date.parse(value(row,"ends_at"))>Date.now()&&<>
-      {data.provider&&Date.parse(value(row,"starts_at"))-15*60_000<=Date.now()&&
-        <Quick path="calls/join" data={{id:row.id}} refresh={refresh} onDone={result=>{if(result.url)window.location.assign(result.url);else setNotice(result.message??"");}}>
-          {row.waiting_room&&row.organizer_id!==actor.id&&!row.admitted_at?"Request entry":"Join"}
-        </Quick>}
-      {row.organizer_id===actor.id&&<>
-        <button className="btn btn-outline btn-small" type="button" onClick={()=>copyLink(value(row,"id"))}>Copy invite link</button>
-        <Quick path="calls/cancel" data={{id:row.id}} refresh={refresh}>Cancel meeting</Quick>
-      </>}
-    </>} empty="No meetings scheduled"/>
-    {notice&&<p className="form-note" role="status">{notice}</p>}
   </Panel>;
 }
 

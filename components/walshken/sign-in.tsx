@@ -25,7 +25,7 @@ export function SignIn({ready,initial}:{ready:boolean;initial:boolean}){
         setPending(false);
         return;
       }
-      window.location.assign("/staff");
+      window.location.assign(window.location.pathname + window.location.search);
     }catch(e){setError(e instanceof Error?e.message:"Try again.");setPending(false);}
   }
   return <main className="auth-page">

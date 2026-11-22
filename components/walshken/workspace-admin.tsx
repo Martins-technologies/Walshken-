@@ -172,13 +172,16 @@ function Countries({data,refresh}:{data:ViewData;refresh:()=>void}){
 function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
   return <>
     {!data.secureStorage&&<p className="workspace-alert">Set the environment encryption key to enable secure credential storage.</p>}
-    <div className="integration-grid">{providers.filter(provider=>provider.id==="daily").map((provider)=>{
+    {data.encryptionMigrationReady&&<Panel title="Move preview access securely" note="Re-encrypts stored authenticator data inside this server so the main review project can use the same passwords and authenticator codes. No encryption key or authenticator secret is returned.">
+      <Disclosure title="Complete encryption migration"><ActionForm path="integrations/migrate-encryption" fields={[{name:"password",label:"Current password",type:"password",required:true,autoComplete:"current-password"},{name:"code",label:"Fresh authenticator or saved recovery code",required:true,autoComplete:"one-time-code"}]} submit="Migrate encrypted access data" refresh={refresh}/></Disclosure>
+    </Panel>}
+    <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage"].includes(provider.id)).map((provider)=>{
       const current=data.rows?.find((row)=>row.id===provider.id);
       return <Panel key={provider.id} title={provider.name} note={provider.description} action={<Status>{current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
         <div className="integration-label"><Icon name="plug" size={17}/>{provider.category}</div>
         {data.secureStorage&&<Disclosure title={current?"Update credentials":"Add credentials"}>
           <ActionForm path="integrations/save" fields={[
-            ...provider.fields.map(([name,label])=>field(name,label,/key|token|sid/i.test(name)?"password":"text")),
+            ...provider.fields.map(([name,label])=>field(name,label,/key|secret|token|sid/i.test(name)?"password":"text")),
             {name:"enabled",label:"Status",options:[["0","Save disabled"],["1","Enable"]],value:current?.enabled??0,required:true},
           ]} extra={{provider:provider.id}} submit="Save credentials" refresh={refresh}/>
         </Disclosure>}

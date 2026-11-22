@@ -1,11 +1,13 @@
+import { passwordMatches } from "./passwords";
+import { verifyStaffMfa } from "./staff-mfa";
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
 import { divisions, providers, roles } from "./catalog";
 import { communicationAdmin, communicationPolicy, retentionCutoff } from "./collaboration";
-import { verifyDailyConnection } from "./meetings";
+import { verifyLiveKitConnection, verifyRecordingStorage, validateLiveKit, validateStorage, type LiveKitSettings, type RecordingStorage } from "./livekit";
 import {
-  all, audit, canManage, canPayroll, canSuper, country, date, destination, digest, email, encryptSettings,
-  fail, id, integer, json, now, one, pick, requireSuper, run, scopedEmployee, stmt, str, timeZone, type Actor, type Db,
+  all, audit, canManage, canPayroll, canSuper, country, date, destination, digest, email, decryptSettings, encryptSettings,
+  fail, id, integer, json, now, one, pick, requireSuper, run, scopedEmployee, stmt, str, throttle, timeZone, type Actor, type Db,
 } from "./server";
 
 const employmentStatuses = ["Active", "On leave", "Ended"] as const;
@@ -249,19 +251,49 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       return json({ ok:true, message:"Service availability saved." });
     }
   }
+  if(area==="integrations"&&action==="migrate-encryption"){
+    requireSuper(actor);
+    if(!process.env.WALSHKEN_INTEGRATION_KEY||!process.env.WALSHKEN_INTEGRATION_KEY_V2)return fail(409,"Run this migration in the earlier preview after both encryption keys are configured there.");
+    await throttle(db,`staff-mfa:${actor.id}`,8,300000);
+    return db.transaction(async tx=>{
+      const credential=await one<{password_hash:string}>(tx,"SELECT password_hash FROM credentials WHERE employee_id=? FOR UPDATE",actor.id);
+      const password=str(data.password,"current password",160);
+      if(!await passwordMatches(password,credential?.password_hash))return fail(401,"Current password is incorrect.");
+      await verifyStaffMfa(tx,actor.id,data.code,true);
+      const factors=await all<{employee_id:string;secret:string;pending_secret:string|null}>(tx,"SELECT f.employee_id,f.secret,f.pending_secret FROM staff_mfa f JOIN employees e ON e.id=f.employee_id WHERE e.org_id=? FOR UPDATE OF f",actor.org_id);
+      let migrated=0;
+      for(const factor of factors){
+        const secret=factor.secret.startsWith("v2.")?factor.secret:await encryptSettings(`staff-mfa:${factor.employee_id}`,await decryptSettings(`staff-mfa:${factor.employee_id}`,factor.secret));
+        const pending=factor.pending_secret&&!factor.pending_secret.startsWith("v2.")?await encryptSettings(`staff-mfa:${factor.employee_id}`,await decryptSettings(`staff-mfa:${factor.employee_id}`,factor.pending_secret)):factor.pending_secret;
+        if(secret!==factor.secret||pending!==factor.pending_secret){await run(tx,"UPDATE staff_mfa SET secret=?,pending_secret=? WHERE employee_id=?",secret,pending,factor.employee_id);migrated++;}
+      }
+      for(const integration of await all<{id:string;configuration:string}>(tx,"SELECT id,configuration FROM integrations FOR UPDATE"))if(!integration.configuration.startsWith("v2."))
+        await run(tx,"UPDATE integrations SET configuration=?,updated_at=? WHERE id=?",await encryptSettings(integration.id,await decryptSettings(integration.id,integration.configuration)),now(),integration.id);
+      await audit(tx,actor,"Encrypted staff factors and integrations migrated without changing authenticator secrets","security migration").run();
+      return json({ok:true,message:`Encryption migration completed for ${migrated} authenticator records. Passwords and authenticator codes are unchanged.`});
+    });
+  }
   if (area === "integrations" && (action === "save" || action === "disable")) {
     requireSuper(actor);
     const provider = providers.find((item) => item.id === data.provider);
     if (!provider) return fail(400,"Choose a listed integration.");
+    if(provider.id==="livekit"&&await one(db,"SELECT id FROM meetings WHERE provider='livekit' AND provider_room IS NOT NULL AND ended_at IS NULL AND cancelled_at IS NULL LIMIT 1"))return fail(409,"End active LiveKit meetings before changing the connection.");
+    if(provider.id==="livekit"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Wait for recordings to finish before changing the LiveKit connection.");
+    if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE deleted_at IS NULL LIMIT 1"))return fail(409,"Keep the current storage connection until all retained recordings are deleted. This prevents inaccessible recordings.");
     if (action === "disable") {
+      if(provider.id==="recording-storage"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Stop active recordings before disabling storage.");
       await db.batch([stmt(db,"UPDATE integrations SET enabled=0,updated_at=? WHERE id=?",now(),provider.id),audit(db,actor,"Integration disabled","integration",provider.id)]);
       return json({ ok:true,message:"Integration disabled." });
     }
     const settings: Record<string,string> = {};
     for (const [key, label] of provider.fields) settings[key] = str(data[key],label,400);
-    if (provider.id === "daily") {
-      if(!/^[a-z0-9][a-z0-9-]{1,60}$/i.test(settings.domain)) return fail(400,"Enter the Daily subdomain without .daily.co.");
-      if(data.enabled==="1") await verifyDailyConnection({domain:settings.domain,apiKey:settings.apiKey});
+    if(provider.id==="livekit") {
+      validateLiveKit(settings as LiveKitSettings);
+      if(data.enabled==="1") await verifyLiveKitConnection(settings as LiveKitSettings);
+    }
+    if(provider.id==="recording-storage") {
+      validateStorage(settings as RecordingStorage);
+      if(data.enabled==="1") await verifyRecordingStorage(settings as RecordingStorage);
     }
     const protectedValue = await encryptSettings(provider.id, settings);
     await db.batch([

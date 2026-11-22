@@ -40,3 +40,7 @@ Open the corporate homepage at `/`, the service directory at `/services`, countr
 ## Production readiness
 
 Before employee onboarding, verify managed MFA and recovery, database runtime permissions, backup and recovery, retention, and load capacity. The current private document store uses PostgreSQL for files up to 3 MB. Configure production file storage and malware scanning before handling confidential documents. Live Daily calls need a configured account. Twilio, transactional email and compliant payroll workflows need provider wiring and verification. Statutory holiday pay, payroll finalization, approved payslips and payments remain separate work.
+
+## LiveKit calls and meetings
+
+See [calling review and connection instructions](docs/livekit-calling-review.md). Configure LiveKit and private recording storage through the encrypted admin Integrations screen. Run `npm run test:calls` for backend authorization, signatures, attendance and recording-policy regression checks. Actual media and storage acceptance require the connected providers and two browser sessions.

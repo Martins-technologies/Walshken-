@@ -13,6 +13,8 @@ export const organizations = pgTable("organizations", {
   messageRetentionDays: integer("message_retention_days").notNull().default(0),
   externalMessaging: integer("external_messaging").notNull().default(0),
   externalMeetings: integer("external_meetings").notNull().default(0),
+  recordingPolicy: text("recording_policy").notNull().default("Disabled"),
+  recordingRetentionDays: integer("recording_retention_days").notNull().default(30),
   messageChanges: text("message_changes").notNull().default("Sender"),
 });
 export const units = pgTable("units", {
@@ -159,13 +161,37 @@ export const meetings = pgTable("meetings", {
   waitingRoom: integer("waiting_room").notNull().default(0),
   screenSharing: text("screen_sharing").notNull().default("Everyone"),
   cancelledAt: text("cancelled_at"),
-});
+  provider: text("provider").notNull().default("livekit"),
+  startedAt: text("started_at"), endedAt: text("ended_at"), endReason: text("end_reason"),
+  lockedAt: text("locked_at"), recordingEnabled: integer("recording_enabled").notNull().default(0),
+  recordingRetentionDays: integer("recording_retention_days").notNull().default(30),
+}, (t) => [index("meeting_org_expiry").on(t.orgId,t.endsAt),index("meeting_organizer").on(t.organizerId)]);
 export const meetingMembers = pgTable("meeting_members", {
   id: key(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
   employeeId: text("employee_id").notNull().references(() => employees.id),
   requestedAt: text("requested_at"),
   admittedAt: text("admitted_at"),
-}, (t) => [uniqueIndex("meeting_member_unique").on(t.meetingId, t.employeeId)]);
+  removedAt: text("removed_at"), canPublish: integer("can_publish").notNull().default(1),
+  canShare: integer("can_share").notNull().default(1), coHost: integer("co_host").notNull().default(0),
+  recordingConsent: integer("recording_consent"), consentAt: text("consent_at"),
+}, (t) => [uniqueIndex("meeting_member_unique").on(t.meetingId, t.employeeId),index("meeting_member_employee").on(t.employeeId)]);
+
+export const meetingAttendance = pgTable("meeting_attendance", {
+  id: key(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
+  employeeId: text("employee_id").notNull().references(() => employees.id),
+  participantSid: text("participant_sid").notNull(), joinedAt: text("joined_at"), leftAt: text("left_at"), reason: text("reason"),
+}, (t) => [uniqueIndex("meeting_attendance_sid").on(t.participantSid), index("meeting_attendance_meeting").on(t.meetingId),index("meeting_attendance_employee").on(t.employeeId,t.meetingId)]);
+export const meetingRecordings = pgTable("meeting_recordings", {
+  id: key(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
+  createdBy: text("created_by").notNull().references(() => employees.id),
+  egressId: text("egress_id"), objectKey: text("object_key").notNull(), storageId: text("storage_id").notNull().default("recording-storage"),
+  status: text("status").notNull(), startedAt: text("started_at"), endedAt: text("ended_at"),
+  expiresAt: text("expires_at").notNull(), deletedAt: text("deleted_at"), createdAt: stamp(),
+}, (t) => [uniqueIndex("meeting_recording_egress").on(t.egressId), index("meeting_recording_expiry").on(t.expiresAt),index("meeting_recording_creator").on(t.createdBy),uniqueIndex("meeting_one_active_recording").on(t.meetingId).where(sql`${t.status} in ('Starting','Active','Stopping')`)]);
+export const meetingEvents = pgTable("meeting_events", {
+  id: text("id").primaryKey(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
+  event: text("event").notNull(), receivedAt: stamp(),
+}, (t) => [index("meeting_event_meeting").on(t.meetingId)]);
 
 export const documents = pgTable("documents", {
   id: key(), orgId: text("org_id").notNull().references(() => organizations.id),
