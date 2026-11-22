@@ -1,3 +1,4 @@
+import { meetingViews, meetings } from "./meetings";
 import { adminNav, staffNav } from "./catalog";
 import { messageViews, teamOptions } from "./collaboration";
 import { all, canManage, canPayroll, canSuper, fail, json, loadCatalog, needsStaffMfa, now, one, requireStaff, requireSuper, scope, staffMfaRequired, type Actor, type Db, type Row } from "./server";
@@ -30,11 +31,6 @@ async function taskRows(db:Db,actor:Actor,ownOnly=false){
     t.completed_at,e.name,p.name AS project FROM tasks t JOIN employees e ON e.id=t.employee_id LEFT JOIN projects p ON p.id=t.project_id
     WHERE t.org_id=? AND ${scopeWhere.sql} ORDER BY CASE WHEN t.status IN ('Completed','Cancelled') THEN 1 ELSE 0 END,
     t.due_date ASC NULLS LAST,t.created_at DESC LIMIT 150`,actor.org_id,...scopeWhere.args);
-}
-async function meetings(db:Db,actor:Actor){
-  return all(db,`SELECT m.id,m.title,m.starts_at,m.ends_at,e.name AS organizer FROM meetings m
-    JOIN meeting_members p ON p.meeting_id=m.id JOIN employees e ON e.id=m.organizer_id WHERE m.org_id=? AND p.employee_id=?
-    ORDER BY m.starts_at DESC LIMIT 100`,actor.org_id,actor.id);
 }
 async function notifications(db:Db,actor:Actor){
   return all(db,"SELECT id,title,body,href,read_at,created_at FROM notifications WHERE employee_id=? ORDER BY created_at DESC LIMIT 70",actor.id);
@@ -93,8 +89,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
   if(section==="directory") return json({rows:await teamOptions(db,actor)});
   if(section==="notifications") return json({rows:await notifications(db,actor)});
   if(section==="messages") return messageViews(db,actor);
-  if(section==="calls") return json({rows:await meetings(db,actor),staff:await teamOptions(db,actor),
-    provider:Boolean(await one(db,"SELECT id FROM integrations WHERE id='daily' AND enabled=1"))});
+  if(section==="calls") return meetingViews(db,actor);
   if(section==="documents"||section==="document-security"){
     const global=section==="document-security";
     return json({

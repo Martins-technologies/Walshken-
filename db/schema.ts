@@ -12,6 +12,7 @@ export const organizations = pgTable("organizations", {
   messageForwarding: text("message_forwarding").notNull().default("Disabled"),
   messageRetentionDays: integer("message_retention_days").notNull().default(0),
   externalMessaging: integer("external_messaging").notNull().default(0),
+  externalMeetings: integer("external_meetings").notNull().default(0),
   messageChanges: text("message_changes").notNull().default("Sender"),
 });
 export const units = pgTable("units", {
@@ -154,10 +155,16 @@ export const meetings = pgTable("meetings", {
   organizerId: text("organizer_id").notNull().references(() => employees.id),
   title: text("title").notNull(), startsAt: text("starts_at").notNull(), endsAt: text("ends_at").notNull(),
   providerRoom: text("provider_room"), createdAt: stamp(),
+  mode: text("mode").notNull().default("Video"),
+  waitingRoom: integer("waiting_room").notNull().default(0),
+  screenSharing: text("screen_sharing").notNull().default("Everyone"),
+  cancelledAt: text("cancelled_at"),
 });
 export const meetingMembers = pgTable("meeting_members", {
   id: key(), meetingId: text("meeting_id").notNull().references(() => meetings.id),
   employeeId: text("employee_id").notNull().references(() => employees.id),
+  requestedAt: text("requested_at"),
+  admittedAt: text("admitted_at"),
 }, (t) => [uniqueIndex("meeting_member_unique").on(t.meetingId, t.employeeId)]);
 
 export const documents = pgTable("documents", {

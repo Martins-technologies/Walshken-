@@ -172,7 +172,7 @@ function Countries({data,refresh}:{data:ViewData;refresh:()=>void}){
 function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
   return <>
     {!data.secureStorage&&<p className="workspace-alert">Set the environment encryption key to enable secure credential storage.</p>}
-    <div className="integration-grid">{providers.map((provider)=>{
+    <div className="integration-grid">{providers.filter(provider=>provider.id==="daily").map((provider)=>{
       const current=data.rows?.find((row)=>row.id===provider.id);
       return <Panel key={provider.id} title={provider.name} note={provider.description} action={<Status>{current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
         <div className="integration-label"><Icon name="plug" size={17}/>{provider.category}</div>
@@ -183,7 +183,6 @@ function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
           ]} extra={{provider:provider.id}} submit="Save credentials" refresh={refresh}/>
         </Disclosure>}
         {Boolean(current?.enabled)&&<Quick path="integrations/disable" data={{provider:provider.id}} refresh={refresh}>Disable</Quick>}
-        {provider.id!=="daily"&&<p className="form-note">Credential configuration is available. This provider’s live workflows are pending.</p>}
       </Panel>;
     })}</div>
   </>;

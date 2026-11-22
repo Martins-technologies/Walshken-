@@ -50,6 +50,13 @@
       "when": 1795340916266,
       "tag": "0006_staff_communication",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795341658686,
+      "tag": "0007_staff_meetings",
+      "breakpoints": true
     }
   ]
 }

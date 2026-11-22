@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
 import { divisions, providers, roles } from "./catalog";
 import { communicationPolicy, retentionCutoff } from "./collaboration";
+import { verifyDailyConnection } from "./meetings";
 import {
   all, audit, canManage, canPayroll, canSuper, country, date, destination, digest, email, encryptSettings,
   fail, id, integer, json, now, one, pick, requireSuper, run, scopedEmployee, stmt, str, timeZone, type Actor, type Db,
@@ -258,7 +259,10 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     }
     const settings: Record<string,string> = {};
     for (const [key, label] of provider.fields) settings[key] = str(data[key],label,400);
-    if (provider.id === "daily" && !/^[a-z0-9][a-z0-9-]{1,60}$/i.test(settings.domain)) return fail(400,"Enter the Daily subdomain without .daily.co.");
+    if (provider.id === "daily") {
+      if(!/^[a-z0-9][a-z0-9-]{1,60}$/i.test(settings.domain)) return fail(400,"Enter the Daily subdomain without .daily.co.");
+      if(data.enabled==="1") await verifyDailyConnection({domain:settings.domain,apiKey:settings.apiKey});
+    }
     const protectedValue = await encryptSettings(provider.id, settings);
     await db.batch([
       stmt(db,`INSERT INTO integrations (id,configuration,enabled,updated_at) VALUES (?,?,?,?)

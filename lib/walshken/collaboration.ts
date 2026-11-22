@@ -1,6 +1,6 @@
 import { messageReactions } from "./catalog";
 import {
-  all, audit, canManage, canSuper, colleague, country, datetime, decryptSettings, fail, id, integer, json, notify, now, one,
+  all, audit, canManage, canSuper, colleague, country, datetime, fail, id, json, notify, now, one,
   pick, requireStaff, run, stmt, str, throttle, type Actor, type Db, type Row,
 } from "./server";
 
@@ -352,49 +352,6 @@ export async function documentAction(db:Db,actor:Actor,action:string,data:Record
     return json({ok:true,message:"Sharing permission removed."});
   }
   return fail(404,"Document action unavailable.");
-}
-
-async function dailyFetch(path:string,apiKey:string,body?:Record<string,unknown>){
-  const response=await fetch(`https://api.daily.co/v1/${path}`,{method:body?"POST":"GET",
-    headers:{Authorization:`Bearer ${apiKey}`,"Content-Type":"application/json"},body:body?JSON.stringify(body):undefined,
-    cache:"no-store",signal:AbortSignal.timeout(8000)});
-  if(!response.ok) return null;
-  return await response.json() as {url?:string;token?:string};
-}
-export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<string,unknown>){
-  if(action==="schedule"){
-    requireStaff(actor);
-    const participants=memberIds(data.members??[]).filter((member)=>member!==actor.id);
-    await Promise.all(participants.map((employee)=>colleague(db,actor,employee)));
-    const start=datetime(data.startsAt,"meeting start"),end=datetime(data.endsAt,"meeting end");
-    if(end<=start||Date.parse(end)-Date.parse(start)>12*3_600_000) return fail(400,"Meeting end must be within 12 hours after its start.");
-    const target=id(),title=str(data.title,"meeting title",120);
-    await db.batch([
-      stmt(db,"INSERT INTO meetings (id,org_id,organizer_id,title,starts_at,ends_at) VALUES (?,?,?,?,?,?)",target,actor.org_id,actor.id,title,start,end),
-      ...[actor.id,...participants].map((employee)=>stmt(db,"INSERT INTO meeting_members (id,meeting_id,employee_id) VALUES (?,?,?)",id(),target,employee)),
-      ...participants.map((employee)=>notify(db,employee,"Meeting scheduled",title,"/staff/calls")),
-      audit(db,actor,"Meeting scheduled","meeting",target),
-    ]);
-    return json({ok:true,message:"Meeting scheduled."},201);
-  }
-  if(action!=="join") return fail(404,"Meeting action unavailable.");
-  const target=str(data.id,"meeting",80);
-  const meeting=await one<{id:string;starts_at:string;ends_at:string;organizer_id:string}>(db,`SELECT m.id,m.starts_at,m.ends_at,m.organizer_id
-    FROM meetings m JOIN meeting_members p ON p.meeting_id=m.id WHERE m.id=? AND m.org_id=? AND p.employee_id=?`,target,actor.org_id,actor.id);
-  if(!meeting) return fail(404,"Meeting is unavailable.");
-  if(Date.now()<Date.parse(meeting.starts_at)-15*60_000||Date.now()>Date.parse(meeting.ends_at)) return fail(409,"You can join from 15 minutes before the meeting starts until it ends.");
-  const integration=await one<{configuration:string}>(db,"SELECT configuration FROM integrations WHERE id='daily' AND enabled=1");
-  if(!integration) return fail(409,"A Super Admin must enable Daily calling in Integrations.");
-  const settings=await decryptSettings("daily",integration.configuration);
-  const room=`wk-${meeting.id}`,exp=Math.floor(Date.parse(meeting.ends_at)/1000);
-  const existing=await dailyFetch(`rooms/${room}`,settings.apiKey);
-  const remote=existing??await dailyFetch("rooms",settings.apiKey,{name:room,privacy:"private",properties:{exp,eject_at_room_exp:true,enable_screenshare:true}});
-  const expected=`https://${settings.domain.toLowerCase()}.daily.co/${room}`;
-  if(remote?.url!==expected) return fail(502,"Daily could not provision a room for this account.");
-  const access=await dailyFetch("meeting-tokens",settings.apiKey,{properties:{room_name:room,user_name:actor.name,user_id:actor.id,exp,eject_at_token_exp:true,is_owner:meeting.organizer_id===actor.id}});
-  if(!access?.token) return fail(502,"Daily could not grant meeting access.");
-  await audit(db,actor,"Meeting join authorized","meeting",target).run();
-  return json({ok:true,url:`${expected}?t=${encodeURIComponent(access.token)}`});
 }
 
 export async function teamOptions(db:Db,actor:Actor){
