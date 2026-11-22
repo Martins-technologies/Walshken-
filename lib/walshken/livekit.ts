@@ -1,3 +1,4 @@
+import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 import { AccessToken, EgressClient, RoomServiceClient, TrackSource } from "livekit-server-sdk";
 import { S3Client, HeadBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
@@ -53,7 +54,7 @@ export function validateStorage(s:RecordingStorage){
   return {...s,endpoint:url.toString().replace(/\/$/,"")};
 }
 export const storageClient=(s:RecordingStorage)=>new S3Client({endpoint:s.endpoint,region:s.region,forcePathStyle:true,
-  credentials:{accessKeyId:s.accessKey,secretAccessKey:s.secretKey},maxAttempts:2,requestChecksumCalculation:"WHEN_REQUIRED"});
+  credentials:{accessKeyId:s.accessKey,secretAccessKey:s.secretKey},requestHandler:new FetchHttpHandler({requestTimeout:12000}),maxAttempts:2,requestChecksumCalculation:"WHEN_REQUIRED"});
 export async function recordingStorage(db:Db,requireEnabled=true){
   const row=await one<{configuration:string}>(db,`SELECT configuration FROM integrations WHERE id='recording-storage' ${requireEnabled?"AND enabled=1":""}`);
   if(!row)return fail(409,"Connect private recording storage in Integrations first.");
