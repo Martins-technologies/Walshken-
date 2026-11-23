@@ -56,12 +56,12 @@ export const providers = [
 
 export const staffNav = [
   { title: "Workspace", items: [["dashboard", "Overview", "layout"], ["messages", "Messages", "message"], ["calls", "Calls & meetings", "video"], ["tasks", "My tasks", "check"], ["projects", "Projects", "project"], ["calendar", "Calendar", "calendar"]] },
-  { title: "People & time", items: [["attendance", "Attendance", "clock"], ["shifts", "Shifts", "shift"], ["timesheets", "Timesheets", "list"], ["salary", "Salary & payslips", "wallet"], ["leave", "Leave requests", "leave"], ["documents", "Documents", "file"], ["directory", "Team directory", "users"], ["notifications", "Notifications", "bell"], ["profile", "My profile", "user"]] },
+  { title: "People & time", items: [["attendance", "Attendance", "clock"], ["shifts", "Shifts", "shift"], ["timesheets", "Timesheets", "list"], ["salary", "Salary & payslips", "wallet"], ["holiday-calendar", "Holiday calendar", "calendar"], ["leave", "Leave requests", "leave"], ["documents", "Documents", "file"], ["directory", "Team directory", "users"], ["notifications", "Notifications", "bell"], ["profile", "My profile", "user"]] },
 ] as const;
 
 export const adminNav = [
   ["employees", "Employees", "users"], ["departments", "Organization", "building"], ["roles", "Roles & permissions", "shield"],
   ["scheduling", "Shift scheduling", "shift"], ["approvals", "Timesheet approvals", "list"], ["payroll", "Payroll management", "wallet"],
-  ["holidays", "Holiday settings", "calendar"], ["reports", "Reports", "chart"], ["document-security", "Document security", "lock"],
+  ["holidays", "Holidays & compliance", "calendar"], ["reports", "Reports", "chart"], ["document-security", "Document security", "lock"],
   ["audit", "Activity & audit", "history"], ["website", "Website services", "globe"], ["countries", "Country availability", "pin"], ["integrations", "Integrations", "plug"],
 ] as const;

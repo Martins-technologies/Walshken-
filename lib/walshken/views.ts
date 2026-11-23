@@ -1,3 +1,5 @@
+import {holidaysEnabled,assignmentOn,holidayRule} from './holiday-access';
+import {holidayData} from './holiday-data';
 import {payrollDataset,payrollEnabled} from './payroll-access';
 import {payrollData} from './payroll-data';
 import {workforceEnabled} from './workforce';
@@ -14,7 +16,9 @@ import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
-  if(collaborationRelease()&&!releasedSections.has(section)&&!(payrollEnabled()&&["payroll","salary"].includes(section))&&!(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section))&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
+  if(collaborationRelease()&&!releasedSections.has(section)&&!(holidaysEnabled()&&["holidays","holiday-calendar"].includes(section))&&!(payrollEnabled()&&["payroll","salary"].includes(section))&&!(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section))&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
+  if(section==="holiday-calendar")return holidaysEnabled()&&actor.role!=="guest";
+  if(holidaysEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
   if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
   if(workforceEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
@@ -48,6 +52,7 @@ async function notifications(db:Db,actor:Actor){
 
 export async function view(db:Db,actor:Actor,section:string,params:URLSearchParams){
   if(!canOpen(actor,section)) return fail(403,"You do not have access to this section.");
+  if(holidaysEnabled()&&["holidays","holiday-calendar"].includes(section))return holidayData(db,actor,params);
   if(payrollEnabled()&&["payroll","salary"].includes(section))return payrollData(db,actor,params);
   if(section==="profile"){
     const mfaRequired = staffMfaRequired();
@@ -64,7 +69,8 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       actor.role==="guest"?Promise.resolve(null):one(db,`SELECT kind,amount_cents,currency,effective_on FROM compensation
         WHERE employee_id=? AND effective_on<=? ${payrollEnabled()?"AND release_stage=? AND voided_at IS NULL":""} ORDER BY effective_on DESC LIMIT 1`,actor.id,localDate(now(),actor.time_zone),...(payrollEnabled()?[payrollDataset()]:[])),
     ]);
-    return json({row:row&&{...row,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired});
+    let holidayCalendar=row?.holiday_calendar;if(holidaysEnabled()&&actor.role!=='guest'){const a=await assignmentOn(db,actor,localDate(now(),actor.time_zone),false);if(a)holidayCalendar=(await holidayRule(db,actor,a.jurisdiction,localDate(now(),actor.time_zone),a.rule_id)).config.calendar.name+' · '+a.location;}
+    return json({row:row&&{...row,holiday_calendar:holidayCalendar,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired});
   }
   if(section==="dashboard"&&collaborationRelease()){
     const [conversations,events,alerts]=await Promise.all([messageViews(db,actor).then(response=>response.json()),meetings(db,actor),notifications(db,actor)]);

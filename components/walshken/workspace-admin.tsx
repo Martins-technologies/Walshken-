@@ -1,4 +1,5 @@
 "use client";
+import {HolidayWorkspace} from "./holidays";
 import {PayrollWorkspace} from "./payroll";
 import {WorkforceWorkspace} from "./workforce";
 import { useState, type FormEvent } from "react";
@@ -217,6 +218,7 @@ function Payroll({data,refresh}:{data:ViewData;refresh:()=>void}){
 
 export function AdminViews({section,actor,data,refresh,setQuery}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void;setQuery:(query:string)=>void}){
   const rows=data.rows??[];
+  if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
   if(section==="employees"||section==="roles")return <Employees actor={actor} data={data} refresh={refresh} rolesOnly={section==="roles"} setQuery={setQuery}/>;

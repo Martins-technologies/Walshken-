@@ -1,4 +1,5 @@
 import "@/components/walshken/workforce.css";
+import "@/components/walshken/holidays.css";
 import "@/components/walshken/payroll.css";
 import type { Metadata } from "next";
 import { metadataOrigin } from "@/lib/walshken/seo";
