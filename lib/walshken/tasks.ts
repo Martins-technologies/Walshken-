@@ -58,8 +58,11 @@ export async function taskAction(db:Db,actor:Actor,action:string,data:Record<str
  if(action==="detail")return taskDetail(db,actor,str(data.id,"task",80),Math.max(1,Number(data.commentPage)||1));
  if(action==="list")return taskDashboard(db,actor,new URLSearchParams(Object.entries(data).map(([key,value])=>[key,String(value)])));
  if(action==="maintenance"){
-  if(!canSuper(actor)||taskDataset()!=="preview")return fail(403,"Preview maintenance requires a Super Admin.");
-  return json({ok:true,result:await one(db,"SELECT walshken_private.task_review_maintenance() AS result")});
+  if(!canSuper(actor))return fail(403,"Task maintenance requires a Super Admin.");
+  const maintenance = taskDataset()==="preview"
+    ? "SELECT walshken_private.task_review_maintenance() AS result"
+    : "SELECT walshken_private.task_production_maintenance() AS result";
+  return json({ok:true,result:await one(db,maintenance),message:"Overdue tasks and open timers checked."});
  }
  return db.transaction(async tx=>{
   // Lock in one order across task updates, time records and assignment changes.
