@@ -7,6 +7,7 @@ import { ActionForm, api, dateText, Empty, initials, options, Quick, Status, Tab
 import type { ViewData } from "./workspace-views";
 import type { Viewer } from "./workspace";
 
+type ChatDocument = { id: string; name: string };
 type Thread = {rows:RecordRow[];members:RecordRow[];next:string|null};
 const emptyThread:Thread={rows:[],members:[],next:null};
 const administrator=(actor:Viewer)=>actor.role==="super_admin"||actor.role==="admin";
@@ -26,10 +27,49 @@ function ChatDialog({title,onClose,children}:{title:string;onClose:()=>void;chil
   </dialog>;
 }
 
+function DocumentPicker({conversation, onSelect, onClose}:{conversation:string;onSelect:(document:ChatDocument)=>void;onClose:()=>void}) {
+  const [query,setQuery]=useState(""),[documents,setDocuments]=useState<ChatDocument[]>([]);
+  const [busy,setBusy]=useState(true),[error,setError]=useState("");
+  const search=useRef(0);
+
+  const load=useCallback(async (filter:string)=>{
+    const request=++search.current;
+    setBusy(true);setError("");
+    try{
+      const params=new URLSearchParams({conversation,q:filter});
+      const result=await api("messages/attachments?"+params.toString()) as {documents:ChatDocument[]};
+      if(search.current===request)setDocuments(result.documents);
+    }catch(reason){
+      if(search.current===request)setError(reason instanceof Error?reason.message:"Unable to load documents.");
+    }finally{
+      if(search.current===request)setBusy(false);
+    }
+  },[conversation]);
+
+  useEffect(()=>{
+    void load("");
+    return ()=>{search.current++;};
+  },[load]);
+
+  return <ChatDialog title="Attach a document" onClose={onClose}>
+    <p className="chat-file-help">Choose a file from Documents. Everyone in this conversation must already have access.</p>
+    <form className="chat-file-search" onSubmit={event=>{event.preventDefault();void load(query);}}>
+      <label className="chat-dialog-field">Document name<input value={query} maxLength={100} onChange={event=>setQuery(event.target.value)} /></label>
+      <button className="btn btn-outline btn-small" type="submit" disabled={busy}>Search</button>
+    </form>
+    {error&&<p role="alert" className="form-error">{error}</p>}
+    {busy?<p role="status">Loading documents…</p>:documents.length>0&&!error?
+      <div className="chat-file-options">{documents.map(document=><button type="button" key={document.id} onClick={()=>onSelect(document)}>
+        <Icon name="file" size={20}/><span>{document.name}</span>
+      </button>)}</div>:!error&&<p>No shareable documents match. <a href="/staff/documents">Open Documents</a></p>}
+  </ChatDialog>;
+}
+
 export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refresh:()=>void}) {
   const [target,setTarget]=useState(""),[thread,setThread]=useState<Thread>(emptyThread);
   const [history,setHistory]=useState<string[]>([]),[query,setQuery]=useState(""),[search,setSearch]=useState("");
   const [archived,setArchived]=useState(false),[pinned,setPinned]=useState(false),[body,setBody]=useState("");
+  const [attachment,setAttachment]=useState<ChatDocument|null>(null);
   const [reply,setReply]=useState<RecordRow|null>(null),[editing,setEditing]=useState<RecordRow|null>(null);
   const [forward,setForward]=useState<RecordRow|null>(null),[dialog,setDialog]=useState(""),[kind,setKind]=useState("Direct");
   const [error,setError]=useState(""),[sending,setSending]=useState(false),[loading,setLoading]=useState(false);
@@ -111,11 +151,11 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
     return()=>{clearInterval(timer);window.removeEventListener("focus",focus);};
   },[load]);
   useEffect(()=>{
-    if(target&&!current){setThread(emptyThread);setReply(null);setEditing(null);setForward(null);setBody("");}
+    if(target&&!current){setThread(emptyThread);setReply(null);setEditing(null);setForward(null);setBody("");setAttachment(null);}
   },[target,current]);
 
   function select(id:string){
-    setTarget(id);setHistory([]);setSearch("");setPinned(false);setReply(null);setEditing(null);setForward(null);setBody("");
+    setTarget(id);setHistory([]);setSearch("");setPinned(false);setReply(null);setEditing(null);setForward(null);setBody("");setAttachment(null);
     setDismissMention(false);setMobileThread(true);setDialog("");setError("");
     const url=new URL(window.location.href);
     url.searchParams.set("conversation",id);
@@ -145,14 +185,14 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
   }
   async function send(event:FormEvent<HTMLFormElement>){
     event.preventDefault();
-    if(sending||!body.trim()||!current)return;
+    if(sending||(!body.trim()&&(editing||!attachment))||!current)return;
     const requestTarget=target,content=body;
     setSending(true);setError("");
     try{
       const mentions=members.filter(member=>member.id!==actor.id&&content.includes(`@${member.name}`)).map(member=>member.id);
-      await api(editing?"messages/edit":"messages/send",{conversation:requestTarget,body:content,reply:reply?.id,id:editing?.id,mentions:editing?[]:mentions});
+      await api(editing?"messages/edit":"messages/send",{conversation:requestTarget,body:content,reply:reply?.id,id:editing?.id,mentions:editing?[]:mentions,document:editing?undefined:attachment?.id});
       if(activeTarget.current!==requestTarget)return;
-      setBody("");setCaret(0);setReply(null);setEditing(null);setDismissMention(false);
+      setBody("");setCaret(0);setReply(null);setEditing(null);setAttachment(null);setDismissMention(false);
       if(inHistory){setHistory([]);setSearch("");setPinned(false);}else await load();
       refresh();
       requestAnimationFrame(()=>editor.current?.focus());
@@ -167,7 +207,7 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
   return <section className={`chat-workspace ${mobileThread?"show-thread":""}`} aria-label="Messaging">
     <aside className="chat-sidebar">
       <div className="chat-sidebar-title"><div><h2>Messages</h2><span>{(data.rows??[]).filter(row=>!row.archived).length} conversations</span></div>
-        {actor.role!=="guest"&&<button className="chat-new icon-button" type="button" aria-label="New conversation" onClick={()=>{setKind("Direct");setDialog("new");}}><Icon name="plus"/></button>}
+        {actor.role!=="guest"&&<button className="chat-new btn btn-small" type="button" onClick={()=>{setKind("Direct");setDialog("new");}}><Icon name="plus" size={17}/> New message</button>}
       </div>
       <label className="chat-find"><Icon name="search" size={17}/><span className="sr-only">Find a conversation</span>
         <input value={query} onChange={event=>setQuery(event.target.value)} placeholder="Find a conversation" maxLength={100}/></label>
@@ -184,7 +224,7 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
         </button>)}
         {!channels.length&&<div className="chat-list-empty"><Icon name={archived?"history":"message"} size={28}/><strong>{query?"No conversations found":archived?"No archived conversations":"Your conversations start here"}</strong>
           <p>{query?"Try another name.":archived?"Archived chats will appear here.":"Choose a teammate to start a conversation."}</p>
-          {!query&&!archived&&actor.role!=="guest"&&<button type="button" className="btn btn-outline btn-small" onClick={()=>setDialog("new")}>New conversation</button>}
+          {!query&&!archived&&actor.role!=="guest"&&<button type="button" className="btn btn-outline btn-small" onClick={()=>{setKind("Direct");setDialog("new");}}>New message</button>}
         </div>}
       </nav>
       {isAdmin&&<div className="chat-admin-bar">
@@ -231,7 +271,11 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
                 </div>
                 <div className={`chat-bubble ${removed?"removed":""}`}>
                   {row.reply_name&&!removed&&<blockquote><strong>{row.reply_name}</strong><p>{String(row.reply_body).slice(0,160)}</p></blockquote>}
-                  <p>{removed?"This message was removed.":row.body}</p>
+                  {(removed||row.body)&&<p>{removed?"This message was removed.":row.body}</p>}
+                  {!removed&&row.attachment_id&&<a className="chat-file-card" href={"/staff/documents?document="+encodeURIComponent(String(row.attachment_id))}>
+                    <Icon name="file" size={20}/><span><strong>{row.attachment_name}</strong><small>Open in Documents</small></span>
+                  </a>}
+                  {!removed&&!!row.attachment_unavailable&&<span className="chat-file-unavailable">Document unavailable</span>}
                 </div>
                 {!removed&&<div className="chat-post-footer">
                   {String(row.reactions??"").trim()&&<div className="chat-reaction-counts">{messageReactions.filter(emoji=>String(row.reactions).includes(emoji)).map(emoji=><Quick key={emoji} path="messages/reaction" data={{conversation:target,id:row.id,emoji}} refresh={()=>void load()}>{emoji} {String(row.reactions).split(" ").filter(item=>item===emoji).length}</Quick>)}</div>}
@@ -239,7 +283,7 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
                     <button type="button" onClick={()=>{setReply(row);setEditing(null);editor.current?.focus();}}>Reply</button>
                     {data.canForwardMessages&&current.kind!=="External"&&destinations.length>0&&<button type="button" onClick={()=>setForward(row)}>Forward</button>}
                     {canPin&&<Quick path="messages/pin" data={{conversation:target,id:row.id,pinned:row.pinned?"0":"1"}} refresh={()=>void load()}>{row.pinned?"Unpin":"Pin"}</Quick>}
-                    {own&&data.messageChanges!=="Locked"&&<button type="button" onClick={()=>{setEditing(row);setReply(null);setBody(value(row,"body"));setDismissMention(true);editor.current?.focus();}}>Edit</button>}
+                    {own&&data.messageChanges!=="Locked"&&<button type="button" onClick={()=>{setEditing(row);setReply(null);setAttachment(null);setBody(value(row,"body"));setDismissMention(true);editor.current?.focus();}}>Edit</button>}
                     {(own||actor.role==="super_admin"&&data.messageChanges==="Sender or Super Admin")&&data.messageChanges!=="Locked"&&<button className="chat-remove" type="button" onClick={()=>setDialog(`remove:${row.id}`)}>Remove</button>}
                     <div className="chat-reaction-picker" aria-label="React to message">{messageReactions.map(emoji=><Quick key={emoji} path="messages/reaction" data={{conversation:target,id:row.id,emoji}} refresh={()=>void load()}>{emoji}</Quick>)}</div>
                   </div></details>
@@ -255,6 +299,10 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
         <form className="chat-compose" onSubmit={send}>
           {(reply||editing)&&<div className="chat-compose-context"><Icon name={editing?"file":"message"} size={17}/><div><strong>{editing?"Edit your message":`Replying to ${reply?.name}`}</strong>{reply&&<span>{String(reply.body).slice(0,110)}</span>}</div>
             <button type="button" className="icon-button" aria-label="Cancel reply or editing" onClick={()=>{setReply(null);setEditing(null);setBody("");}}><Icon name="close" size={17}/></button></div>}
+          {attachment&&!editing&&<div className="chat-compose-context">
+            <Icon name="file" size={18}/><div><strong>{attachment.name}</strong><span>Private document</span></div>
+            <button type="button" className="icon-button" aria-label="Remove attached document" onClick={()=>setAttachment(null)}><Icon name="close" size={17}/></button>
+          </div>}
           <div className="chat-compose-box">
             {suggestions.length>0&&<div className="chat-mention-menu" role="listbox" id="mention-options" aria-label="Mention a participant">{suggestions.map((member,index)=><button type="button" role="option" id={`mention-option-${index}`} key={value(member,"id")} aria-selected={index===mentionIndex%suggestions.length} onMouseDown={event=>event.preventDefault()} onClick={()=>insertMention(member)}><span className="chat-avatar person">{initials(value(member,"name"))}</span><span>{member.name}</span></button>)}</div>}
             <label className="sr-only" htmlFor="message-composer">Message</label>
@@ -262,16 +310,20 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
               aria-controls={suggestions.length?"mention-options":undefined} aria-activedescendant={suggestions.length?`mention-option-${mentionIndex%suggestions.length}`:undefined}
               onChange={event=>{setBody(event.target.value);setCaret(event.target.selectionStart);setDismissMention(false);setMentionIndex(0);}}
               onSelect={event=>setCaret(event.currentTarget.selectionStart)} onKeyDown={composerKey} disabled={sending}/>
-            <div className="chat-compose-bottom"><span><kbd>@</kbd> Mention · <kbd>Shift ↵</kbd> New line</span><button className="btn btn-blue" type="submit" disabled={sending||!body.trim()||loading}><span>{sending?"Sending…":editing?"Save":"Send"}</span><Icon name="send" size={17}/></button></div>
+            <div className="chat-compose-bottom"><div className="chat-compose-tools">
+              {data.messageDocumentsEnabled&&current.kind!=="External"&&!editing&&<button type="button" className="chat-attach" onClick={()=>setDialog("attach")} disabled={sending}>
+                <Icon name="file" size={17}/> Attach document
+              </button>}<span><kbd>@</kbd> Mention · <kbd>Shift ↵</kbd> New line</span></div><button className="btn btn-blue" type="submit" disabled={sending||(!body.trim()&&(!!editing||!attachment))||loading}><span>{sending?"Sending…":editing?"Save":"Send"}</span><Icon name="send" size={17}/></button></div>
           </div>
         </form>
       </>}
     </div>
 
+    {dialog==="attach"&&current&&<DocumentPicker conversation={target} onClose={()=>setDialog("")} onSelect={document=>{setAttachment(document);setDialog("");editor.current?.focus();}}/>}
     {dialog==="new"&&<ChatDialog title="New conversation" onClose={()=>setDialog("")}><label className="chat-dialog-field">Conversation type<select value={kind} onChange={event=>setKind(event.target.value)}>{["Direct",...(data.groups??[])].map(type=><option key={type}>{type}</option>)}</select></label>
-      <ActionForm key={kind} path="messages/create" fields={[...(kind==="Direct"?[]:[field("title","Name"),...scope]),
+      {people.length===0?<p>No eligible recipients. Ask your administrator to check department and reporting-manager assignments.</p>:<ActionForm key={kind} path="messages/create" fields={[...(kind==="Direct"?[]:[field("title","Name"),...scope]),
         {name:"members",label:kind==="Direct"?"Teammate":"Participants",options:options(people),multiple:kind!=="Direct",required:true},
-      ]} extra={{kind}} submit={kind==="Direct"?"Open conversation":"Create group"} refresh={refresh} onDone={result=>{if(result.id){setArchived(false);select(result.id);}else setDialog("requests");}}/>
+      ]} extra={{kind}} submit={kind==="Direct"?"Open conversation":"Create group"} refresh={refresh} onDone={result=>{if(result.id){setArchived(false);select(result.id);}else setDialog("requests");}}/>}
     </ChatDialog>}
     {dialog==="members"&&current&&<ChatDialog title="Conversation participants" onClose={()=>setDialog("")}>
       <div className="chat-member-list">{members.map(member=><div key={value(member,"id")}><span className="chat-avatar person">{initials(value(member,"name"))}</span><span><strong>{member.name}</strong><small>{member.id===current.created_by?"Conversation owner":member.role==="guest"?"Guest":"Participant"}</small></span>
@@ -292,7 +344,7 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
       ]} submit="Save messaging policy" refresh={refresh} reset={false}/>
       {Number(policy.message_retention_days)>0&&<details className="chat-retention"><summary>Remove expired content</summary><p>Expired content is hidden automatically. This permanently clears its text and reactions from storage.</p><ActionForm path="communication-policy/apply-retention" fields={[field("confirmation","Type ERASE to confirm")]} submit="Clear expired content" refresh={refresh}/></details>}
     </ChatDialog>}
-    {forward&&<ChatDialog title="Forward message" onClose={()=>setForward(null)}><div className="chat-forward-preview">{forward.body}</div><ActionForm path="messages/forward" fields={[{name:"destination",label:"Conversation",options:options(destinations,"title"),required:true}]} extra={{conversation:target,id:forward.id}} submit="Forward" refresh={refresh} onDone={()=>setForward(null)}/></ChatDialog>}
+    {forward&&<ChatDialog title="Forward message" onClose={()=>setForward(null)}><div className="chat-forward-preview">{forward.body||forward.attachment_name||"Shared document"}</div><ActionForm path="messages/forward" fields={[{name:"destination",label:"Conversation",options:options(destinations,"title"),required:true}]} extra={{conversation:target,id:forward.id}} submit="Forward" refresh={refresh} onDone={()=>setForward(null)}/></ChatDialog>}
     {dialog.startsWith("remove:")&&<ChatDialog title="Remove this message?" onClose={()=>setDialog("")}><p>The message text will be removed for everyone in this conversation.</p><Quick path="messages/delete" data={{conversation:target,id:dialog.slice(7)}} refresh={()=>{void load();setDialog("");}}>Remove message</Quick></ChatDialog>}
   </section>;
 }

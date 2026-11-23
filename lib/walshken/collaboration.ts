@@ -1,3 +1,5 @@
+import { documentEvaluation } from "./document-access";
+import { attachableDocuments, messageDocumentName, messageDocumentsEnabled, shareMessageDocument } from "./message-documents";
 import { messageReactions } from "./catalog";
 import {
   all, audit, canManage, canSuper, colleague, country, datetime, fail, id, json, notify, now, one,
@@ -60,6 +62,24 @@ async function channel(db:Db, actor:Actor, target:string, policy:CommunicationPo
   if(!row) return fail(404,"Conversation not found.");
   return row;
 }
+async function requireDirectPeer(db: Db, actor: Actor, conversation: string) {
+  const peer = await one(db, `SELECT e.id FROM conversation_members m JOIN employees e ON e.id=m.employee_id
+    WHERE m.conversation_id=? AND e.org_id=? AND e.id<>? AND e.status='Active' AND e.employment_status<>'Ended'
+      AND e.role<>'guest' AND (?=1 OR e.role='super_admin' OR e.department_id=? OR e.manager_id=? OR e.id=?)`,
+    conversation, actor.org_id, actor.id, canSuper(actor)?1:0, actor.department_id, actor.id, actor.manager_id);
+  if (!peer) return fail(403, "This teammate is outside your current messaging scope.");
+}
+export async function messageDocumentChoices(db: Db, actor: Actor, conversation: string, query: string) {
+  if (!messageDocumentsEnabled()) return fail(404, "Document attachments are unavailable.");
+  await throttle(db, `message-documents:${actor.id}`, 60, 60_000);
+  return db.transaction(async (tx) => {
+    const target = await channel(tx, actor, str(conversation, "conversation", 80), await communicationPolicy(tx, actor));
+    if (target.kind === "External") return fail(403, "Document attachments are for internal conversations.");
+    if (target.kind === "Direct") await requireDirectPeer(tx, actor, target.id);
+    return json({ documents: await attachableDocuments(tx, actor, str(query, "document search", 100, false)) });
+  });
+}
+
 export async function messagesFor(db:Db,actor:Actor,target:string,query:string,before:string,pinned=false){
   const q=str(query,"search",100,false);
   const cursor=str(before,"history cursor",150,false);
@@ -67,7 +87,9 @@ export async function messagesFor(db:Db,actor:Actor,target:string,query:string,b
     const policy=await communicationPolicy(tx,actor);
     await channel(tx,actor,target,policy);
     const cutoff=retentionCutoff(policy.message_retention_days);
-    const rows=await all<{id:string;created_at:string}>(tx,`SELECT m.id,m.body,m.sender_id,m.edited_at,m.deleted_at,m.pinned,
+    const attachments = messageDocumentsEnabled() && actor.role !== "guest";
+    const rows=await all<{id:string;created_at:string;document_id:string|null}>(tx,`SELECT m.id,m.body,m.sender_id,m.edited_at,m.deleted_at,m.pinned,
+      ${attachments ? "CASE WHEN m.deleted_at IS NULL THEN m.document_id END" : "NULL::text"} AS document_id,
       m.created_at,m.forwarded,e.name,quote.body AS reply_body,author.name AS reply_name,
       (SELECT string_agg(r.emoji,' ' ORDER BY r.emoji) FROM message_reactions r WHERE r.message_id=m.id) AS reactions
       FROM messages m JOIN employees e ON e.id=m.sender_id
@@ -81,7 +103,18 @@ export async function messagesFor(db:Db,actor:Actor,target:string,query:string,b
     const members=await all(tx,`SELECT e.id,e.name,e.role,m.last_read_at FROM conversation_members m JOIN employees e ON e.id=m.employee_id
       WHERE m.conversation_id=? AND e.status='Active' AND e.employment_status<>'Ended' ORDER BY e.name`,target);
     const page=rows.slice(0,50), last=page.at(-1);
-    return json({rows:page.reverse(),members,next:rows.length>50&&last?`${last.created_at}/${last.id}`:null});
+    const names = new Map<string, string | null>();
+    if (page.some(row => row.document_id)) {
+      const evaluation = await documentEvaluation(tx, actor);
+      for (const document of new Set(page.flatMap(row => row.document_id ? [row.document_id] : []))) {
+        names.set(document, await messageDocumentName(tx, actor, document, evaluation));
+      }
+    }
+    const visible = page.reverse().map(({document_id: document, ...row}) => {
+      const name = document ? names.get(document) : null;
+      return { ...row, attachment_id: name ? document : null, attachment_name: name ?? null, attachment_unavailable: document && !name ? 1 : 0 };
+    });
+    return json({rows:visible,members,next:rows.length>50&&last?`${last.created_at}/${last.id}`:null});
   });
 }
 export async function messageViews(db:Db,actor:Actor) {
@@ -89,7 +122,7 @@ export async function messageViews(db:Db,actor:Actor) {
   const rows=await all(db,`SELECT c.id,CASE WHEN c.kind='Direct' THEN COALESCE((SELECT e.name FROM conversation_members n JOIN employees e ON e.id=n.employee_id WHERE n.conversation_id=c.id AND n.employee_id<>? LIMIT 1),c.title)
       ELSE c.title END AS title,c.kind,c.created_by,c.closes_at,m.archived,
       (SELECT MAX(msg.created_at) FROM messages msg WHERE msg.conversation_id=c.id AND msg.created_at>=?) AS last_message_at,
-      (SELECT CASE WHEN msg.deleted_at IS NULL THEN left(msg.body,90) ELSE 'Message removed' END
+      (SELECT CASE WHEN msg.deleted_at IS NULL THEN COALESCE(NULLIF(left(msg.body,90),''),'Shared a document') ELSE 'Message removed' END
         FROM messages msg WHERE msg.conversation_id=c.id AND msg.created_at>=?
         ORDER BY msg.created_at DESC,msg.id DESC LIMIT 1) AS preview,
       (SELECT count(*)::int FROM messages msg WHERE msg.conversation_id=c.id AND msg.sender_id<>? AND msg.deleted_at IS NULL AND msg.created_at>=? AND (m.last_read_at IS NULL OR msg.created_at>m.last_read_at)) AS unread
@@ -100,7 +133,7 @@ export async function messageViews(db:Db,actor:Actor) {
   if (communicationAdmin(actor)&&policy.external_messaging) {
     staff.push(...await all<Row>(db,`SELECT id,name,'Guest' AS role FROM employees WHERE org_id=? AND role='guest' AND status='Active' AND employment_status<>'Ended' ORDER BY name`,actor.org_id));
   }
-  return json({rows,staff,
+  return json({rows,staff,messageDocumentsEnabled:messageDocumentsEnabled()&&actor.role!=="guest",
     groups:canCreateGroups(actor,policy)?conversationKinds.filter(kind=>kind!=="Direct"
       && ((kind!=="Company"&&kind!=="External")||communicationAdmin(actor))
       && (kind!=="Private"||canManage(actor))
@@ -183,7 +216,10 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
       await one(db,"SELECT id FROM organizations WHERE id=? FOR UPDATE",actor.org_id);
       const exists=await one<{id:string}>(db,`SELECT c.id FROM conversations c JOIN conversation_members a ON a.conversation_id=c.id AND a.employee_id=?
         JOIN conversation_members b ON b.conversation_id=c.id AND b.employee_id=? WHERE c.org_id=? AND c.kind='Direct'`,actor.id,participants[0],actor.org_id);
-      if(exists) return json({ok:true,id:exists.id,message:"Conversation opened."});
+      if(exists) {
+        await run(db,"UPDATE conversation_members SET archived=0 WHERE conversation_id=? AND employee_id=? AND archived=1",exists.id,actor.id);
+        return json({ok:true,id:exists.id,message:"Conversation opened."});
+      }
     }
     const target=id(),title=kind==="Direct"?people[0].name:str(data.title,"channel name",100);
     const status = kind!=="Direct" && policy.group_approval && !communicationAdmin(actor) ? "Pending" : "Active";
@@ -211,28 +247,36 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
     const sourceId = str(data.id,"message",80);
     const receiving = await channel(db,actor,destination,policy);
     if(receiving.kind==="External") return fail(403,"Messages cannot be forwarded into guest conversations.");
+    if(receiving.kind==="Direct") await requireDirectPeer(db,actor,destination);
     await db.transaction(async (tx) => {
-      // Both memberships and the source message must still exist when posting the copy.
-      const posted = await run(tx,`INSERT INTO messages (id,conversation_id,sender_id,body,forwarded)
-        SELECT ?,?,?,source.body,1 FROM messages source
-        JOIN conversation_members reader ON reader.conversation_id=source.conversation_id AND reader.employee_id=?
-        JOIN conversations dest ON dest.id=? AND dest.org_id=? AND dest.status='Active' AND dest.kind<>'External' AND (dest.closes_at IS NULL OR dest.closes_at>?)
-        JOIN conversation_members writer ON writer.conversation_id=dest.id AND writer.employee_id=?
-        WHERE source.id=? AND source.conversation_id=? AND source.deleted_at IS NULL AND source.created_at>=?`,
-        id(),destination,actor.id,actor.id,destination,actor.org_id,now(),actor.id,sourceId,target,retentionCutoff(policy.message_retention_days));
-      if(posted.count!==1) return fail(404,"Message or receiving conversation is unavailable.");
+      const enabled = messageDocumentsEnabled();
+      const source = await one<{ body: string; document_id: string | null }>(tx, `SELECT body,
+        ${enabled ? "document_id" : "NULL::text AS document_id"} FROM messages
+        WHERE id=? AND conversation_id=? AND deleted_at IS NULL AND created_at>=? FOR SHARE`,
+        sourceId,target,retentionCutoff(policy.message_retention_days));
+      if(!source || (!enabled && !source.body)) return fail(404,"Message or receiving conversation is unavailable.");
+      if (source.document_id) await shareMessageDocument(tx, actor, destination, receiving.kind, source.document_id);
+      if (enabled) {
+        await run(tx,"INSERT INTO messages (id,conversation_id,sender_id,body,forwarded,document_id) VALUES (?,?,?,?,1,?)",
+          id(),destination,actor.id,source.body,source.document_id);
+      } else {
+        await run(tx,"INSERT INTO messages (id,conversation_id,sender_id,body,forwarded) VALUES (?,?,?,?,1)",
+          id(),destination,actor.id,source.body);
+      }
       await audit(tx,actor,"Message forwarded","conversation",destination).run();
       await notifyConversation(tx,actor,destination,"New message");
     });
     return json({ok:true,message:"Message forwarded."},201);
   }
   if(action==="send"){
+    if(conversation.kind==="Direct") await requireDirectPeer(db,actor,target);
     const reply=str(data.reply,"reply",80,false);
     if(reply&&!await one(db,"SELECT id FROM messages WHERE id=? AND conversation_id=? AND deleted_at IS NULL AND created_at>=?",reply,target,retentionCutoff(policy.message_retention_days))) return fail(400,"The message you are replying to is unavailable.");
     const mention = str(data.mention,"mention",80,false);
     const selected=memberIds(data.mentions??[],20);
     if(mention&&!selected.includes(mention))selected.push(mention);
-    const message=id(),body=str(data.body,"message",4000);
+    const document = str(data.document,"document",80,false);
+    const message=id(),body=str(data.body,"message",4000,!document);
     await db.transaction(async (tx) => {
       const membership = await one(tx,"SELECT id FROM conversation_members WHERE conversation_id=? AND employee_id=? FOR KEY SHARE",target,actor.id);
       if (!membership) return fail(404,"Conversation not found.");
@@ -245,7 +289,13 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
         if(!text.includes(`@${member.name}`))return fail(400,"Insert the selected mention into your message.");
         await notify(tx,person,"Mentioned in a conversation",`${actor.name} mentioned you.`,`/staff/messages?conversation=${target}`).run();
       }
-      await run(tx,"INSERT INTO messages (id,conversation_id,sender_id,body,reply_to) VALUES (?,?,?,?,?)",message,target,actor.id,text,reply||null);
+      if (document) {
+        await shareMessageDocument(tx, actor, target, conversation.kind, document);
+        await run(tx,"INSERT INTO messages (id,conversation_id,sender_id,body,reply_to,document_id) VALUES (?,?,?,?,?,?)",
+          message,target,actor.id,text,reply||null,document);
+      } else {
+        await run(tx,"INSERT INTO messages (id,conversation_id,sender_id,body,reply_to) VALUES (?,?,?,?,?)",message,target,actor.id,text,reply||null);
+      }
       await notifyConversation(tx,actor,target,"New message",selected);
     });
     return json({ok:true,id:message},201);
@@ -391,7 +441,7 @@ export async function documentAction(db:Db,actor:Actor,action:string,data:Record
 export async function teamOptions(db:Db,actor:Actor){
   if(actor.role==="guest") return [];
   return all<Row>(db,`SELECT e.id,e.name,e.title,e.employee_no,u.name AS department FROM employees e LEFT JOIN units u ON u.id=e.department_id
-    WHERE e.org_id=? AND e.status='Active' AND e.role<>'guest'
+    WHERE e.org_id=? AND e.status='Active' AND e.employment_status<>'Ended' AND e.role<>'guest'
     AND (?=1 OR e.id=? OR (e.department_id IS NOT NULL AND e.department_id=?) OR e.manager_id=? OR e.id=?) ORDER BY e.name LIMIT 200`,
     actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,actor.manager_id);
 }

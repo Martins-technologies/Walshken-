@@ -27,6 +27,7 @@ export type ViewData = {
   sessions?:RecordRow[]; units?:RecordRow[]; rates?:RecordRow[]; availability?:RecordRow[]; inquiries?:RecordRow[];
   registry?: { query: string; page: number; pages: number; total: number };
   pendingAttendees?:RecordRow[]; guestMeetings?:boolean; recordingStorage?:boolean; meetingPolicy?:RecordRow;
+  messageDocumentsEnabled?:boolean;
   groups?:string[]; departments?:RecordRow[]; canForwardMessages?:boolean; messageChanges?:string;
   memberManagement?:string; pendingGroups?:RecordRow[]; communicationPolicy?:RecordRow;
   enrollmentOnly?:boolean; mfaRequired?:boolean; compensation?:RecordRow|null;

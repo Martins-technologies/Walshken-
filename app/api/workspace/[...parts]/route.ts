@@ -7,7 +7,7 @@ import { staffMfaAction } from "@/lib/walshken/staff-mfa";
 import { closeOtherSessions, removeAvatar, staffAvatar, updateAvatar } from "@/lib/walshken/staff-profile";
 import { adminAction } from "@/lib/walshken/admin";
 import { changePassword, login } from "@/lib/walshken/auth";
-import { documentAction, downloadDocument, messageAction, messagesFor, uploadDocument } from "@/lib/walshken/collaboration";
+import { documentAction, downloadDocument, messageAction, messageDocumentChoices, messagesFor, uploadDocument } from "@/lib/walshken/collaboration";
 import { checkOrigin, currentActor, database, endSession, fail, handleError, json, needsStaffMfa, payload, pick, requireStaff } from "@/lib/walshken/server";
 import { view } from "@/lib/walshken/views";
 import { payrollAction, taskDetails, timeAction, workAction } from "@/lib/walshken/work";
@@ -33,6 +33,7 @@ export async function GET(request: Request, context: Context) {
     if (area === "meeting-attendance") return await attendanceReport(db,actor,action);
     if (area === "view") return await view(db,actor,action,params);
     if (area === "files") return await downloadDocument(db,actor,action,params.get("mode")==="preview");
+    if (area === "messages" && action === "attachments") return await messageDocumentChoices(db,actor,params.get("conversation")??"",params.get("q")??"");
     if (area === "conversation") return await messagesFor(db,actor,action,params.get("q")??"",params.get("before")??"",params.get("pinned")==="1");
     if (area === "task-comments") { requireStaff(actor); return json({rows:await taskDetails(db,actor,action)}); }
     return fail(404,"This workspace endpoint is unavailable.");

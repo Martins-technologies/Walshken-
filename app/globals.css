@@ -473,3 +473,18 @@ section[id],form[id]{scroll-margin-top:26px}
 @media(min-width:1600px){.calls-layout{grid-template-columns:340px minmax(0,1fr)}.calls-detail{padding:32px}.call-stage{height:570px}}
 @media(max-width:1100px){.calls-layout{grid-template-columns:260px minmax(0,1fr)}.calls-title{align-items:flex-start;flex-direction:column}.calls-title h2{font-size:26px}.calls-detail{padding:20px}.call-detail-heading{flex-wrap:wrap}.call-detail-heading h3{font-size:23px}.call-stage.has-presentation{grid-template-columns:minmax(0,1fr);grid-template-rows:65% 35%}.call-stage{height:450px}.call-summary{gap:14px}.call-host-controls{align-items:flex-start;flex-direction:column}}
 @media(max-width:760px){.calls-layout{grid-template-columns:minmax(0,1fr)}.calls-list{border-right:0;border-bottom:1px solid var(--line);max-height:350px}.calls-meeting-list{max-height:205px}.calls-title h2{font-size:24px}.calls-title .row-actions{width:100%}.calls-title .row-actions>.btn{flex:1;font-size:13px}.calls-title p{font-size:13px}.calls-setup{padding:16px;flex-wrap:wrap;gap:12px}.calls-setup p{font-size:12px}.calls-detail{padding:18px 15px}.call-welcome{min-height:380px;gap:16px}.call-welcome h3{font-size:23px}.call-benefits{gap:12px}.call-live{margin:0 -5px 20px}.call-stage{height:430px;padding:8px}.call-host-controls .row-actions{gap:7px}.call-host-controls .btn{font-size:11px;padding:8px 10px}.call-summary{font-size:11px;margin-bottom:18px}.call-person>.row-actions{width:100%;padding-left:46px}.call-consent{padding:14px}.call-prejoin{padding:15px}.call-attendance-meta{flex-direction:column;gap:5px}.calls-list input,.call-dialog input,.call-dialog select{font-size:16px}.call-live .lk-button{font-size:11px}.call-detail-heading h3{font-size:22px}.call-detail-heading>.btn{min-height:38px}.call-dialog{max-height:88dvh;width:calc(100vw - 24px)}}
+
+.chat-compose-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.chat-attach { display: inline-flex; align-items: center; gap: 6px; padding: 6px 9px; border: 1px solid #cfdced; border-radius: 7px; color: #244577; background: #f5f9ff; font: inherit; font-weight: 650; }
+.chat-attach:hover { background: #e8f0fd; }
+.chat-file-card { display: flex; align-items: center; gap: 9px; margin-top: 3px; padding: 9px 11px; border: 1px solid #cbd8ec; border-radius: 8px; color: #183e80; background: #f7faff; text-decoration: none; overflow-wrap: anywhere; }
+.chat-file-card:hover { background: #edf4ff; }
+.chat-file-card svg, .chat-file-options svg { flex-shrink: 0; }
+.chat-file-card strong, .chat-file-card small { display: block; }
+.chat-file-card small, .chat-file-unavailable, .chat-file-help { font-size: .82rem; }
+.chat-file-unavailable { color: #44546c; }
+.chat-file-search { display: flex; align-items: end; gap: 8px; }
+.chat-file-search label { flex: 1; min-width: 0; }
+.chat-file-options { display: grid; gap: 6px; margin-top: 11px; max-height: 42vh; overflow: auto; }
+.chat-file-options button { display: flex; align-items: center; gap: 8px; padding: 10px; min-height: 42px; border: 1px solid #d8e2f0; border-radius: 8px; color: #193f73; background: white; font: inherit; text-align: left; overflow-wrap: anywhere; }
+.chat-file-options button:hover { background: #edf4ff; }

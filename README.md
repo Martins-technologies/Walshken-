@@ -34,12 +34,14 @@ Open the corporate homepage at `/`, the service directory at `/services`, countr
 - Country autocomplete with ISO codes, market and service availability, configurable destinations, public inquiries and launch interest.
 - Account activation, scoped roles, password sign-in, expiring server-side sessions, account suspension, self-service password changes and admin-issued reset codes.
 - Profiles, organization units, projects, tasks and discussions, work calendars, shifts, attendance and breaks, timesheet submission and review, leave requests, notifications.
-- Membership-scoped messages, private file upload and access grants, meeting schedules, a Daily room adapter, encrypted provider settings and administrative audit history.
-- Effective-dated pay rates and base hourly estimates from approved time. Estimates omit overtime, holiday pay, taxes and deductions. Overnight attendance is supported and overnight payroll records require separate review.
+- Membership-scoped direct messages and group conversations backed by PostgreSQL. Start one from **Messages → New message → Direct**. Group-creation policy is independent of direct messaging.
+- Private, versioned documents with server-side access checks and previews. Chat document references require both `WALSHKEN_DOCUMENTS_ENABLED=1` and `WALSHKEN_MESSAGE_DOCUMENTS_ENABLED=1`. Apply the document-reference migration first. A chat reference preserves the document’s existing permissions.
+- Secure LiveKit calls and meetings with participant roles, attendance and optional consent-based recording.
+- Reviewed payroll estimates, effective-dated rates, adjustments and payslips. The built-in statutory deduction engine covers Alberta/CAD for 2026. Payments recorded in the app are processed separately.
 
 ## Production readiness
 
-Before employee onboarding, verify managed MFA and recovery, database runtime permissions, backup and recovery, retention, and load capacity. The current private document store uses PostgreSQL for files up to 3 MB. Configure production file storage and malware scanning before handling confidential documents. Live Daily calls need a configured account. Twilio, transactional email and compliant payroll workflows need provider wiring and verification. Statutory holiday pay, payroll finalization, approved payslips and payments remain separate work.
+Verify connected provider workflows using authorized test accounts in a separate database. Before staff rollout, verify backup restore, production runtime permissions, session recovery, upload scanning, retention and load capacity. The automated call and document suites substitute provider transport while testing the real routes and permission checks.
 
 ## LiveKit calls and meetings
 
