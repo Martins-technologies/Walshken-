@@ -62,6 +62,7 @@ export async function POST(request: Request, context: Context) {
     const data=await payload(request);
     if(area==="mfa") return await staffMfaAction(request,db,actor,action,data);
     if(area==="session"&&action==="password") return await changePassword(request,db,actor,data);
+    if(area==="payroll"&&process.env.WALSHKEN_PAYROLL_ENABLED==="1")return fail(404,"Use the reviewed payroll workflow.");
     if(["employees","organization","website","integrations","holidays","communication-policy"].includes(area)) return await adminAction(db,actor,area,action,data);
     if(["attendance","timesheets","shifts","leave","corrections"].includes(area)) return await timeAction(db,actor,area,action,data);
     if(["tasks","projects","notifications"].includes(area)) return await workAction(db,actor,area,action,data);

@@ -18,7 +18,8 @@
     "test:messages": "NODE_ENV=test node --import tsx tests/verify-messages.mjs",
     "test:documents": "NODE_ENV=test node --import tsx tests/verify-documents.mjs",
     "test:tasks": "NODE_ENV=test node --import tsx tests/verify-tasks.mjs",
-    "test:workforce": "NODE_ENV=test node --import tsx tests/verify-workforce.mjs"
+    "test:workforce": "NODE_ENV=test node --import tsx tests/verify-workforce.mjs",
+    "test:payroll": "NODE_ENV=test node --import tsx tests/verify-payroll.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1175.0",
@@ -28,14 +29,17 @@
     "@livekit/components-styles": "1.2.0",
     "@livekit/protocol": "1.53.0",
     "@napi-rs/canvas": "1.2.0",
+    "@pdf-lib/fontkit": "1.1.1",
     "@smithy/fetch-http-handler": "5.8.1",
     "@vercel/functions": "3.11.1",
+    "decimal.js": "10.6.0",
     "exceljs": "4.4.0",
     "livekit-client": "2.25.0",
     "livekit-server-sdk": "2.20.1",
     "lucide-react": "1.31.0",
     "mammoth": "1.13.0",
     "next": "16.4.6",
+    "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.5.438",
     "pg": "8.23.1",
     "postgres": "3.4.7",

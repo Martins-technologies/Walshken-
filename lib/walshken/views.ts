@@ -1,3 +1,5 @@
+import {payrollDataset,payrollEnabled} from './payroll-access';
+import {payrollData} from './payroll-data';
 import {workforceEnabled} from './workforce';
 import {workforceData} from './workforce-data';
 import { collaborationRelease, releasedSections } from "./release";
@@ -12,7 +14,7 @@ import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
-  if(collaborationRelease()&&!releasedSections.has(section)&&!(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section))&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
+  if(collaborationRelease()&&!releasedSections.has(section)&&!(payrollEnabled()&&["payroll","salary"].includes(section))&&!(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section))&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
   if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
   if(workforceEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
@@ -46,6 +48,7 @@ async function notifications(db:Db,actor:Actor){
 
 export async function view(db:Db,actor:Actor,section:string,params:URLSearchParams){
   if(!canOpen(actor,section)) return fail(403,"You do not have access to this section.");
+  if(payrollEnabled()&&["payroll","salary"].includes(section))return payrollData(db,actor,params);
   if(section==="profile"){
     const mfaRequired = staffMfaRequired();
     if(needsStaffMfa(actor)) return json({mfaRequired,enrollmentOnly:true});
@@ -59,7 +62,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
         LEFT JOIN units o ON o.id=e.office_id LEFT JOIN employees m ON m.id=e.manager_id WHERE e.id=? AND e.org_id=?`,actor.id,actor.org_id),
       all(db,"SELECT created_at,expires_at,ended_at,agent FROM sessions WHERE employee_id=? ORDER BY created_at DESC LIMIT 30",actor.id),
       actor.role==="guest"?Promise.resolve(null):one(db,`SELECT kind,amount_cents,currency,effective_on FROM compensation
-        WHERE employee_id=? AND effective_on<=? ORDER BY effective_on DESC LIMIT 1`,actor.id,localDate(now(),actor.time_zone)),
+        WHERE employee_id=? AND effective_on<=? ${payrollEnabled()?"AND release_stage=? AND voided_at IS NULL":""} ORDER BY effective_on DESC LIMIT 1`,actor.id,localDate(now(),actor.time_zone),...(payrollEnabled()?[payrollDataset()]:[])),
     ]);
     return json({row:row&&{...row,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired});
   }

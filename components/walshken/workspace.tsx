@@ -30,7 +30,7 @@ const notes:Record<string,string>={
   roles:"Control staff access using scoped role assignments.",
   scheduling:"Publish shifts for employees in your scope.",
   approvals:"Review submitted time and attendance corrections.",
-  payroll:"Maintain effective-dated rates and prepare base gross estimates.",
+  payroll:"Manage effective pay rates, statutory calculations, approvals and recorded payments.",
   holidays:"Maintain calendar references and company observances.",
   reports:"Review team activity across work, attendance and approvals.",
   "document-security":"Review private documents and revoke access.",
@@ -87,7 +87,7 @@ export function Workspace({section,allowed,actor}:{section:string;allowed:readon
         {error&&<p className="workspace-alert" role="alert">{error}</p>}
         {!data&&!error?<Empty title="Loading workspace…" body="Retrieving your latest records." icon="clock"/>:data&&(
           adminNav.some(([key])=>key===section)?<AdminViews section={section} actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>
-            :<WorkspaceViews section={section} actor={actor} data={data} refresh={refresh}/>)}
+            :<WorkspaceViews section={section} actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>)}
       </main>
     </div>
   </div>;

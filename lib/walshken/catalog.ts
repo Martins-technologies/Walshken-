@@ -51,7 +51,7 @@ export const providers = [
   { id: "recording-storage", name: "Private recording storage", category: "Meeting recordings", description: "Private Supabase, S3 or R2 bucket. Credentials stay encrypted on the server.", fields: [["endpoint", "S3 endpoint"], ["region", "Region"], ["bucket", "Private bucket name"], ["accessKey", "S3 access key"], ["secretKey", "S3 secret key"]] },
   { id: "twilio", name: "Twilio", category: "SMS", description: "SMS alerts for workflows that are enabled later.", fields: [["accountSid", "Account SID"], ["authToken", "Auth token"], ["from", "Sender number"]] },
   { id: "resend", name: "Resend", category: "Email", description: "Transactional email and staff notifications.", fields: [["apiKey", "API key"], ["from", "Verified sender address"]] },
-  { id: "payroll", name: "Payroll provider", category: "Payroll", description: "Configuration for a validated payroll provider.", fields: [["account", "Provider account or reference"], ["apiKey", "API key"]] },
+  {id:"payroll-calculator-review",name:"Validated payroll calculator",category:"Payroll",description:"A signed payroll-v1 calculator for additional jurisdictions and tax years. Canada / Alberta 2026 works without this connection. The server must allowlist the provider host.",fields:[["providerName","Validated provider name"],["endpoint","HTTPS payroll-v1 endpoint"],["apiKey","API key"],["signingSecret","Response signing secret"]]},
 ] as const;
 
 export const staffNav = [

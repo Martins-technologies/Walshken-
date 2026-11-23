@@ -1,5 +1,7 @@
 import { passwordMatches } from "./passwords";
 import { documentsEnabled } from "./document-access";
+import {payrollEnabled} from "./payroll-access";
+import {validateCalculatorSettings,verifyCalculatorConnection,type CalculatorSettings} from "./payroll-calculator";
 import { verifyStaffMfa } from "./staff-mfa";
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
@@ -302,6 +304,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       if(provider.id==="document-storage-review"&&settings.bucket==="walshken-call-recordings")return fail(400,"Use a separate private document bucket.");
       if(data.enabled==="1") await verifyRecordingStorage(settings as RecordingStorage);
     }
+    if(provider.id==="payroll-calculator-review"){if(!payrollEnabled())return fail(404,"Payroll is not enabled here.");validateCalculatorSettings(settings as CalculatorSettings);if(data.enabled==="1")await verifyCalculatorConnection(settings as CalculatorSettings);}
     const protectedValue = await encryptSettings(provider.id, settings);
     await db.batch([
       stmt(db,`INSERT INTO integrations (id,configuration,enabled,updated_at) VALUES (?,?,?,?)
