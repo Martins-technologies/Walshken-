@@ -29,7 +29,7 @@ export type ViewData = {
   pendingAttendees?:RecordRow[]; guestMeetings?:boolean; recordingStorage?:boolean; meetingPolicy?:RecordRow;
   messageDocumentsEnabled?:boolean;
   groups?:string[]; departments?:RecordRow[]; canForwardMessages?:boolean; messageChanges?:string;
-  memberManagement?:string; pendingGroups?:RecordRow[]; communicationPolicy?:RecordRow;
+  memberManagement?:string; pendingGroups?:RecordRow[]; removedGroups?:RecordRow[]; communicationPolicy?:RecordRow;
   enrollmentOnly?:boolean; mfaRequired?:boolean; compensation?:RecordRow|null;
   active?:RecordRow|null; drafts?:number; provider?:boolean; secureStorage?:boolean; encryptionMigrationReady?:boolean; catalog?:SiteCatalog;
 };
@@ -258,10 +258,14 @@ export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:st
       ["Account created",dateText(row.created_at)],["Account activated",dateText(row.activated_at)],["First sign-in",dateText(row.first_login_at,true,actor.timeZone)],
       ["Last sign-in",dateText(row.last_login_at,true,actor.timeZone)],["Work time zone",row.time_zone],["Expected weekly hours",row.expected_hours],["Break policy",row.break_policy],["Annual leave days",row.leave_days],["Assigned schedule",row.work_schedule],["Holiday calendar",row.holiday_calendar],["Annual holiday entitlement (days)",row.holiday_days],
     ];
-    return <><Panel title="Employment details"><div className="profile-summary">{photo
+    return <><Panel title="Employment details" note="Ask your administrator to update your legal name, work email, or employment records."><div className="profile-summary">{photo
       ? <img className="avatar avatar-large" style={{objectFit:"cover"}} src={`/api/workspace/profile/photo?v=${encodeURIComponent(photo)}`} alt="Your profile photo"/>
       : <span className="avatar avatar-large">{initials(actor.name)}</span>}<div><h3>{actor.name}</h3><p>{row.title||roleNames[actor.role]}</p></div></div>
       <dl className="profile-grid">{attributes.map(([name,item])=><div key={name}><dt>{name}</dt><dd>{item??"—"}</dd></div>)}</dl></Panel>
+      <Panel title="Contact details">
+        <ActionForm path="profile/contact" fields={[{name:"phone",label:"Phone number",type:"tel",value:row.phone,max:40,autoComplete:"tel"}]}
+          submit="Save contact details" refresh={refresh} reset={false}/>
+      </Panel>
       <Panel title="Profile photo" note="Upload a PNG, JPEG, or WebP under 1 MB.">
         <ActionForm path="profile/photo" file fields={[{ name:"photo",label:"Choose a photo",type:"file",required:true }]} submit="Upload photo" refresh={refresh}/>
         {photo&&<Quick path="profile/remove-photo" refresh={refresh}>Remove photo</Quick>}

@@ -223,6 +223,10 @@ const group=(await request('messages/create',201,admin,{kind:'Group',title:'Docu
 const groupFolder=(await post('folder-add',{name:'Project documents',group},201)).id;
 const groupFile=(await post('upload',file('project.png',png,{folder:groupFolder}),201)).id;
 await rule('group',group,'all','',['view']);assert.ok((await list(staff)).rows.some(r=>r.id===groupFile));
+await request('messages/remove-group',200,admin,{conversation:group});
+assert.ok(!(await list(staff)).rows.some(r=>r.id===groupFile));
+await request('messages/restore-group',200,admin,{conversation:group});
+assert.ok((await list(staff)).rows.some(r=>r.id===groupFile));
 await db.prepare('DELETE FROM conversation_members WHERE conversation_id=? AND employee_id=?',[group,staffId]).run();await post('detail',{id:groupFile},403,staff);
 console.log('PASS organization, department, group, ancestor-folder and document scopes, including membership and folder revocation');
 

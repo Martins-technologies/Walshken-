@@ -248,6 +248,18 @@ await request("messages/send",403,staff,{conversation:scopedDirect,body:"No long
 await request("messages/send",403,scopedAdmin,{conversation:scopedDirect,body:"No longer in scope"});
 assert.equal((await request("conversation/"+scopedDirect,200,staff)).rows.length,1);
 await db.prepare("UPDATE employees SET department_id=? WHERE id=?",[department,scopedAdminId]).run();
+const groupMessage=await request("messages/send",201,staff,{conversation:approval.id,body:"Retain this history"});
+await request("messages/remove-group",404,scopedAdmin,{conversation:approval.id});
+await request("messages/remove-group",404,staff,{conversation:scopedDirect});
+await request("messages/remove-group",200,staff,{conversation:approval.id});
+await request("conversation/"+approval.id,404,admin);
+await request("messages/send",404,staff,{conversation:approval.id,body:"Closed group"});
+assert.ok((await request("view/messages",200,staff)).removedGroups.some(row=>row.id===approval.id));
+assert.ok(!(await request("view/messages",200,scopedAdmin)).removedGroups.some(row=>row.id===approval.id));
+await request("messages/restore-group",404,scopedAdmin,{conversation:approval.id});
+await request("messages/restore-group",200,admin,{conversation:approval.id});
+assert.ok((await request("conversation/"+approval.id,200,staff)).rows.some(row=>row.id===groupMessage.id));
+console.log("PASS group owner removal, Super Admin restoration, retained history and access controls");
 console.log("PASS archived direct conversation reopening and preventing new messages after peer scope changes");
 console.log("PASS company, department, project, country and management group scopes, with immediate revocation when assignments change");
 console.log("PASS earlier-history edits and removal refresh, pinned-only search, inline mentions, regular administrator policy and scoped approvals");

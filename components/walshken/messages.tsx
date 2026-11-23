@@ -90,6 +90,8 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
   const canMembers=isAdmin||(actor.role!=="guest"&&current?.kind!=="External"&&
     (data.memberManagement==="Members"||(current?.created_by===actor.id&&data.memberManagement!=="Super Admin")));
   const canPin=isAdmin||current?.created_by===actor.id;
+  const canRemoveGroup=current&&current.kind!=="Direct"&&actor.role!=="guest"
+    &&(actor.role==="super_admin"||current.created_by===actor.id&&(current.kind!=="External"||isAdmin));
   const escapedQuery=body.slice(0,caret).match(/(?:^|\s)@([^@\n]{0,60})$/);
   const suggestions=!editing&&!dismissMention&&escapedQuery
     ?members.filter(member=>member.id!==actor.id&&value(member,"name").toLowerCase().includes(escapedQuery[1].toLowerCase())).slice(0,6):[];
@@ -98,6 +100,7 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
   const channels=(data.rows??[]).filter(row=>Boolean(row.archived)===archived&&value(row,"title").toLowerCase().includes(query.toLowerCase()));
   const destinations=(data.rows??[]).filter(row=>row.id!==target&&row.kind!=="External");
   const pending=data.pendingGroups??[];
+  const removedGroups=data.removedGroups??[];
 
   useEffect(()=>{
     const requested=new URLSearchParams(window.location.search).get("conversation");
@@ -156,9 +159,9 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
 
   function select(id:string){
     setTarget(id);setHistory([]);setSearch("");setPinned(false);setReply(null);setEditing(null);setForward(null);setBody("");setAttachment(null);
-    setDismissMention(false);setMobileThread(true);setDialog("");setError("");
+    setDismissMention(false);setMobileThread(Boolean(id));setDialog("");setError("");
     const url=new URL(window.location.href);
-    url.searchParams.set("conversation",id);
+    if(id)url.searchParams.set("conversation",id);else url.searchParams.delete("conversation");
     window.history.replaceState(null,"",url);
   }
   function insertMention(member:RecordRow){
@@ -215,6 +218,7 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
         <button type="button" aria-pressed={!archived} onClick={()=>setArchived(false)}>Inbox</button>
         <button type="button" aria-pressed={archived} onClick={()=>setArchived(true)}>Archived</button>
       </div>
+      {removedGroups.length>0&&<button type="button" className="text-link" onClick={()=>setDialog("removed-groups")}>Removed groups</button>}
       <nav className="chat-conversations" aria-label="Conversations">
         {channels.map(row=><button type="button" className={`chat-channel ${target===row.id?"selected":""}`} key={value(row,"id")} aria-current={target===row.id?"true":undefined} onClick={()=>select(value(row,"id"))}>
           <span className={`chat-avatar ${row.kind==="Direct"?"person":"group"}`}>{row.kind==="Direct"?initials(value(row,"title")):<Icon name={row.kind==="Private"?"lock":row.kind==="External"?"globe":"hash"} size={20}/>}</span>
@@ -330,6 +334,15 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
         {canMembers&&current.kind!=="Direct"&&member.id!==current.created_by&&<Quick path="messages/member" data={{conversation:target,operation:"remove",employee:member.id}} refresh={()=>{void load();refresh();}}>Remove</Quick>}</div>)}</div>
       {canMembers&&current.kind!=="Direct"&&<ActionForm path="messages/member" fields={[{name:"employee",label:"Invite participant",options:options((data.staff??[]).filter(row=>!members.some(member=>member.id===row.id)&&(current.kind==="External"||row.role!=="Guest"))),required:true}]}
         extra={{conversation:target,operation:"add"}} submit="Add participant" refresh={()=>{void load();refresh();}}/>}
+      {canRemoveGroup&&<button type="button" className="btn btn-outline btn-small" onClick={()=>setDialog("remove-group")}>Remove group</button>}
+    </ChatDialog>}
+    {dialog==="remove-group"&&canRemoveGroup&&<ChatDialog title="Remove group?" onClose={()=>setDialog("")}>
+      <p>This takes the group out of everyone’s Messages and ends access granted through group membership. The owner or a Super Admin can restore it.</p>
+      <Quick path="messages/remove-group" data={{conversation:target}} refresh={refresh} onDone={()=>select("")}>Remove group for everyone</Quick>
+    </ChatDialog>}
+    {dialog==="removed-groups"&&<ChatDialog title="Removed groups" onClose={()=>setDialog("")}>
+      <Table rows={removedGroups} columns={[{key:"title",title:"Group"},{key:"kind",title:"Type"}]} empty="No removed groups"
+        actions={row=><Quick path="messages/restore-group" data={{conversation:row.id}} refresh={refresh} onDone={()=>setDialog("")}>Restore group</Quick>}/>
     </ChatDialog>}
     {dialog==="requests"&&<ChatDialog title="Group requests" onClose={()=>setDialog("")}><Table rows={pending} columns={[{key:"title",title:"Group"},{key:"kind",title:"Type"},{key:"name",title:"Requested by"}]} empty="No group requests awaiting review" actions={row=><><Quick path="messages/review" data={{conversation:row.id,status:"Active"}} refresh={refresh}>Approve</Quick><Quick path="messages/review" data={{conversation:row.id,status:"Rejected"}} refresh={refresh}>Decline</Quick></>}/></ChatDialog>}
     {dialog==="policy"&&policy&&<ChatDialog title="Messaging policy" onClose={()=>setDialog("")}>

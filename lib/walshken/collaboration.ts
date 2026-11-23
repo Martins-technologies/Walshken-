@@ -58,7 +58,7 @@ export async function calendarTeams(db: Db, actor: Actor) {
 async function channel(db:Db, actor:Actor, target:string, policy:CommunicationPolicy) {
   const filter=activeChannels(actor,policy);
   const row=await one<ChannelScope & {id:string;created_by:string;title:string}>(db,`SELECT c.id,c.created_by,c.kind,c.title,c.department_id,c.project_id,c.country,c.closes_at FROM conversations c
-    JOIN conversation_members m ON m.conversation_id=c.id WHERE c.id=? AND c.org_id=? AND m.employee_id=? AND ${filter.sql} FOR KEY SHARE OF m`,target,actor.org_id,actor.id,...filter.args);
+    JOIN conversation_members m ON m.conversation_id=c.id WHERE c.id=? AND c.org_id=? AND m.employee_id=? AND ${filter.sql} FOR SHARE OF c FOR KEY SHARE OF m`,target,actor.org_id,actor.id,...filter.args);
   if(!row) return fail(404,"Conversation not found.");
   return row;
 }
@@ -133,7 +133,10 @@ export async function messageViews(db:Db,actor:Actor) {
   if (communicationAdmin(actor)&&policy.external_messaging) {
     staff.push(...await all<Row>(db,`SELECT id,name,'Guest' AS role FROM employees WHERE org_id=? AND role='guest' AND status='Active' AND employment_status<>'Ended' ORDER BY name`,actor.org_id));
   }
-  return json({rows,staff,messageDocumentsEnabled:messageDocumentsEnabled()&&actor.role!=="guest",
+  const removedGroups=actor.role==="guest"?[]:await all(db,`SELECT id,title,kind FROM conversations
+    WHERE org_id=? AND kind<>'Direct' AND status='Removed' AND (?=1 OR created_by=?)
+    ORDER BY title,id LIMIT 100`,actor.org_id,canSuper(actor)?1:0,actor.id);
+  return json({rows,staff,removedGroups,messageDocumentsEnabled:messageDocumentsEnabled()&&actor.role!=="guest",
     groups:canCreateGroups(actor,policy)?conversationKinds.filter(kind=>kind!=="Direct"
       && ((kind!=="Company"&&kind!=="External")||communicationAdmin(actor))
       && (kind!=="Private"||canManage(actor))
@@ -170,6 +173,21 @@ export async function messageAction(db:Db,actor:Actor,action:string,data:Record<
 }
 async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string,unknown>){
   const policy = await communicationPolicy(db,actor);
+  if(action==="remove-group"||action==="restore-group"){
+    requireStaff(actor);
+    const target = str(data.conversation,"conversation",80);
+    const restoring = action==="restore-group";
+    const group = await one<{created_by:string; kind:string; status:string; closes_at:string|null}>(db,
+      "SELECT created_by,kind,status,closes_at FROM conversations WHERE id=? AND org_id=? AND kind<>'Direct' FOR NO KEY UPDATE",target,actor.org_id);
+    if (!group || (!canSuper(actor) && group.created_by!==actor.id)) return fail(404,"Group not found.");
+    if (group.kind==="External" && !communicationAdmin(actor)) return fail(403,"Administrator access is required for guest groups.");
+    if (group.status!==(restoring?"Removed":"Active")) return fail(409,restoring?"This group is not removed.":"This group is not active.");
+    if (restoring && group.closes_at && group.closes_at<=now()) return fail(409,"This temporary group has expired.");
+    if (restoring && group.kind==="External" && !policy.external_messaging) return fail(409,"Guest conversations are disabled by messaging policy.");
+    await run(db,"UPDATE conversations SET status=? WHERE id=? AND org_id=?",restoring?"Active":"Removed",target,actor.org_id);
+    await audit(db,actor,restoring?"Group restored":"Group removed","conversation",target).run();
+    return json({ok:true,message:restoring?"Group restored.":"Group removed for all participants."});
+  }
   if(action==="review"){
     if(!communicationAdmin(actor)) return fail(403,"Administrator access is required.");
     const target = str(data.conversation,"conversation",80);
