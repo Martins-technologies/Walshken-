@@ -43,7 +43,13 @@ const notes:Record<string,string>={
 const href=(section:string)=>section==="dashboard"?"/staff":`/staff/${section}`;
 
 export function Workspace({section,allowed,actor}:{section:string;allowed:readonly string[];actor:Viewer}){
-  const [drawer,setDrawer]=useState(false),[data,setData]=useState<ViewData|null>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
+  const initialKeys = section === "calendar" ? ["mode","view","anchor","from","to","department","country","employee","team","types"]
+    : ["shifts","scheduling","approvals","leave"].includes(section) ? ["from","to","team"]
+      : ["payroll","salary"].includes(section) ? ["period"] : [];
+  const [drawer,setDrawer]=useState(false),[data,setData]=useState<ViewData|null>(null),[error,setError]=useState(""),[query,setQuery]=useState(()=>{
+    const params=new URLSearchParams(typeof window==="undefined"?"":window.location.search);
+    return new URLSearchParams([...params].filter(([key])=>initialKeys.includes(key))).toString();
+  });
   const [version,setVersion]=useState(0);
   const refresh=useCallback(()=>setVersion((current)=>current+1),[]);
   const staffHref=href;

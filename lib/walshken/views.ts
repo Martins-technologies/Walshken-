@@ -1,3 +1,4 @@
+import { staffCalendar, staffCalendarEnabled } from "./staff-calendar";
 import {holidaysEnabled,assignmentOn,holidayRule} from './holiday-access';
 import {holidayData} from './holiday-data';
 import {payrollDataset,payrollEnabled} from './payroll-access';
@@ -101,6 +102,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
           WHERE e.org_id=? AND ${scoped.sql} ORDER BY c.created_at DESC LIMIT 60`,actor.org_id,...scoped.args) : [];
     return json({rows,corrections,staff:canManage(actor)?await staffChoices(db,actor):[]});
   }
+  if(section==="calendar"&&staffCalendarEnabled()) return staffCalendar(db,actor,params);
   if(section==="calendar"){
     const [tasks,shifts,events,leave,holidays]=await Promise.all([
       taskRows(db,actor,true),timeRows(db,actor,"shifts"),meetings(db,actor),

@@ -1,4 +1,6 @@
 "use client";
+import {StaffCalendar} from "./staff-calendar";
+import type {StaffCalendarData} from "@/lib/walshken/staff-calendar-types";
 import {HolidayWorkspace} from "./holidays";
 import {PayrollWorkspace} from "./payroll";
 import { Calls } from "./calls";
@@ -16,6 +18,7 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  managedCalendar?: boolean; calendar?: StaffCalendarData;
   managedHolidays?:boolean;managedPayroll?:boolean;managedWorkforce?:boolean;managedTasks?:boolean;taskSummary?:{today:number;overdue:number;pending:number;open:number};
   managedDocuments?:boolean;documentStorageEnabled?:boolean;documentBucket?:string;
   collaborationOverview?:boolean; conversations?:RecordRow[];
@@ -223,6 +226,7 @@ export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:st
   if(section==="dashboard")return <Overview actor={actor} data={data} refresh={refresh}/>;
   if(section==="tasks")return data.managedTasks?<TaskWorkspace actor={actor} initial={data}/>:<Tasks actor={actor} data={data} refresh={refresh}/>;
   if(["attendance","shifts","timesheets","leave"].includes(section))return <TimeViews section={section} actor={actor} data={data} refresh={refresh}/>;
+  if(section==="calendar"&&data.managedCalendar&&data.calendar)return <StaffCalendar data={data.calendar} refresh={refresh} setQuery={setQuery}/>;
   if(section==="calendar")return <Calendar actor={actor} data={data}/>;
   if(section==="messages")return <Messages actor={actor} data={data} refresh={refresh}/>;
   if(section==="documents")return <DocumentView actor={actor} data={data} refresh={refresh}/>;
