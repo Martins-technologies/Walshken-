@@ -1,7 +1,13 @@
 "use client";
+import {StaffCalendar} from "./staff-calendar";
+import type {StaffCalendarData} from "@/lib/walshken/staff-calendar-types";
+import {HolidayWorkspace} from "./holidays";
+import {PayrollWorkspace} from "./payroll";
 import { Calls } from "./calls";
 import { Messages } from "./messages";
 import { DocumentWorkspace } from "./documents";
+import {WorkforceWorkspace} from "./workforce";
+import { TaskWorkspace } from "./tasks";
 import { StaffSecurity } from "./staff-security";
 
 import { useCallback, useEffect, useState } from "react";
@@ -12,6 +18,8 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  managedCalendar?: boolean; calendar?: StaffCalendarData;
+  managedHolidays?:boolean;managedPayroll?:boolean;managedWorkforce?:boolean;managedTasks?:boolean;taskSummary?:{today:number;overdue:number;pending:number;open:number};
   managedDocuments?:boolean;documentStorageEnabled?:boolean;documentBucket?:string;
   collaborationOverview?:boolean; conversations?:RecordRow[];
   rows?:RecordRow[]; row?:RecordRow; staff?:RecordRow[]; projects?:RecordRow[]; shifts?:RecordRow[]; tasks?:RecordRow[];
@@ -35,7 +43,7 @@ const durationColumn=(key:string,title:string)=>({key,title,render:(row:RecordRo
 function Overview({actor,data,refresh}:{actor:Viewer;data:ViewData;refresh:()=>void}){
   if(data.collaborationOverview){
     const conversations=data.conversations??[],meetings=data.meetings??[],alerts=data.alerts??[];
-    const stats=[["message","Conversations",conversations.length,"/staff/messages"],["video","Upcoming meetings",meetings.length,"/staff/calls"],["bell","Unread updates",alerts.filter(row=>!row.read_at).length,"/staff/notifications"]];
+    const stats=[["message","Conversations",conversations.length,"/staff/messages"],["video","Upcoming meetings",meetings.length,"/staff/calls"],["bell","Unread updates",alerts.filter(row=>!row.read_at).length,"/staff/notifications"],...(data.taskSummary?[["check","Open tasks",data.taskSummary.open,"/staff/tasks"]]:[])];
     return <><div className="dashboard-banner"><div><div className="section-kicker"><span/> YOUR TEAM WORKSPACE</div><h2>Connect with your team.</h2><p>Keep conversations, meetings and work profiles in one secure place.</p><a className="btn btn-white btn-small" href="/staff/messages">Open messages <Icon name="right" size={16}/></a></div><div className="dashboard-motif" aria-hidden="true"><Icon name="message" size={98}/></div></div>
       <div className="stats-grid">{stats.map(([icon,label,count,href])=><a className="stat-card" href={String(href)} key={String(label)}><span className="icon-tile"><Icon name={String(icon)} size={19}/></span><strong>{count}</strong><span>{label}</span><Icon name="external" className="stat-arrow" size={16}/></a>)}</div>
       <div className="panel-grid"><Panel title="Upcoming meetings" action={<a className="text-link" href="/staff/calls">Open calls <Icon name="right" size={15}/></a>}><Table rows={meetings.slice(0,5)} columns={[column("title","Meeting"),dateColumn("starts_at","Starts",true,actor.timeZone),column("mode","Mode")]} empty="No upcoming meetings"/></Panel>
@@ -210,11 +218,15 @@ function LegacyDocumentView({actor,data,refresh,admin=false}:{actor:Viewer;data:
   </Panel>;
 }
 
-export function WorkspaceViews({section,actor,data,refresh}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void}){
+export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void;setQuery:(q:string)=>void}){
   const rows=data.rows??[];
+  if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
+  if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
+  if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
   if(section==="dashboard")return <Overview actor={actor} data={data} refresh={refresh}/>;
-  if(section==="tasks")return <Tasks actor={actor} data={data} refresh={refresh}/>;
+  if(section==="tasks")return data.managedTasks?<TaskWorkspace actor={actor} initial={data}/>:<Tasks actor={actor} data={data} refresh={refresh}/>;
   if(["attendance","shifts","timesheets","leave"].includes(section))return <TimeViews section={section} actor={actor} data={data} refresh={refresh}/>;
+  if(section==="calendar"&&data.managedCalendar&&data.calendar)return <StaffCalendar data={data.calendar} refresh={refresh} setQuery={setQuery}/>;
   if(section==="calendar")return <Calendar actor={actor} data={data}/>;
   if(section==="messages")return <Messages actor={actor} data={data} refresh={refresh}/>;
   if(section==="documents")return <DocumentView actor={actor} data={data} refresh={refresh}/>;

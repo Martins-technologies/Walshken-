@@ -1,0 +1,115 @@
+.holiday-workspace{display:grid;gap:22px;color:#14233f;min-width:0}
+.holiday-hero{display:flex;gap:22px;align-items:center;padding:30px 32px;border-radius:18px;background:linear-gradient(120deg,#172640,#263e65);color:#fff}
+.holiday-hero-icon{width:64px;height:64px;display:grid;place-items:center;flex-shrink:0;border:1px solid #ffffff30;border-radius:17px;background:#ffffff0b}
+.holiday-hero>div:nth-child(2){flex:1}
+.holiday-hero span{font-size:11px;letter-spacing:.15em;font-weight:800;color:#c3d6f1}
+.holiday-hero h2{font-size:clamp(25px,3vw,35px);color:inherit;margin:10px 0;letter-spacing:-.04em}
+.holiday-hero p{font-size:13px;line-height:1.8;color:#d0dbee;max-width:660px;margin:0}
+.holiday-filters{display:grid;grid-template-columns:100px minmax(200px,1.5fr) minmax(200px,1.5fr) minmax(140px,1fr);gap:14px}
+.holiday-workspace label{font-size:11px;font-weight:650;display:grid;gap:8px;color:#425570}
+.holiday-workspace select,.holiday-workspace input:not([type=checkbox]),.holiday-workspace textarea{border:1px solid #dbe3ef;border-radius:8px;background:#fff;color:#14233f;padding:11px 12px;width:100%;max-width:100%;min-width:0;font:inherit;font-size:13px}
+.holiday-workspace select[multiple]{min-height:130px}
+.holiday-workspace textarea{min-height:85px;resize:vertical}
+.holiday-workspace input:focus-visible,.holiday-workspace select:focus-visible,.holiday-workspace textarea:focus-visible,.holiday-workspace button:focus-visible{outline:3px solid #b8d0fc;outline-offset:2px}
+.holiday-workspace button{cursor:pointer}
+.holiday-workspace button:disabled{cursor:wait;opacity:.6}
+.holiday-tabs{display:flex;gap:4px;border-bottom:1px solid #dfe6f1;overflow-x:auto}
+.holiday-tabs button{border:0;border-bottom:3px solid transparent;padding:13px 16px;background:none;color:#78869d;font-weight:650;font-size:12px;white-space:nowrap}
+.holiday-tabs button.selected{color:#1f4d9c;border-color:#2d60bf}
+.holiday-summary{display:grid;grid-template-columns:1fr 1fr 1.6fr;gap:15px}
+.holiday-summary>div{background:#fff;border:1px solid #dfe6ef;border-radius:13px;padding:20px;display:grid;grid-template-columns:25px 1fr;gap:7px 10px;align-items:center}
+.holiday-summary svg{color:#39639f;grid-row:1/3}
+.holiday-summary strong{font-size:21px;letter-spacing:-.03em}
+.holiday-summary span{color:#77859b;font-size:11px}
+.holiday-summary>div:last-child strong{font-size:15px;line-height:1.6}
+.holiday-protection{background:#edf5f1;border:1px solid #d8e7dd;border-radius:12px;display:flex;gap:13px;align-items:flex-start;padding:18px 22px;color:#31654a}
+.holiday-protection svg{flex-shrink:0;margin-top:1px}
+.holiday-protection strong{font-size:12px}
+.holiday-protection p{font-size:12px;line-height:1.8;margin:5px 0 0;max-width:950px;color:#50715e}
+.holiday-panel{background:#fff;border:1px solid #dde5f0;border-radius:15px;padding:25px;min-width:0}
+.holiday-panel header{margin-bottom:22px}
+.holiday-panel h3{font-size:18px;letter-spacing:-.025em;margin:0 0 8px}
+.holiday-panel header p,.holiday-panel>p,.holiday-form p{font-size:12px;line-height:1.8;color:#6c7c93;max-width:950px}
+.holiday-calendar-tools{display:flex;justify-content:space-between;align-items:center;gap:18px;margin-bottom:22px}
+.holiday-calendar-tools label{min-width:150px}
+.holiday-badge{display:inline-flex;align-items:center;background:#f0f3f8;color:#71809a;font-size:11px;font-weight:750;border:1px solid #e2e8f1;border-radius:5px;padding:3px 7px;margin-right:6px;margin-top:4px;white-space:nowrap}
+.holiday-badge.required{background:#eaf0fc;color:#2b5393;border-color:#d7e4f9}
+.holiday-badge.approved{background:#edf6f0;color:#397553;border-color:#d9eadf}
+.holiday-badge.special{background:#fff6e7;color:#876728;border-color:#f2e4ca}
+.holiday-date-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.holiday-date-card{display:grid;grid-template-columns:65px 1fr;gap:16px;align-items:start;border:1px solid #e1e7f0;border-radius:12px;padding:20px}
+.holiday-date-card.mandatory{border-color:#d9e3f3;background:#fcfdff}
+.holiday-date-tile{background:#f3f6fb;display:grid;text-align:center;justify-items:center;border-radius:10px;padding:10px 5px;gap:5px}
+.holiday-date-tile span{font-size:11px;font-weight:800;letter-spacing:.08em;color:#6781a4;text-transform:uppercase}
+.holiday-date-tile strong{font-size:24px;letter-spacing:-.06em}
+.holiday-date-tile small{font-size:11px;color:#8996ac}
+.holiday-card-title{display:flex;gap:10px;justify-content:space-between;align-items:start}
+.holiday-card-title h4{font-size:13px;line-height:1.65;margin:1px 0 8px}
+.holiday-card-title svg{color:#7f96b8;margin-top:4px;flex-shrink:0}
+.holiday-date-card p{font-size:11px;color:#7a879a;line-height:1.7}
+.holiday-card-actions{display:flex;gap:14px;flex-wrap:wrap;margin-top:11px}
+.holiday-card-actions button{border:0;background:none;color:#315eaa;font-size:11px;font-weight:750;padding:0;text-align:left}
+.holiday-rule-note{background:#f6f8fc;border-radius:10px;padding:20px;margin-top:22px}
+.holiday-rule-note h4{margin:0 0 12px;font-size:12px}
+.holiday-rule-note p{font-size:11px;line-height:1.85;color:#60728e}
+.holiday-rule-note a{font-size:11px;font-weight:650;color:#2c5a9e;margin-right:15px}
+.holiday-form{border:1px solid #e0e7f1;border-radius:9px;margin:16px 0}
+.holiday-form summary{padding:14px 16px;font-size:12px;font-weight:750;color:#3b557b;cursor:pointer}
+.holiday-form form{padding:18px;border-top:1px solid #e4eaf4}
+.holiday-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;margin-bottom:20px}
+.holiday-fields .holiday-check{display:flex;align-items:center;gap:9px;line-height:1.8}
+.holiday-check input{width:17px;height:17px;flex-shrink:0}
+.holiday-fields label small{font-size:11px;font-weight:400;color:#7f8da3}
+.holiday-table{max-width:100%;overflow-x:auto}
+.holiday-table table{width:100%;border-collapse:collapse;font-size:12px;text-align:left;line-height:1.7}
+.holiday-table th{color:#71819a;background:#f4f7fc;padding:12px;font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap}
+.holiday-table td{padding:14px 12px;border-bottom:1px solid #edf1f6;vertical-align:top;min-width:110px}
+.holiday-table td small{display:block;color:#7e8ca1;font-size:11px;max-width:350px}
+.holiday-table a{display:inline-block;color:#2f5f9f;font-size:11px}
+.holiday-empty{font-size:12px;text-align:center;padding:30px 15px;color:#8c99ac}
+.holiday-alert{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;font-size:12px;line-height:1.8;padding:15px 19px;border-radius:10px;background:#eaf5ee;color:#3c6d4d;border:1px solid #d4e9db}
+.holiday-alert button{border:0;background:none;font-size:20px;color:inherit}
+.holiday-alert.error{background:#fff0ef;color:#9e3d32;border-color:#f2d5d0}
+.holiday-calc-fields{display:flex;align-items:end;gap:15px;flex-wrap:wrap}
+.holiday-calc-fields label{flex:1;min-width:180px}
+.holiday-entitlement{display:grid;grid-template-columns:1.3fr 1fr;gap:24px;background:#f3f7fe;border:1px solid #dce6f7;border-radius:12px;padding:25px;margin:25px 0}
+.holiday-entitlement span{font-size:11px;color:#6b80a2}
+.holiday-entitlement h3{font-size:21px;margin:12px 0}
+.holiday-entitlement p{font-size:11px;line-height:1.8;color:#627999}
+.holiday-entitlement>div:last-child{display:grid;align-content:center;gap:12px}
+.holiday-entitlement strong{font-size:30px;letter-spacing:-.04em}
+.holiday-entitlement small{font-size:11px;color:#6b7c95}
+.holiday-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid #e1e8f3;border-radius:10px;overflow:hidden;margin:20px 0}
+.holiday-facts>div{padding:17px;border-bottom:1px solid #e9eef6;background:#fff}
+.holiday-facts span{display:block;font-size:11px;color:#7a8ba4;line-height:1.6;min-height:30px}
+.holiday-facts strong{font-size:18px;font-weight:700}
+.holiday-issues{margin-top:20px;background:#fff8e9;border:1px solid #f1e3c5;border-radius:10px;padding:20px;color:#8a6b2e;font-size:12px}
+.holiday-issues ul{padding-left:20px;line-height:2}
+.holiday-private{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:20px;background:#f6f8fc;border-radius:10px;font-size:12px;line-height:1.8;margin:20px 0}
+.holiday-private dt{font-size:11px;color:#8190a7}
+.holiday-private dd{margin:5px 0 0;color:#1b3354}
+.holiday-record-links{display:flex;gap:20px;flex-wrap:wrap;font-size:12px;color:#305f9f;margin:22px 0}
+.holiday-arrangement{border:1px solid #dce5f1;border-radius:12px;padding:22px;margin:15px 0}
+.holiday-arrangement h4{margin:0 0 12px;font-size:14px}
+.holiday-arrangement p{color:#697d99;font-size:12px;line-height:1.8}
+.holiday-workspace pre{background:#f4f7fb;padding:14px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow-y:auto;border-radius:8px;font-size:11px}
+.holiday-muted{font-size:11px;color:#7c8ba3;line-height:1.8}
+@media(max-width:1100px){.holiday-filters{grid-template-columns:1fr 1fr}
+.holiday-date-grid{grid-template-columns:1fr}
+.holiday-facts{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:650px){.holiday-hero{padding:24px;flex-direction:column;align-items:flex-start;gap:15px}
+.holiday-hero-icon{display:none}
+.holiday-filters{grid-template-columns:1fr}
+.holiday-summary{grid-template-columns:1fr}
+.holiday-panel{padding:18px}
+.holiday-tabs button{padding:12px}
+.holiday-date-card{padding:16px;grid-template-columns:54px 1fr;gap:12px}
+.holiday-fields{grid-template-columns:1fr}
+.holiday-calendar-tools{align-items:flex-start;flex-direction:column}
+.holiday-entitlement{grid-template-columns:1fr;padding:20px}
+.holiday-private{grid-template-columns:1fr}
+.holiday-protection{padding:16px}
+.holiday-date-grid{gap:10px}
+}
+

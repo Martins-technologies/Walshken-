@@ -1,0 +1,6 @@
+export const taskPriorities=["Low","Normal","High","Urgent"] as const;
+export const taskApprovals=["Not submitted","Pending","Approved","Changes requested","Cancelled"] as const;
+export const activeTaskStatuses=["Not Started","In Progress","On Hold"] as const;
+export type TaskItem={id:string;org_id:string;employee_id:string;assigned_by:string;project_id:string|null;department_id:string|null;division_id:string|null;title:string;description:string;client_reference:string;priority:string;status:string;start_date:string|null;due_date:string|null;estimate_minutes:number;actual_minutes:number;completed_at:string|null;created_at:string;updated_at:string;reviewer_id:string|null;approval_status:string;submitted_at:string|null;reviewed_at:string|null;review_note:string;progress:number;revision:number;task_timezone:string;release_stage:string;workflow_version:number};
+export type TaskTimeEntry={id:string;org_id:string;task_id:string;employee_id:string;kind:string;worked_on:string;starts_at:string|null;ends_at:string|null;seconds:number;note:string;voided_at:string|null;created_at:string;updated_at:string};
+export type TaskFile={id:string;org_id:string;task_id:string;uploaded_by:string;filename:string;mime:string;bytes:number;sha256:string;storage_key:string;page_count:number;created_at:string;deleted_at:string|null};

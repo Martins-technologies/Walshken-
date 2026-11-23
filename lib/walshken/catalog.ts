@@ -51,17 +51,17 @@ export const providers = [
   { id: "recording-storage", name: "Private recording storage", category: "Meeting recordings", description: "Private Supabase, S3 or R2 bucket. Credentials stay encrypted on the server.", fields: [["endpoint", "S3 endpoint"], ["region", "Region"], ["bucket", "Private bucket name"], ["accessKey", "S3 access key"], ["secretKey", "S3 secret key"]] },
   { id: "twilio", name: "Twilio", category: "SMS", description: "SMS alerts for workflows that are enabled later.", fields: [["accountSid", "Account SID"], ["authToken", "Auth token"], ["from", "Sender number"]] },
   { id: "resend", name: "Resend", category: "Email", description: "Transactional email and staff notifications.", fields: [["apiKey", "API key"], ["from", "Verified sender address"]] },
-  { id: "payroll", name: "Payroll provider", category: "Payroll", description: "Configuration for a validated payroll provider.", fields: [["account", "Provider account or reference"], ["apiKey", "API key"]] },
+  {id:"payroll-calculator-review",name:"Validated payroll calculator",category:"Payroll",description:"A signed payroll-v1 calculator for additional jurisdictions and tax years. Canada / Alberta 2026 works without this connection. The server must allowlist the provider host.",fields:[["providerName","Validated provider name"],["endpoint","HTTPS payroll-v1 endpoint"],["apiKey","API key"],["signingSecret","Response signing secret"]]},
 ] as const;
 
 export const staffNav = [
   { title: "Workspace", items: [["dashboard", "Overview", "layout"], ["messages", "Messages", "message"], ["calls", "Calls & meetings", "video"], ["tasks", "My tasks", "check"], ["projects", "Projects", "project"], ["calendar", "Calendar", "calendar"]] },
-  { title: "People & time", items: [["attendance", "Attendance", "clock"], ["shifts", "Shifts", "shift"], ["timesheets", "Timesheets", "list"], ["salary", "Salary & payslips", "wallet"], ["leave", "Leave requests", "leave"], ["documents", "Documents", "file"], ["directory", "Team directory", "users"], ["notifications", "Notifications", "bell"], ["profile", "My profile", "user"]] },
+  { title: "People & time", items: [["attendance", "Attendance", "clock"], ["shifts", "Shifts", "shift"], ["timesheets", "Timesheets", "list"], ["salary", "Salary & payslips", "wallet"], ["holiday-calendar", "Holiday calendar", "calendar"], ["leave", "Leave requests", "leave"], ["documents", "Documents", "file"], ["directory", "Team directory", "users"], ["notifications", "Notifications", "bell"], ["profile", "My profile", "user"]] },
 ] as const;
 
 export const adminNav = [
   ["employees", "Employees", "users"], ["departments", "Organization", "building"], ["roles", "Roles & permissions", "shield"],
   ["scheduling", "Shift scheduling", "shift"], ["approvals", "Timesheet approvals", "list"], ["payroll", "Payroll management", "wallet"],
-  ["holidays", "Holiday settings", "calendar"], ["reports", "Reports", "chart"], ["document-security", "Document security", "lock"],
+  ["holidays", "Holidays & compliance", "calendar"], ["reports", "Reports", "chart"], ["document-security", "Document security", "lock"],
   ["audit", "Activity & audit", "history"], ["website", "Website services", "globe"], ["countries", "Country availability", "pin"], ["integrations", "Integrations", "plug"],
 ] as const;

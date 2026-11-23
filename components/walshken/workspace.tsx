@@ -30,8 +30,9 @@ const notes:Record<string,string>={
   roles:"Control staff access using scoped role assignments.",
   scheduling:"Publish shifts for employees in your scope.",
   approvals:"Review submitted time and attendance corrections.",
-  payroll:"Maintain effective-dated rates and prepare base gross estimates.",
-  holidays:"Maintain calendar references and company observances.",
+  payroll:"Manage effective pay rates, statutory calculations, approvals and recorded payments.",
+  holidays:"Manage applicable holidays, verified entitlements and effective employment rules.",
+  "holiday-calendar":"Your assigned holidays, reviewed entitlement and paid-day arrangements.",
   reports:"Review team activity across work, attendance and approvals.",
   "document-security":"Review private documents and revoke access.",
   audit:"Search append-only administrative and access events.",
@@ -42,7 +43,13 @@ const notes:Record<string,string>={
 const href=(section:string)=>section==="dashboard"?"/staff":`/staff/${section}`;
 
 export function Workspace({section,allowed,actor}:{section:string;allowed:readonly string[];actor:Viewer}){
-  const [drawer,setDrawer]=useState(false),[data,setData]=useState<ViewData|null>(null),[error,setError]=useState(""),[query,setQuery]=useState("");
+  const initialKeys = section === "calendar" ? ["mode","view","anchor","from","to","department","country","employee","team","types"]
+    : ["shifts","scheduling","approvals","leave"].includes(section) ? ["from","to","team"]
+      : ["payroll","salary"].includes(section) ? ["period"] : [];
+  const [drawer,setDrawer]=useState(false),[data,setData]=useState<ViewData|null>(null),[error,setError]=useState(""),[query,setQuery]=useState(()=>{
+    const params=new URLSearchParams(typeof window==="undefined"?"":window.location.search);
+    return new URLSearchParams([...params].filter(([key])=>initialKeys.includes(key))).toString();
+  });
   const [version,setVersion]=useState(0);
   const refresh=useCallback(()=>setVersion((current)=>current+1),[]);
   const staffHref=href;
@@ -87,7 +94,7 @@ export function Workspace({section,allowed,actor}:{section:string;allowed:readon
         {error&&<p className="workspace-alert" role="alert">{error}</p>}
         {!data&&!error?<Empty title="Loading workspace…" body="Retrieving your latest records." icon="clock"/>:data&&(
           adminNav.some(([key])=>key===section)?<AdminViews section={section} actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>
-            :<WorkspaceViews section={section} actor={actor} data={data} refresh={refresh}/>)}
+            :<WorkspaceViews section={section} actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>)}
       </main>
     </div>
   </div>;

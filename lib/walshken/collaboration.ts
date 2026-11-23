@@ -45,6 +45,14 @@ function activeChannels(actor: Actor, policy: CommunicationPolicy) {
     args:[now(),policy.external_messaging,actor.role==="guest"?1:0,canManage(actor)?1:0,canSuper(actor)?1:0,actor.id,
       actor.department_id,actor.country,actor.id,actor.department_id,actor.id]};
 }
+export async function calendarTeams(db: Db, actor: Actor) {
+  const filter = activeChannels(actor, await communicationPolicy(db, actor));
+  return all<{ id: string; name: string; members: string[] }>(db, `SELECT c.id,c.title AS name,
+    ARRAY(SELECT m.employee_id FROM conversation_members m WHERE m.conversation_id=c.id) AS members
+    FROM conversations c JOIN conversation_members mine ON mine.conversation_id=c.id AND mine.employee_id=?
+    WHERE c.org_id=? AND c.kind NOT IN('Direct','External') AND ${filter.sql} ORDER BY c.title,c.id`, actor.id, actor.org_id, ...filter.args);
+}
+
 async function channel(db:Db, actor:Actor, target:string, policy:CommunicationPolicy) {
   const filter=activeChannels(actor,policy);
   const row=await one<ChannelScope & {id:string;created_by:string;title:string}>(db,`SELECT c.id,c.created_by,c.kind,c.title,c.department_id,c.project_id,c.country,c.closes_at FROM conversations c

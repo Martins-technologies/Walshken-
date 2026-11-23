@@ -1,4 +1,7 @@
 "use client";
+import {HolidayWorkspace} from "./holidays";
+import {PayrollWorkspace} from "./payroll";
+import {WorkforceWorkspace} from "./workforce";
 import { useState, type FormEvent } from "react";
 import { inquiryStatuses } from "@/lib/walshken/customer-status";
 import { countries, countryName, divisions, providers, roleNames, roles, type Role } from "@/lib/walshken/catalog";
@@ -215,6 +218,9 @@ function Payroll({data,refresh}:{data:ViewData;refresh:()=>void}){
 
 export function AdminViews({section,actor,data,refresh,setQuery}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void;setQuery:(query:string)=>void}){
   const rows=data.rows??[];
+  if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
+  if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
+  if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
   if(section==="employees"||section==="roles")return <Employees actor={actor} data={data} refresh={refresh} rolesOnly={section==="roles"} setQuery={setQuery}/>;
   if(section==="scheduling"||section==="approvals")return <TimeViews section={section} actor={actor} data={data} refresh={refresh}/>;
   if(section==="document-security")return <DocumentView actor={actor} data={data} refresh={refresh} admin/>;
