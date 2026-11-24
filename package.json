@@ -20,7 +20,8 @@
     "test:tasks": "NODE_ENV=test node --import tsx tests/verify-tasks.mjs",
     "test:workforce": "NODE_ENV=test node --import tsx tests/verify-workforce.mjs",
     "test:payroll": "NODE_ENV=test node --import tsx tests/verify-payroll.mjs",
-    "test:holidays": "NODE_ENV=test node --import tsx tests/verify-holidays.mjs"
+    "test:holidays": "NODE_ENV=test node --import tsx tests/verify-holidays.mjs",
+    "test:employment": "NODE_ENV=test WALSHKEN_TEST_READINESS=1 WALSHKEN_TEST_EMPLOYMENT=1 node --import tsx tests/verify-holidays.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1175.0",

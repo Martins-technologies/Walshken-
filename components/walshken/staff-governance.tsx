@@ -1,30 +1,33 @@
 "use client";
+import {RetentionManagement,type RetentionData} from "./retention-management";
+import {EmploymentManagement,type EmploymentManagementData} from "./employment-management";
 import { useState } from "react";
 import { staffActions } from "@/lib/walshken/staff-permissions";
 import { initialJurisdictions } from "@/lib/walshken/jurisdiction-catalog";
 import { roles, roleNames } from "@/lib/walshken/catalog";
 import { ActionForm, Disclosure, Panel, Quick, Table, options, type RecordRow, type Field } from "./ui";
 
-export type AuditFilters = {q?:string;query:string;from:string;to:string;category:string;categories:string[];page:number;next:boolean};
+export type AuditFilters = {q?:string;query:string;employee?:string;administrator?:string;country?:string;department?:string;from:string;to:string;category:string;categories:string[];page:number;next:boolean};
 const text = (name:string,label:string,type="text",required=true): Field => ({name,label,type,required});
 
-export function StaffGovernance({rows,staff,units,notice,acknowledgements,policies,refresh}: {
-  rows:RecordRow[];staff:RecordRow[];units:RecordRow[];notice?:RecordRow|null;acknowledgements:RecordRow[];policies:RecordRow[];refresh:()=>void;
+export function StaffGovernance({rows,staff,units,notice,acknowledgements,policies,employment,scans,retention,refresh}: {
+  retention?:RetentionData|null;scans:RecordRow[];employment?:EmploymentManagementData|null;rows:RecordRow[];staff:RecordRow[];units:RecordRow[];notice?:RecordRow|null;acknowledgements:RecordRow[];policies:RecordRow[];refresh:()=>void;
 }) {
   const [principal,setPrincipal] = useState("employee");
   const [scope,setScope] = useState("organization");
   const internalRoles = roles.filter(role=>role!=="super_admin"&&role!=="guest").map(role=>[role,roleNames[role]] as const);
   return <>
+    {employment&&<EmploymentManagement data={employment} refresh={refresh}/>}
     <Panel title="Scoped action permissions" note="An explicit denial takes precedence over a grant for the same action and employee.">
       <Disclosure title="Add or change a permission">
         <div className="table-filter">
           <label>Apply to<select value={principal} onChange={event=>setPrincipal(event.target.value)}><option value="employee">Employee</option><option value="role">Role</option></select></label>
-          <label>Scope<select value={scope} onChange={event=>setScope(event.target.value)}><option value="organization">Organization</option><option value="department">Department</option><option value="division">Division</option><option value="employee">Individual employee</option></select></label>
+          <label>Scope<select value={scope} onChange={event=>setScope(event.target.value)}><option value="organization">Organization</option><option value="department">Department</option><option value="division">Division</option><option value="employee">Individual employee</option>{employment&&<><option value="country">Employment country</option><option value="office">Office</option></>}</select></label>
         </div>
         <ActionForm key={principal+scope} path="governance/permission-save" extra={{principalType:principal,scopeType:scope}}
           fields={[
             {name:"principal",label:principal==="role"?"Role":"Employee",options:principal==="role"?internalRoles:options(staff.filter(row=>row.role!=="super_admin")),required:true},
-            ...(scope==="organization"?[]:[{name:"scopeId",label:"Target",options:options(scope==="employee"?staff:units.filter(row=>String(row.kind).toLowerCase()===scope)),required:true}]),
+            ...(scope==="organization"?[]:[{name:"scopeId",label:"Target",options:scope==="country"?([["CA","Canada"],["IN","India"],["PK","Pakistan"]] as const):options(scope==="employee"?staff:units.filter(row=>String(row.kind).toLowerCase()===scope)),required:true}]),
             {name:"capability",label:"Action",options:Object.entries(staffActions),required:true},
             {name:"effect",label:"Permission",options:[["allow","Allow"],["deny","Deny"]],required:true},
           ]} submit="Save permission" refresh={refresh}/>
@@ -60,6 +63,10 @@ export function StaffGovernance({rows,staff,units,notice,acknowledgements,polici
         {row.status==="Draft"&&<ActionForm path="governance/jurisdiction-verify" extra={{id:row.id}} fields={[text("reason","Independent verification reference")]} submit="Verify evidence" refresh={refresh}/>}
       </Disclosure>)}
     </Panel>
+    {employment&&<Panel title="Upload security" note="Pending, failed and infected uploads remain private. A clean result is required before a file can be released.">
+      <Table rows={scans} columns={[{key:'name',title:'Uploaded by'},{key:'file_name',title:'File'},{key:'created_at',title:'Received'},{key:'status',title:'Scan result'}]}/>
+    </Panel>}
+    {retention&&<RetentionManagement data={retention} refresh={refresh}/>}
     <Panel title="Administrator access">
       <Disclosure title="Appoint another Super Admin"><ActionForm path="governance/appoint-super" fields={[
         {name:"employee",label:"Current administrator",options:options(staff.filter(row=>row.role==="admin")),required:true},

@@ -1,3 +1,4 @@
+import {employmentTermsOn} from "./employment-engine";
 import {calculatorIntegrationId} from "./payroll-calculator";
 import {staffReadinessEnabled} from "./staff-permissions";
 import {currentNotice,governanceData,peopleScope} from "./staff-governance";
@@ -77,8 +78,9 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       actor.role==="guest"?Promise.resolve(null):one(db,`SELECT kind,amount_cents,currency,effective_on FROM compensation
         WHERE employee_id=? AND effective_on<=? ${payrollEnabled()?"AND release_stage=? AND voided_at IS NULL":""} ORDER BY effective_on DESC LIMIT 1`,actor.id,localDate(now(),actor.time_zone),...(payrollEnabled()?[payrollDataset()]:[])),
     ]);
-    let holidayCalendar=row?.holiday_calendar;if(holidaysEnabled()&&actor.role!=='guest'){const a=await assignmentOn(db,actor,localDate(now(),actor.time_zone),false);if(a)holidayCalendar=(await holidayRule(db,actor,a.jurisdiction,localDate(now(),actor.time_zone),a.rule_id)).config.calendar.name+' · '+a.location;}
-    return json({row:row&&{...row,holiday_calendar:holidayCalendar,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired,privacyNotice:await currentNotice(db,actor)});
+    const employment=await employmentTermsOn(db,actor,localDate(now(),actor.time_zone));
+    let holidayCalendar=row?.holiday_calendar;if(holidaysEnabled()&&actor.role!=='guest'&&!employment){const a=await assignmentOn(db,actor,localDate(now(),actor.time_zone),false);if(a)holidayCalendar=(await holidayRule(db,actor,a.jurisdiction,localDate(now(),actor.time_zone),a.rule_id)).config.calendar.name+' · '+a.location;}
+    return json({row:row&&{...row,...(employment?{country:employment.country,jurisdiction:employment.jurisdiction,time_zone:employment.time_zone,employment_type:employment.employment_type,expected_hours:employment.expected_hours,work_schedule:employment.schedule}:{}),holiday_calendar:holidayCalendar,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired,privacyNotice:await currentNotice(db,actor)});
   }
   if(section==="dashboard"&&collaborationRelease()){
     const [conversations,events,alerts]=await Promise.all([messageViews(db,actor).then(response=>response.json()),meetings(db,actor),notifications(db,actor)]);
@@ -187,7 +189,9 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       inquiries:section==="website"?await all(db,"SELECT id,kind,name,email,country,service,message,created_at,status,customer_update,CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END AS customer_request FROM inquiries ORDER BY created_at DESC LIMIT 120"):[],
     });
   }
-  if(section==="integrations") return json({readiness:staffReadinessEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
+  if(section==="integrations") return json({readiness:staffReadinessEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await all(db,`SELECT i.id,i.enabled,i.updated_at,t.action AS last_test,t.created_at AS tested_at FROM integrations i
+ LEFT JOIN LATERAL (SELECT action,created_at FROM audit WHERE org_id=? AND entity='integration' AND target_id=i.id
+ AND action IN ('Integration connection test succeeded','Integration connection test failed') ORDER BY created_at DESC,id DESC LIMIT 1) t ON true ORDER BY i.id`,actor.org_id),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
   if(section==="reports"){
     const scoped=scope(actor);
     const today=localDate(now(),actor.time_zone);

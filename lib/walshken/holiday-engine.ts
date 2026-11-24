@@ -1,3 +1,4 @@
+import {policyDates} from "./employment-engine";
 import {all,canPayroll,date,decryptSettings,fail,now,one,type Actor,type Db} from './server';
 import {dayAdd,localInstant} from './attendance-rules';
 import {localDate} from './work';
@@ -13,6 +14,11 @@ export type ApplicableHoliday={day:string;name:string;required:boolean;key:strin
 export function anniversaryDate(day:string,years:number){const d=new Date(day+'T12:00Z');d.setUTCFullYear(d.getUTCFullYear()+years);return d.toISOString().slice(0,10);}
 function covers(from:string,to:string,ranges:{from_date:string;through_date:string}[]){let cursor=from;for(const r of [...ranges].sort((a,b)=>a.from_date.localeCompare(b.from_date))){if(r.through_date<cursor)continue;if(r.from_date>cursor)return false;cursor=dayAdd(r.through_date,1);if(cursor>to)return true;}return cursor>to;}
 export async function applicableHolidays(db:Db,employee:Actor,from:string,to:string){
+ const dynamic=await policyDates(db,employee,from,to);
+ if(dynamic.configured){
+  if(dynamic.pending)return fail(409,'Holiday calendar coverage is PENDING LEGAL VERIFICATION for this employee.');
+  return dynamic.dates.filter(h=>h.required).map(h=>({day:h.day,name:h.name,required:true,key:h.policyId+':'+h.day,eventIds:[],guaranteedMinutes:0,closed:false}));
+ }
  const result=new Map<string,ApplicableHoliday>(),events=await employeeCompanyHolidays(db,employee,from,to),assignments=await all<{effective_on:string}>(db,'SELECT effective_on FROM holiday_assignments WHERE employee_id=? AND release_stage=? AND effective_on BETWEEN ? AND ? ORDER BY effective_on',employee.id,holidayDataset(),from,to),checkDays=[from,...assignments.map(r=>r.effective_on),...(await all<{effective_from:string}>(db,'SELECT effective_from FROM holiday_rules WHERE org_id=? AND release_stage=? AND jurisdiction=? AND effective_from BETWEEN ? AND ?',employee.org_id,holidayDataset(),employee.jurisdiction,from,to)).map(r=>r.effective_from)];
  for(const day of checkDays){const a=await assignmentOn(db,employee,day,false);if(!a)continue;const {config}=await holidayRule(db,employee,a.jurisdiction,day,a.rule_id);for(let year=Number(from.slice(0,4));year<=Number(to.slice(0,4));year++){for(const h of holidayDates(config.calendar,year,a.easter_choice)){if(h.date<from||h.date>to||h.status!=='Statutory')continue;const assigned=await assignmentOn(db,employee,h.date,false);if(assigned?.id!==a.id)continue;result.set(h.date,{day:h.date,name:h.name,required:true,key:h.key,eventIds:[],guaranteedMinutes:0,closed:false});}}}
  for(const e of events){const a=await assignmentOn(db,employee,e.on_date,false);if(!a||a.jurisdiction!==e.jurisdiction)continue;const existing=result.get(e.on_date);if(e.kind==='Closure'&&!existing){if(e.guaranteed_minutes===0)continue;}result.set(e.on_date,{day:e.on_date,name:existing?.name??e.name,required:existing?.required??false,key:existing?.key??e.calendar_key??e.id,eventIds:[...(existing?.eventIds??[]),e.id],guaranteedMinutes:Math.max(existing?.guaranteedMinutes??0,e.guaranteed_minutes),closed:existing?.closed||!!e.closed});}

@@ -16,6 +16,7 @@ copyFileSync(join(process.cwd(),'supabase/migrations/20261123114028_employee_sal
 mkdirSync(join(sandbox,'public'));copyFileSync(join(process.cwd(),'public/payroll-font.ttf'),join(sandbox,'public/payroll-font.ttf'));
 const holidayMigration=readFileSync(join(process.cwd(),'supabase/migrations/20261123153905_canadian_holidays_compliance.sql'),'utf8'),holidaySeed=holidayMigration.slice(holidayMigration.indexOf('INSERT INTO holiday_rules'));writeFileSync(join(sandbox,'drizzle/0014_holidays.sql'),holidayMigration.slice(0,holidayMigration.indexOf('INSERT INTO holiday_rules')));
 if(process.env.WALSHKEN_TEST_READINESS==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261124192707_staff_readiness.sql"),join(sandbox,"drizzle/0015_readiness.sql"));
+if(process.env.WALSHKEN_TEST_EMPLOYMENT==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261124211828_dynamic_employment_engine.sql"),join(sandbox,"drizzle/0016_employment.sql"));
 const repository=process.cwd();
 process.chdir(sandbox);
 process.on("exit", () => rmSync(sandbox, { recursive: true, force: true }));
@@ -259,5 +260,9 @@ if (process.env.WALSHKEN_TEST_READINESS==="1") {
   console.log("PASS organization unit management, local currency defaults, reporting pay calculation and independent payroll approval");
   await assert.rejects(()=>db.prepare("UPDATE staff_jurisdiction_versions SET version='silent' WHERE id=?",[entry.id]).run(),/immutable/i);
   console.log("PASS governance, independent jurisdiction review, staff privacy, scoped permission changes, oversight and effective-dated break policy");
+}
+if(process.env.WALSHKEN_TEST_EMPLOYMENT==="1") {
+ const {verifyEmployment}=await import('./verify-employment.mjs');
+ await verifyEmployment({db,request,admin,staff,hr,person,adminId,staffId,runId});
 }
 console.log('PART H HOLIDAY TESTS PASSED');globalThis.Date=RealDate;process.exit(0);

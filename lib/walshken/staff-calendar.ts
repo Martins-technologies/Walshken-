@@ -1,3 +1,4 @@
+import {employmentPersonOn,policyDates} from "./employment-engine";
 import { localInstant } from "./attendance-rules";
 import { calendarTeams } from "./collaboration";
 import { holidayDataset, holidaysEnabled, readRule } from "./holiday-access";
@@ -58,6 +59,17 @@ async function holidayEntries(db: Db, actor: Actor, people: Person[], from: stri
   const entries: CalendarEntry[] = [];
   const computed = new Map<string, Map<string, ReturnType<typeof holidayDates>[number]>>();
   if (!holidaysEnabled() || !people.length) return { entries, missing: 0 };
+  const dynamicPeople=new Set<string>();
+  let dynamicMissing=0;
+  for(const person of people){
+   const calendar=await policyDates(db,{id:person.id,org_id:actor.org_id},from,to);
+   if(!calendar.configured)continue;
+   dynamicPeople.add(person.id);
+   if(calendar.pending)dynamicMissing++;
+   for(const date of calendar.dates.filter(date=>date.required))entries.push({id:'policy-holiday:'+person.id+':'+date.day,kind:'statutory',title:date.name,startDate:date.day,endDate:date.day,people:[person.id],href:link('governance')});
+  }
+  people=people.filter(person=>!dynamicPeople.has(person.id));
+  if(!people.length)return {entries,missing:dynamicMissing};
   const stage = holidayDataset();
   const [assignments, ruleRows, company] = await Promise.all([
     all<HolidayAssignment>(db, `SELECT * FROM holiday_assignments WHERE org_id=? AND release_stage=? AND effective_on<=?
@@ -108,7 +120,7 @@ async function holidayEntries(db: Db, actor: Actor, people: Person[], from: stri
     if (targets.length) entries.push({ id: "company:" + event.id, kind: "company", title: event.name, startDate: event.on_date,
       endDate: event.on_date, people: targets, status: event.closed ? "Company closure" : event.kind, href: link("holiday-calendar") });
   }
-  return { entries, missing };
+  return { entries, missing:missing+dynamicMissing };
 
   function calendarForYear(calendar: ReturnType<typeof readRule>["calendar"], year: number, easter: string) {
     const key = calendar.code + ":" + calendar.version + ":" + year + ":" + easter;
@@ -147,15 +159,21 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
   const filter = (key: string) => str(params.get(key), key, 100, false);
   const kinds = unique((params.get("types") ?? "").split(",").filter(Boolean)) as CalendarKind[];
   if (kinds.some(kind => !Object.hasOwn(calendarTypes, kind))) return fail(400, "Choose a supported calendar event type.");
-  const filters = { department: filter("department"), country: filter("country"), employee: filter("employee"), team: filter("team"), kinds };
+  const filters = { department: filter("department"), country: filter("country"),region:filter("region"),jurisdiction:filter("jurisdiction"), employee: filter("employee"), team: filter("team"), kinds };
   const scoped = personal ? { sql: "e.id=?", args: [actor.id] } : scope(actor);
   const payrollManagement = mode === "admin" && canPayroll(actor) && payrollEnabled();
-  const [people, payrollPeople, groups] = await Promise.all([
+  let [people, payrollPeople, groups] = await Promise.all([
     peopleInScope(db, actor, scoped),
     payrollManagement ? payScope(db, actor).then(allowed => peopleInScope(db, actor, allowed)) : Promise.resolve([]),
     personal ? Promise.resolve([]) : calendarTeams(db, actor),
   ]);
-  const visible = [...new Map([...people, ...payrollPeople].map(person => [person.id, person])).values()];
+  const visible = await Promise.all([...new Map([...people, ...payrollPeople].map(person => [person.id, person])).values()].map(async person=>{
+    const current=await employmentPersonOn(db,{...person,org_id:actor.org_id},anchor);
+    return {...current,region:'region_code' in current?String(current.region_code):current.jurisdiction};
+  }));
+  const effectivePeople=new Map(visible.map(person=>[person.id,person]));
+  people=people.map(person=>effectivePeople.get(person.id)!);
+  payrollPeople=payrollPeople.map(person=>effectivePeople.get(person.id)!);
   const names = new Intl.DisplayNames(["en"], { type: "region" });
   const countries: CalendarOption[] = unique(visible.map(person => person.country)).filter(code => /^[A-Z]{2}$/.test(code))
     .map(id => ({ id, name: id === "ZZ" ? "Unassigned country" : names.of(id) ?? id })).sort((left, right) => left.name.localeCompare(right.name));
@@ -170,6 +188,8 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
     ? new Set(visibleGroups.find(group => "group:" + group.id === filters.team)?.members ?? []) : null;
   const commonMatch = (person: Person) => (!filters.employee || filters.employee === person.id)
     && (!filters.country || filters.country === person.country)
+    && (!filters.region || filters.region === person.region)
+    && (!filters.jurisdiction || filters.jurisdiction === person.jurisdiction)
     && (!filters.team || (groupMembers ? groupMembers.has(person.id) : filters.team === person.managerId || filters.team === person.id));
   const matches = (person: Person) => commonMatch(person) && (!filters.department || filters.department === person.departmentId);
   const selected = people.filter(matches);
@@ -323,14 +343,15 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
       ?? (entry.kind === "company" && (entry.status === "Company closure" || entry.title === "Paid substitute holiday") ? "time off" : undefined);
     return status ? entry.people.map(person => ({ person, status, from: entry.startDate, to: entry.endDate })) : [];
   });
-  const publicPerson = ({ id, name, country, departmentId, managerId }: Person): CalendarPerson => ({ id, name, country, departmentId, managerId });
+  const publicPerson = ({ id, name, country,region,jurisdiction, departmentId, managerId }: Person): CalendarPerson => ({ id, name, country,region,jurisdiction, departmentId, managerId });
   const data: StaffCalendarData = {
     mode, modes, view, anchor, today, from, to, customRange, zone: actor.time_zone, filters,
     options: {
       people: visible.map(publicPerson),
       departments: [...new Map([...departments, ...taskDepartments].map(department => [department.id, department])).values()]
         .sort((left, right) => left.name.localeCompare(right.name)),
-      countries, teams,
+      countries,teams,regions:unique(visible.map(person=>person.region).filter(Boolean)).map(code=>({id:code!,name:code!})),
+      jurisdictions:unique(visible.map(person=>person.jurisdiction).filter(Boolean)).map(code=>({id:code,name:code})),
     },
     roster: selected.filter(person => person.active || person.endDate && person.endDate >= from).map(person => ({ ...publicPerson(person), from: person.hireDate, to: person.endDate })),
     availability,

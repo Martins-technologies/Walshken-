@@ -194,6 +194,8 @@ function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
             {name:"enabled",label:"Status",options:[["0","Save disabled"],["1","Enable"]],value:current?.enabled??0,required:true},
           ]} extra={{provider:provider.id}} submit="Save credentials" refresh={refresh}/>
         </Disclosure>}
+        {Boolean(current?.enabled)&&provider.id!=='resend'&&<ActionForm path="integrations/test" fields={[]} extra={{provider:provider.id}} submit="Test saved connection" refresh={refresh}/>}
+        {current?.last_test&&<p className="form-note">{current.last_test} · {dateText(current.tested_at,true)}</p>}
         {Boolean(current?.enabled)&&<Quick path="integrations/disable" data={{provider:provider.id}} refresh={refresh}>Disable</Quick>}
       </Panel>;
     })}</div>
@@ -231,7 +233,7 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
   if(section==="document-security")return <DocumentView actor={actor} data={data} refresh={refresh} admin/>;
   if(section==="website")return <Website data={data} refresh={refresh}/>;
   if(section==="countries")return <Countries data={data} refresh={refresh}/>;
-  if(section==="governance") return <StaffGovernance rows={rows} staff={data.staff??[]} units={data.units??[]} notice={data.privacyNotice} acknowledgements={data.acknowledgements??[]} policies={data.jurisdictionPolicies??[]} refresh={refresh}/>;
+  if(section==="governance") return <StaffGovernance employment={data.employment} retention={data.retention} scans={data.scans??[]} rows={rows} staff={data.staff??[]} units={data.units??[]} notice={data.privacyNotice} acknowledgements={data.acknowledgements??[]} policies={data.jurisdictionPolicies??[]} refresh={refresh}/>;
   if(section==="integrations")return <Integrations data={data} refresh={refresh}/>;
   if(section==="payroll")return <Payroll data={data} refresh={refresh}/>;
   if(section==="departments")return <Panel title="Organization units">
@@ -263,16 +265,23 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
   if(section==="audit"){
     const filters=data.auditFilters;
     function filter(event:FormEvent<HTMLFormElement>){event.preventDefault();setQuery(new URLSearchParams([...new FormData(event.currentTarget)].map(([key,val])=>[key,String(val)])).toString());}
-    function page(next:number){if(filters)setQuery(new URLSearchParams({page:String(next),q:filters.query,from:filters.from,to:filters.to,category:filters.category}).toString());}
+    function page(next:number){if(filters)setQuery(new URLSearchParams({page:String(next),q:filters.query,from:filters.from,to:filters.to,category:filters.category,employee:filters.employee??"",administrator:filters.administrator??"",country:filters.country??"",department:filters.department??""}).toString());}
     return <Panel title="Activity log">
       <form className="table-filter" onSubmit={filter}>
         <label>Search events<input name="q" defaultValue={filters?.query} placeholder="Action, resource or person"/></label>
         {filters&&<label>Category<select name="category" defaultValue={filters.category}><option value="">All categories</option>{filters.categories.map(item=><option key={item}>{item}</option>)}</select></label>}
         <label>From<input type="date" name="from" defaultValue={filters?.from}/></label>
         <label>Through<input type="date" name="to" defaultValue={filters?.to}/></label>
+        {filters&&<>
+         <label>Employee ID<input name="employee" defaultValue={filters.employee}/></label>
+         <label>Administrator ID<input name="administrator" defaultValue={filters.administrator}/></label>
+         <label>Current employment country<select name="country" defaultValue={filters.country}><option value="">All countries</option>{countryChoices.map(([code,name])=><option key={code} value={code}>{name}</option>)}</select></label>
+         <label>Current department ID<input name="department" defaultValue={filters.department}/></label>
+        </>}
         <button className="btn btn-blue btn-small">Apply filters</button>
       </form>
-      <Table rows={rows} columns={[dateColumn("created_at","Time",true,actor.timeZone),column("name","Actor"),...(filters?[column("category","Category")]:[]),column("action","Action"),column("entity","Resource"),column("target_id","Record")]}/>
+      <Table rows={rows} columns={[dateColumn("created_at","Time",true,actor.timeZone),column("name","Actor"),...(filters?[column("category","Category")]:[]),column("action","Action"),column("entity","Resource"),column("target_id","Record"),...(filters?[{key:"detail",title:"Details",render:(row:RecordRow)=>row.detail?<details><summary>Open event details</summary><pre>{row.detail}</pre></details>:null}]:[])]}/>
+      {filters&&<a className="text-link" href={'/api/workspace/view/audit?'+new URLSearchParams({q:filters.query,from:filters.from,to:filters.to,category:filters.category,employee:filters.employee??'',administrator:filters.administrator??'',country:filters.country??'',department:filters.department??'',export:'csv'})}>Download filtered audit CSV</a>}
       {filters&&<div className="row-actions"><button className="btn btn-outline btn-small" disabled={filters.page===1} onClick={()=>page(filters.page-1)}>Previous</button><span>Page {filters.page}</span><button className="btn btn-outline btn-small" disabled={!filters.next} onClick={()=>page(filters.page+1)}>Next</button></div>}
     </Panel>;
   }

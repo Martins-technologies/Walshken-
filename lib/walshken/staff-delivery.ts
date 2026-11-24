@@ -1,5 +1,8 @@
+import {publicEndpoint} from "./payroll-calculator";
+import {employmentEngineEnabled} from "./employment-catalog";
+import {quarantinedUpload} from "./upload-quarantine";
 import { createHash } from "node:crypto";
-import { decryptSettings, fail, one, type Db } from "./server";
+import { decryptSettings, fail, one, type Actor,type Db } from "./server";
 import { staffReadinessEnabled } from "./staff-permissions";
 
 type ScannerSettings = { endpoint: string; apiKey: string };
@@ -18,18 +21,24 @@ function scannerEndpoint(settings: ScannerSettings) {
 
 export async function verifyScanner(settings: ScannerSettings) {
   const endpoint = scannerEndpoint(settings);
+  await publicEndpoint(endpoint);
   const result = await fetch(endpoint,{headers:{Authorization:`Bearer ${settings.apiKey}`},redirect:"error",signal:AbortSignal.timeout(8_000),cache:"no-store"}).catch(()=>null);
   if (!result?.ok) return fail(502,"The scanner did not confirm its connection.");
   const health = await result.json().catch(()=>null);
   if (health?.protocol!=="walshken-scan-v1" || health?.ready!==true) return fail(502,"The scanner or signatures are unavailable.");
 }
 
-export async function scanStaffUpload(db: Db, bytes: Buffer) {
+export async function scanStaffUpload(db: Db, bytes: Buffer,actor:Actor,name:string) {
   if (!staffReadinessEnabled()) return;
+  if(employmentEngineEnabled())return quarantinedUpload(db,actor,bytes,name,()=>scanBytes(db,bytes));
+  if(await scanBytes(db,bytes)==='infected')return fail(422,'This file did not pass malware screening.');
+}
+async function scanBytes(db:Db,bytes:Buffer):Promise<'clean'|'infected'> {
   const row = await one<{configuration:string}>(db,"SELECT configuration FROM integrations WHERE id='malware-scanner' AND enabled=1");
   if (!row) return fail(503,"Upload scanning is unavailable. Ask your administrator to connect the malware scanner.");
   const settings = await decryptSettings("malware-scanner",row.configuration) as ScannerSettings;
   const endpoint = scannerEndpoint(settings);
+  await publicEndpoint(endpoint);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const response = await fetch(endpoint,{
     method:"POST",headers:{Authorization:`Bearer ${settings.apiKey}`,"Content-Type":"application/octet-stream","X-Content-SHA256":sha256},
@@ -38,8 +47,9 @@ export async function scanStaffUpload(db: Db, bytes: Buffer) {
   if (!response?.ok) return fail(503,"The malware scanner is unavailable. Upload paused.");
   const verdict = await response.json().catch(()=>null);
   if (verdict?.protocol!=="walshken-scan-v1" || verdict?.sha256!==sha256) return fail(503,"The scanner did not confirm this file.");
-  if (verdict.verdict==="infected") return fail(422,"This file did not pass malware screening.");
+  if (verdict.verdict==="infected") return "infected";
   if (verdict.verdict!=="clean") return fail(503,"The scanner could not complete its check.");
+  return "clean";
 }
 
 type EmailSettings = { apiKey:string; from:string };

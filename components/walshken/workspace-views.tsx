@@ -18,6 +18,9 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  retention?:import("./retention-management").RetentionData|null;
+  scans?:RecordRow[];
+  employment?:import("./employment-management").EmploymentManagementData|null;
   readiness?:boolean;
   personnelControls?:boolean;
   privacyNotice?:RecordRow|null;

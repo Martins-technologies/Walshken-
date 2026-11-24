@@ -1,4 +1,4 @@
-import { all, one, run, id, now, digest, orgId, date, integer, str, json, requireSuper, type Actor, type Db } from "./server";
+import { all, one, run, id, now, digest, orgId, audit, date, integer, str, fail, json, requireSuper, type Actor, type Db } from "./server";
 import { localDate } from "./work";
 import { workDataset, workforceEnabled } from "./workforce";
 import { taskDataset, tasksEnabled } from "./tasks";
@@ -33,24 +33,40 @@ export async function auditExplorer(db: Db, actor: Actor, params: URLSearchParam
   const query = str(params.get("q"),"search text",100,false);
   const category = str(params.get("category"),"category",30,false);
   const page = integer(params.get("page") ?? "1","page",1,1000);
+  const employee=str(params.get('employee'),'employee',80,false),administrator=str(params.get('administrator'),'administrator',80,false);
+  const country=str(params.get('country'),'country',2,false),department=str(params.get('department'),'department',80,false);
+  const csv=params.get('export')==='csv';
+  if(from&&to&&from>to)return fail(400,'Choose ordered audit dates.');
   const sources = [
-    { type:"General", sql:`SELECT id,actor_id,action,entity,target_id,created_at FROM audit WHERE org_id=?`, args:[actor.org_id] },
-    { type:"Security", sql:`SELECT id,employee_id AS actor_id,action,'Sign-in' AS entity,employee_id AS target_id,created_at FROM staff_security_events WHERE org_id=?`, args:[actor.org_id] },
-    { type:"Calls", sql:`SELECT m.id,NULL::text AS actor_id,m.event AS action,'Meeting' AS entity,m.meeting_id AS target_id,m.created_at FROM meeting_events m JOIN meetings c ON c.id=m.meeting_id WHERE c.org_id=?`,args:[actor.org_id] },
-    ...(tasksEnabled() ? [{ type:"Tasks", sql:`SELECT t.id,t.actor_id,t.action,'Task' AS entity,t.task_id AS target_id,t.created_at FROM task_events t JOIN tasks p ON p.id=t.task_id WHERE t.org_id=? AND p.release_stage=?`,args:[actor.org_id,taskDataset()] }] : []),
-    ...(documentsEnabled() ? [{ type:"Documents",sql:`SELECT id,actor_id,action,'Document' AS entity,COALESCE(document_id,folder_id) AS target_id,created_at FROM doc_events WHERE org_id=?`,args:[actor.org_id] }] : []),
-    ...(workforceEnabled() ? [{ type:"Attendance",sql:`SELECT id,actor_id,action,entity,target_id,created_at FROM work_events WHERE org_id=? AND release_stage=?`,args:[actor.org_id,workDataset()] }] : []),
-    ...(payrollEnabled() ? [{ type:"Payroll",sql:`SELECT id,actor_id,action,entity,target_id,created_at FROM payroll_events WHERE org_id=? AND release_stage=?`,args:[actor.org_id,payrollDataset()] }] : []),
-    ...(holidaysEnabled() ? [{ type:"Compliance",sql:`SELECT id,actor_id,action,entity,target_id,created_at FROM holiday_audit WHERE org_id=? AND release_stage=?`,args:[actor.org_id,holidayDataset()] }] : []),
+    { type:"General", sql:`SELECT id,actor_id,action,entity,target_id,created_at,CASE WHEN entity IN ('employee','identity') THEN target_id ELSE actor_id END AS employee_id,''::text AS detail FROM audit WHERE org_id=?`, args:[actor.org_id] },
+    { type:"Security", sql:`SELECT id,employee_id AS actor_id,action,'Sign-in' AS entity,employee_id AS target_id,created_at,employee_id,''::text AS detail FROM staff_security_events WHERE org_id=?`, args:[actor.org_id] },
+    { type:"Calls", sql:`SELECT m.id,NULL::text AS actor_id,m.event AS action,'Meeting' AS entity,m.meeting_id AS target_id,m.created_at,NULL::text AS employee_id,''::text AS detail FROM meeting_events m JOIN meetings c ON c.id=m.meeting_id WHERE c.org_id=?`,args:[actor.org_id] },
+    ...(tasksEnabled() ? [{ type:"Tasks", sql:`SELECT t.id,t.actor_id,t.action,'Task' AS entity,t.task_id AS target_id,t.created_at,p.employee_id,t.detail FROM task_events t JOIN tasks p ON p.id=t.task_id WHERE t.org_id=? AND p.release_stage=?`,args:[actor.org_id,taskDataset()] }] : []),
+    ...(documentsEnabled() ? [{ type:"Documents",sql:`SELECT id,actor_id,action,'Document' AS entity,COALESCE(document_id,folder_id) AS target_id,created_at,COALESCE(recipient_id,actor_id) AS employee_id,detail FROM doc_events WHERE org_id=?`,args:[actor.org_id] }] : []),
+    ...(workforceEnabled() ? [{ type:"Attendance",sql:`SELECT id,actor_id,action,entity,target_id,created_at,employee_id,detail FROM work_events WHERE org_id=? AND release_stage=?`,args:[actor.org_id,workDataset()] }] : []),
+    ...(payrollEnabled() ? [{ type:"Payroll",sql:`SELECT id,actor_id,action,entity,target_id,created_at,employee_id,detail FROM payroll_events WHERE org_id=? AND release_stage=?`,args:[actor.org_id,payrollDataset()] }] : []),
+    ...(holidaysEnabled() ? [{ type:"Compliance",sql:`SELECT id,actor_id,action,entity,target_id,created_at,employee_id,detail FROM holiday_audit WHERE org_id=? AND release_stage=?`,args:[actor.org_id,holidayDataset()] }] : []),
   ];
   const selected = category ? sources.filter(source=>source.type===category) : sources;
   const rows = selected.length ? await all(db,`
     WITH events AS (${selected.map(source=>`SELECT x.*, '${source.type}' AS category FROM (${source.sql}) x`).join(" UNION ALL ")})
-    SELECT a.*,e.name FROM events a LEFT JOIN employees e ON e.id=a.actor_id AND e.org_id=?
+    SELECT a.*,e.name,subject.name AS employee,subject.country,subject.department_id FROM events a
+    LEFT JOIN employees e ON e.id=a.actor_id AND e.org_id=?
+    LEFT JOIN employees subject ON subject.id=a.employee_id AND subject.org_id=e.org_id
     WHERE (?='' OR strpos(lower(concat_ws(' ',a.action,a.entity,a.target_id,e.name)),lower(?))>0)
     AND (?='' OR left(a.created_at,10)>=?) AND (?='' OR left(a.created_at,10)<=?)
-    ORDER BY a.created_at DESC,a.category,a.id LIMIT 51 OFFSET ?`,...selected.flatMap(source=>source.args),actor.org_id,query,query,from,from,to,to,(page-1)*50) : [];
-  return json({rows:rows.slice(0,50),auditFilters:{from,to,query,category,categories:sources.map(source=>source.type),page,next:rows.length>50}});
+    AND (?='' OR a.employee_id=?) AND (?='' OR a.actor_id=?)
+    AND (?='' OR subject.country=?) AND (?='' OR subject.department_id=?)
+    ORDER BY a.created_at DESC,a.category,a.id LIMIT ? OFFSET ?`,...selected.flatMap(source=>source.args),actor.org_id,query,query,from,from,to,to,
+    employee,employee,administrator,administrator,country,country,department,department,csv?1001:51,csv?0:(page-1)*50) : [];
+  if(csv){
+    if(rows.length>1000)return fail(400,'Narrow the audit filters to export up to 1,000 events.');
+    const cell=(value:unknown)=>'"'+String(value??'').replace(/^[=+@-]/,"'$&").replaceAll('"','""')+'"';
+    const values=[['Time','Administrator','Employee','Category','Action','Resource','Record','Details'],...rows.map(row=>[row.created_at,row.name,row.employee,row.category,row.action,row.entity,row.target_id,row.detail])];
+    await audit(db,actor,'Audit history exported','audit export',null).run();
+    return new Response('\uFEFF'+values.map(row=>row.map(cell).join(',')).join('\r\n'),{headers:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="walshken-audit.csv"','Cache-Control':'private, no-store'}});
+  }
+  return json({rows:rows.slice(0,50),auditFilters:{from,to,query,category,employee,administrator,country,department,categories:sources.map(source=>source.type),page,next:rows.length>50}});
 }
 
 export async function managementOverview(db: Db, actor: Actor) {

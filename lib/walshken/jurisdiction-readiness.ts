@@ -1,3 +1,4 @@
+import {employmentEngineEnabled} from "./employment-catalog";
 import { all, audit, fail, id, json, now, one, pick, requireSuper, run, str, type Actor, type Db } from "./server";
 import { validDay } from "./holiday-access";
 
@@ -45,11 +46,25 @@ export async function jurisdictionAction(db: Db, actor: Actor, action: string, d
       return json({ok:true,message:"Draft jurisdiction evidence saved."},201);
     }
     const target=str(data.id,"jurisdiction version",80);
-    const row=await one<{created_by:string;status:string}>(tx,`SELECT v.created_by,COALESCE((SELECT decision FROM staff_jurisdiction_decisions
+    const row=await one<{created_by:string;status:string;category?:string;mandatory?:boolean;effective_from?:string}>(tx,`SELECT v.*,COALESCE((SELECT decision FROM staff_jurisdiction_decisions
       WHERE version_id=v.id ORDER BY created_at DESC,id DESC LIMIT 1),'Draft') AS status
       FROM staff_jurisdiction_versions v WHERE v.id=? AND v.org_id=?`,target,actor.org_id);
     if (!row) return fail(404,"Jurisdiction version unavailable.");
     const verify=action === "jurisdiction-verify";
+    if(employmentEngineEnabled()&&row.category!=="Evidence"){
+      if(!verify&&row.mandatory&&row.status==="Verified")return fail(409,"A verified statutory policy must be superseded by a legally reviewed version. It cannot be withdrawn.");
+      if(verify){
+        const policy=await one<{jurisdiction:string;category:string;classification:string;effective_from:string;effective_through:string;predecessor_id:string|null}>(tx,"SELECT * FROM staff_jurisdiction_versions WHERE id=?",target);
+        const overlap=await one(tx,`WITH RECURSIVE ancestors AS (
+          SELECT id,predecessor_id FROM staff_jurisdiction_versions WHERE id=? AND org_id=?
+          UNION ALL SELECT v.id,v.predecessor_id FROM staff_jurisdiction_versions v JOIN ancestors a ON v.id=a.predecessor_id WHERE v.org_id=?
+        ) SELECT v.id FROM staff_jurisdiction_versions v WHERE v.org_id=? AND v.jurisdiction=? AND v.category=? AND v.classification=?
+          AND v.id<>? AND v.effective_from<=? AND v.effective_through>=?
+          AND (SELECT decision FROM staff_jurisdiction_decisions WHERE version_id=v.id ORDER BY created_at DESC,id DESC LIMIT 1)='Verified'
+          AND v.id NOT IN(SELECT id FROM ancestors) LIMIT 1`,policy!.predecessor_id,actor.org_id,actor.org_id,actor.org_id,policy!.jurisdiction,policy!.category,policy!.classification,target,policy!.effective_through,policy!.effective_from);
+        if(overlap)return fail(409,"Overlapping approved policy versions require ordered effective dates and an explicit predecessor.");
+      }
+    }
     if (verify && row.created_by===actor.id) return fail(403,"A separate Super Admin must verify the evidence.");
     if (verify ? row.status!=="Draft" : row.status==="Withdrawn") return fail(409,"The version already has a decision.");
     await run(tx,"INSERT INTO staff_jurisdiction_decisions(id,version_id,decision,reason,actor_id,created_at) VALUES(?,?,?,?,?,?)",id(),target,verify?"Verified":"Withdrawn",str(data.reason,"decision evidence",2000),actor.id,now());

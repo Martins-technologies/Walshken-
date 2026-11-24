@@ -141,6 +141,11 @@ export async function actorFor(db: Db, token: string): Promise<Actor | null> {
       FROM staff_action_permissions WHERE org_id=? AND
       ((principal_type='employee' AND principal_id=?) OR (principal_type='role' AND principal_id=?))`, actor.org_id, actor.id, actor.role);
   }
+  if(actor&&process.env.WALSHKEN_EMPLOYMENT_ENGINE_ENABLED==='1'&&actor.role!=='guest'){
+    const {employmentPersonOn}=await import('./employment-engine');
+    const day=new Intl.DateTimeFormat('en-CA',{timeZone:actor.time_zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    return employmentPersonOn(db,actor,day);
+  }
   return actor;
 }
 export async function currentActor(db: Db, request: Request) {

@@ -1,3 +1,4 @@
+import {assertNoLegalHold,assertRecordRetention} from "./retention";
 import {scanStaffUpload} from "./staff-delivery";
 import { createHash,createHmac,timingSafeEqual } from "node:crypto";
 import { all, cookieValue, currentActor, digest, fail, id, integer, json, needsStaffMfa, notify, now, one, pick, run, str, throttle, type Actor,type Db } from "./server";
@@ -153,6 +154,11 @@ export async function documentAction(db:Db,actor:Actor,action:string,data:Input,
   }
   if(action==="revoke"||action==="delete"){
    await requireDocumentPermission(tx,actor,context,action==="delete"?"delete":"manage");
+   if(action==="delete")await assertNoLegalHold(tx,actor.org_id,"document",target,context.document?.owner_id);
+   if(action==='delete'){
+    const owner=await one<{country:string}>(tx,'SELECT country FROM employees WHERE org_id=? AND id=?',actor.org_id,context.document?.owner_id);
+    await assertRecordRetention(tx,actor.org_id,owner?.country??'', 'Documents',context.document!.created_at);
+   }
    await run(tx,`UPDATE doc_entries SET ${action==="delete"?"deleted_at":"revoked_at"}=?,updated_at=? WHERE id=? AND org_id=?`,now(),now(),target,actor.org_id);
    if(action==="delete")await run(tx,"INSERT INTO doc_object_cleanup(id,org_id,storage_key,created_at) SELECT id,org_id,storage_key,? FROM doc_versions WHERE document_id=? AND org_id=? ON CONFLICT(storage_key) DO NOTHING",now(),target,actor.org_id);
    await documentEvent(tx,actor,action==="delete"?"Deleted":"Access revoked",target);return json({ok:true,message:action==="delete"?"Document deleted. Its content is unavailable and storage removal is queued.":"Document access revoked immediately."});
@@ -171,7 +177,7 @@ export async function uploadManagedDocument(db:Db,actor:Actor,request:Request){
  const documentId=str(data.get("id"),"document",80,false),folderId=str(data.get("folder"),"folder",80,false);
  const context=await documentContext(db,actor,documentId||undefined,folderId||undefined);await requireDocumentPermission(db,actor,context,documentId?"edit":"upload");
  const bytes=Buffer.from(await file.arrayBuffer());
- await scanStaffUpload(db,bytes);
+ await scanStaffUpload(db,bytes,actor,file.name);
  const inspected=await inspectDocument(file.name,bytes),target=documentId||id(),versionId=id(),key=`walshken/${actor.org_id}/documents/${target}/${versionId}`;
  // Queue first so a failed storage write or transaction leaves a recoverable cleanup record.
  const cleanupId=id();await run(db,"INSERT INTO doc_object_cleanup(id,org_id,storage_key,created_at) VALUES(?,?,?,?)",cleanupId,actor.org_id,key,now());
@@ -200,7 +206,10 @@ export async function cleanupDocumentObjects(db:Db,actor:Actor){
  let deleted=0,failed=0;for(const row of rows){
   // Never remove a current or historical object for a non-deleted file, even if an upload crashed late.
   if(await one(db,"SELECT v.id FROM doc_versions v JOIN doc_entries d ON d.id=v.document_id WHERE v.storage_key=? AND d.deleted_at IS NULL",row.storage_key))continue;
-  try{await deleteDocumentObject(db,row.storage_key);await run(db,"DELETE FROM doc_object_cleanup WHERE id=? AND org_id=?",row.id,actor.org_id);deleted++;}catch{failed++;}
+  try{
+   const file=await one<{id:string;owner_id:string}>(db,'SELECT d.id,d.owner_id FROM doc_versions v JOIN doc_entries d ON d.id=v.document_id WHERE v.storage_key=?',row.storage_key);
+   await assertNoLegalHold(db,actor.org_id,'document',file?.id??'',file?.owner_id);
+   await deleteDocumentObject(db,row.storage_key);await run(db,"DELETE FROM doc_object_cleanup WHERE id=? AND org_id=?",row.id,actor.org_id);deleted++;}catch{failed++;}
  }return {ok:failed===0,deleted,failed};
 }
 async function documentEvents(db:Db,actor:Actor,target="",page=1){

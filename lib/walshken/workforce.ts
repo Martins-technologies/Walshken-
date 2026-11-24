@@ -1,3 +1,5 @@
+import {applicablePolicy,employmentPersonOn,employmentTermsOn} from "./employment-engine";
+import type {WorkSettings} from "./employment-settings";
 import {staffReadinessEnabled} from './staff-permissions';
 import {employmentRulesOn,holidaysEnabled,validDay} from './holiday-access';
 import {all,audit,canManage,canSuper,date,fail,id,integer,json,now,one,pick,requireStaff,run,scope,str,throttle,type Actor,type Db} from './server';
@@ -11,17 +13,23 @@ export type Attendance={id:string;org_id:string;employee_id:string;starts_at:str
 export type Shift={id:string;employee_id:string;starts_at:string;ends_at:string;title:string;location:string;time_zone:string;state:string;published:number;revision:number;policy_snapshot:string;series_id:string|null;group_key:string|null;release_stage:string};
 export type Sheet={id:string;attendance_id:string;employee_id:string;status:string;revision:number;work_date:string;gross_seconds:number;unpaid_seconds:number;paid_seconds:number;compliance_issues:string};
 export async function workforceEmployee(db:Db,actor:Actor,target:string,management=false){
- if(management&&!canManage(actor))return fail(403,'Scoped management access is required.');const s=scope(actor,'e');const e=await one<Actor>(db,`SELECT e.* FROM employees e WHERE e.org_id=? AND e.id=? AND e.role<>'guest' AND ${s.sql}`,actor.org_id,target,...s.args);if(!e)return fail(404,'Employee is outside your current scope.');return e;
+ if(management&&!canManage(actor))return fail(403,'Scoped management access is required.');const s=scope(actor,'e');const e=await one<Actor>(db,`SELECT e.* FROM employees e WHERE e.org_id=? AND e.id=? AND e.role<>'guest' AND ${s.sql}`,actor.org_id,target,...s.args);if(!e)return fail(404,'Employee is outside your current scope.');return employmentPersonOn(db,e,localDate(now(),e.time_zone));
 }
 export function requireActive(e:Actor){if(e.status!=='Active'||e.employment_status==='Ended')return fail(409,'This employee does not have an active employment account.');}
 export async function workforcePolicy(db:Db,employee:Actor,effectiveDay=localDate(now(),employee.time_zone)){
  if(!holidaysEnabled()&&employee.jurisdiction!=='CA-AB')return fail(409,'Assign the employee’s Alberta employment jurisdiction (CA-AB) in their profile before scheduling or approving working time.');
- const verified=holidaysEnabled()?await employmentRulesOn(db,employee,effectiveDay):null,rules=verified?{...verified.rules,source:verified.rules.sources[2]??verified.rules.sources[0],recordId:verified.row.id,contentHash:verified.row.content_hash}:albertaRules;
+ const assignment=await employmentTermsOn(db,employee,effectiveDay);
+ const configured=assignment?await applicablePolicy(db,employee,effectiveDay,"Work"):null;
+ const verified=!configured&&holidaysEnabled()?await employmentRulesOn(db,employee,effectiveDay):null;
+ const rules=configured?{...(configured.settings as WorkSettings),jurisdiction:configured.row.jurisdiction,category:configured.row.classification,
+   version:configured.row.version,effectiveFrom:configured.row.effective_from,effectiveThrough:configured.row.effective_through,
+   verifiedOn:configured.row.created_at.slice(0,10),sources:[configured.row.source_url],source:configured.row.source_url,recordId:configured.row.id,contentHash:configured.row.settings_hash}
+  :verified?{...verified.rules,source:verified.rules.sources[2]??verified.rules.sources[0],recordId:verified.row.id,contentHash:verified.row.content_hash}:albertaRules;
  const current=staffReadinessEnabled()?await one<{settings:string;revision:number}>(db,`SELECT settings,revision FROM staff_work_policy_versions
    WHERE employee_id=? AND org_id=? AND release_stage=? AND effective_on<=? ORDER BY effective_on DESC,revision DESC LIMIT 1`,
    employee.id,employee.org_id,workDataset(),effectiveDay):null;
  const saved=current??await one<{settings:string;revision:number}>(db,'SELECT settings,revision FROM work_policies WHERE employee_id=? AND org_id=? AND release_stage=?',employee.id,employee.org_id,workDataset());
- return {policy:saved?validatePolicy(JSON.parse(saved.settings),rules):validatePolicy({...defaultPolicy(employee.break_policy==='paid'),rules},rules),revision:saved?.revision??0};
+ return {policy:saved?validatePolicy(JSON.parse(saved.settings),rules):validatePolicy({...defaultPolicy(employee.break_policy==='paid'),breaks:[{key:'lunch',label:'Meal break',minutes:rules.minimumBreakMinutes,paid:employee.break_policy==='paid',afterMinutes:rules.firstBreakAfterMinutes},{key:'rest',label:'Rest break',minutes:rules.minimumBreakMinutes,paid:employee.break_policy==='paid',afterMinutes:rules.secondBreakFromMinutes}],rules},rules),revision:saved?.revision??0};
 }
 export async function workEvent(db:Db,actor:Actor,employee:string,entity:string,target:string,action:string,detail:unknown=''){
  await run(db,'INSERT INTO work_events(id,org_id,release_stage,employee_id,actor_id,entity,target_id,action,detail,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',id(),actor.org_id,workDataset(),employee,actor.id,entity,target,action,(typeof detail==='string'?detail:JSON.stringify(detail)).slice(0,20000),now());

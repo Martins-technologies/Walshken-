@@ -27,7 +27,7 @@ export type CalendarEntry = {
   location?: string;
   href?: string;
 };
-export type CalendarPerson = { id: string; name: string; country: string; departmentId: string | null; managerId: string | null };
+export type CalendarPerson = { id: string; name: string; country: string; region?:string; jurisdiction?:string; departmentId: string | null; managerId: string | null };
 export type CalendarOption = { id: string; name: string };
 export type StaffCalendarData = {
   mode: CalendarMode;
@@ -39,8 +39,8 @@ export type StaffCalendarData = {
   to: string;
   customRange: boolean;
   zone: string;
-  filters: { department: string; country: string; employee: string; team: string; kinds: CalendarKind[] };
-  options: { people: CalendarPerson[]; departments: CalendarOption[]; countries: CalendarOption[]; teams: CalendarOption[] };
+  filters: { department: string; country: string; region:string; jurisdiction:string; employee: string; team: string; kinds: CalendarKind[] };
+  options: { people: CalendarPerson[]; departments: CalendarOption[]; countries: CalendarOption[];regions:CalendarOption[];jurisdictions:CalendarOption[]; teams: CalendarOption[] };
   roster: (CalendarPerson & { from: string | null; to: string | null })[];
   availability: { person: string; from: string; to: string; status: string }[];
   entries: CalendarEntry[];

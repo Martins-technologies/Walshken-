@@ -52,9 +52,10 @@ export function FieldInput({field}:{field:Field}){
       defaultValue={field.multiple?[]:String(field.value??"")} size={field.multiple?4:undefined}>
       {!field.multiple&&<option value="">Choose…</option>}
       {field.options.map((item)=>{const [key,label]=typeof item==="string"?[item,item]:item;return <option key={key} value={key}>{label}</option>;})}</select>
+    :field.type==="checkbox"?<input name={field.name} type="checkbox" defaultChecked={field.value==="1"||field.value===1}/>
     :field.type==="textarea"?<textarea name={field.name} rows={3} defaultValue={String(field.value??"")} required={field.required} placeholder={field.placeholder} maxLength={field.max??3000}/>
     :<input name={field.name} type={field.type??"text"} required={field.required} defaultValue={field.value==null?undefined:field.value}
-      min={field.type==="number"?field.min:undefined} minLength={field.type==="password"?field.min:undefined} max={field.type==="number"?field.max:undefined} maxLength={field.type==="number"?undefined:field.max}
+      step={field.type==="number"?"any":undefined} min={field.type==="number"?field.min:undefined} minLength={field.type==="password"?field.min:undefined} max={field.type==="number"?field.max:undefined} maxLength={field.type==="number"?undefined:field.max}
       placeholder={field.placeholder} autoComplete={field.autoComplete ?? (field.type==="password"?"new-password":undefined)}/>}
   </label>;
 }
@@ -68,6 +69,7 @@ export function ActionForm({path,fields,submit,refresh,extra={},file=false,onDon
     setBusy(true);setStatus("");setCode("");setError(false);
     try{
       const data:Record<string,unknown>={...Object.fromEntries(formData),...extra};
+      for(const field of fields) if(field.type==="checkbox") data[field.name]=formData.has(field.name);
       for(const field of fields) if(field.multiple) data[field.name]=formData.getAll(field.name);
       for(const field of fields) if(field.type==="datetime-local"&&data[field.name]) data[field.name]=new Date(String(data[field.name])).toISOString();
       const result=await api(path,file?formData:data) as ResponseData;

@@ -1,3 +1,4 @@
+import {employmentEngineEnabled} from "./employment-catalog";
 export const staffReadinessEnabled = () => process.env.WALSHKEN_STAFF_READINESS_ENABLED === "1";
 
 export const staffActions = {
@@ -15,18 +16,22 @@ export type StaffAction = keyof typeof staffActions;
 export type StaffPermission = {
   id: string;
   action: StaffAction;
-  scope_type: "organization" | "division" | "department" | "employee";
+  scope_type: "organization" | "division" | "department" | "employee" | "country" | "office";
   scope_id: string;
   effect: "allow" | "deny";
 };
 type Clause = { sql: string; args: unknown[] };
 
 function matchingScopes(rules: StaffPermission[], alias: string): Clause {
-  const scopes = { division: "division_id", department: "department_id", employee: "id" } as const;
+  const scopes = { division: "division_id", department: "department_id", employee: "id",country:"country",office:"office_id" } as const;
   if (rules.some(rule => rule.scope_type === "organization")) return {sql:"1=1", args:[]};
   if (!rules.length) return {sql:"1=0", args:[]};
   return {
-    sql: rules.map(rule => `${alias}.${scopes[rule.scope_type as keyof typeof scopes]}=?`).join(" OR "),
+    sql: rules.map(rule => {
+      const column=scopes[rule.scope_type as keyof typeof scopes];
+      if(employmentEngineEnabled()&&(rule.scope_type==='country'||rule.scope_type==='office'))return `COALESCE((SELECT t.${column} FROM staff_employment_terms t WHERE t.org_id=${alias}.org_id AND t.employee_id=${alias}.id AND t.effective_on<=to_char(now() AT TIME ZONE ${alias}.time_zone,'YYYY-MM-DD') ORDER BY t.effective_on DESC LIMIT 1),${alias}.${column})=?`;
+      return `${alias}.${column}=?`;
+    }).join(" OR "),
     args: rules.map(rule => rule.scope_id),
   };
 }

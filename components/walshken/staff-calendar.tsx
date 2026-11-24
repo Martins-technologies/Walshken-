@@ -30,7 +30,7 @@ function dateKey(data: StaffCalendarData) {
     params.set("from", data.from);
     params.set("to", data.to);
   }
-  for (const key of ["department", "country", "employee", "team"] as const) {
+  for (const key of ["department", "country", "region", "jurisdiction", "employee", "team"] as const) {
     if (data.filters[key]) params.set(key, data.filters[key]);
   }
   if (data.filters.kinds.length) params.set("types", data.filters.kinds.join(","));
@@ -118,14 +118,14 @@ export function StaffCalendar({ data, refresh, setQuery }: { data: StaffCalendar
       return;
     }
     if (start) setFocus(start);
-    navigate({ department: String(values.get("department") ?? ""), country: String(values.get("country") ?? ""),
+    navigate({ department: String(values.get("department") ?? ""), country: String(values.get("country") ?? ""),region:String(values.get("region")??""),jurisdiction:String(values.get("jurisdiction")??""),
       employee: String(values.get("employee") ?? ""), team: String(values.get("team") ?? ""),
       types: values.getAll("type").join(","), from: start, to: end, ...(start ? { anchor: start } : {}) });
     setExpanded(false);
   }
 
   function resetFilters() {
-    navigate({ department: "", country: "", employee: "", team: "", types: "", from: "", to: "" });
+    navigate({ department: "", country: "",region:"",jurisdiction:"", employee: "", team: "", types: "", from: "", to: "" });
   }
   const roster = data.roster.filter(person => (!person.from || person.from <= focusDay) && (!person.to || person.to >= focusDay));
   const gridStart = (iso(from).getUTCDay() + 6) % 7;
@@ -148,7 +148,7 @@ export function StaffCalendar({ data, refresh, setQuery }: { data: StaffCalendar
         </div>
         <div className="sc-tools">
           {data.modes.length > 1 && <label className="sc-select-role"><span className="sc-visually-hidden">Calendar scope</span>
-            <select value={data.mode} onChange={event => navigate({ mode: event.target.value, department: "", country: "", employee: "", team: "" })}>
+            <select value={data.mode} onChange={event => navigate({ mode: event.target.value, department: "", country: "",region:"",jurisdiction:"", employee: "", team: "" })}>
               {data.modes.map(mode => <option key={mode} value={mode}>{modeLabels[mode]}</option>)}
             </select>
           </label>}
@@ -175,6 +175,8 @@ export function StaffCalendar({ data, refresh, setQuery }: { data: StaffCalendar
       <div className="sc-filter-grid">
         <label>Department<select name="department" defaultValue={data.filters.department}><option value="">All departments</option>{data.options.departments.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label>Country<select name="country" defaultValue={data.filters.country}><option value="">All countries</option>{data.options.countries.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>Province, state or territory<select name="region" defaultValue={data.filters.region}><option value="">All subdivisions</option>{data.options.regions.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>Employment jurisdiction<select name="jurisdiction" defaultValue={data.filters.jurisdiction}><option value="">All jurisdictions</option>{data.options.jurisdictions.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label>Employee<select name="employee" defaultValue={data.filters.employee}><option value="">All authorized staff</option>{data.options.people.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label>Team<select name="team" defaultValue={data.filters.team}><option value="">All teams</option>{data.options.teams.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         <label>From<input type="date" name="from" min="1900-01-01" max="2199-12-31" defaultValue={data.customRange ? from : ""} /></label>

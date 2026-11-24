@@ -1,3 +1,7 @@
+import {retentionData,retentionAction} from "./retention";
+import {scanHistory} from "./upload-quarantine";
+import {employmentEngineEnabled} from "./employment-catalog";
+import {employmentAction,employmentData} from "./employment-admin";
 import { randomBytes } from "node:crypto";
 import { passwordHash, passwordMatches } from "./passwords";
 import { verifyStaffMfa } from "./staff-mfa";
@@ -32,6 +36,8 @@ export async function governanceAction(db: Db, actor: Actor, action: string, dat
     return json({ok:true,message:"Acknowledgement saved."});
   }
   requireSuper(actor);
+  if(action.startsWith('retention-')||action.startsWith('hold-'))return retentionAction(db,actor,action,data);
+  if(action.startsWith("employment-"))return employmentAction(db,actor,action,data);
   if (["jurisdiction-save","jurisdiction-verify","jurisdiction-withdraw"].includes(action)) return jurisdictionAction(db,actor,action,data);
   if (action === "notice-publish") {
     const notice = id();
@@ -53,12 +59,14 @@ export async function governanceAction(db: Db, actor: Actor, action: string, dat
   if (action === "permission-save") {
     const principalType = pick(data.principalType,["employee","role"] as const,"principal type");
     const principal = str(data.principal,"employee ID or role",80);
-    const scopeType = pick(data.scopeType,["organization","division","department","employee"] as const,"scope");
+    const scopeType = pick(data.scopeType,["organization","division","department","employee",...(employmentEngineEnabled()?["country","office"]:[])] as const,"scope");
     const target = scopeType === "organization" ? actor.org_id : str(data.scopeId,"target ID",80);
     const capability = pick(data.capability,Object.keys(staffActions) as StaffAction[],"action");
     const effect = pick(data.effect,["allow","deny"] as const,"effect");
     if (principalType === "role") pick(principal,roles.filter(role=>!["super_admin","guest"].includes(role)),"internal role");
     else if (!await one(db,"SELECT id FROM employees WHERE org_id=? AND id=? AND role NOT IN ('super_admin','guest')",actor.org_id,principal)) return fail(404,"Employee unavailable.");
+    if(scopeType==='country')pick(target,['CA','IN','PK'],'employment country');
+    if(scopeType==='office'&&!await one(db,"SELECT id FROM units WHERE org_id=? AND id=? AND kind='Office'",actor.org_id,target))return fail(404,'Office unavailable.');
     if (scopeType === "employee" && !await one(db,"SELECT id FROM employees WHERE org_id=? AND id=? AND role<>'guest'",actor.org_id,target)) return fail(404,"Employee unavailable.");
     if ((scopeType === "division" || scopeType === "department") && !await one(db,"SELECT id FROM units WHERE org_id=? AND id=? AND lower(kind)=?",actor.org_id,target,scopeType)) return fail(404,"Organization unit unavailable.");
     await db.transaction(async tx => {
@@ -122,20 +130,23 @@ export async function governanceAction(db: Db, actor: Actor, action: string, dat
 
 export async function governanceData(db: Db, actor: Actor) {
   requireSuper(actor);
-  const [rules, employees, units, notice, policies] = await Promise.all([
+  const [rules, employees, units, notice, policies, employment, scans, retention] = await Promise.all([
     all(db,`SELECT r.id,r.principal_type,r.principal_id,r.scope_type,r.scope_id,r.action,r.effect,r.created_at,
       COALESCE(p.name,r.principal_id) AS principal,COALESCE(t.name,u.name,r.scope_id) AS scope
       FROM staff_action_permissions r LEFT JOIN employees p ON r.principal_type='employee' AND p.id=r.principal_id
       LEFT JOIN employees t ON r.scope_type='employee' AND t.id=r.scope_id
-      LEFT JOIN units u ON r.scope_type IN ('division','department') AND u.id=r.scope_id
+      LEFT JOIN units u ON r.scope_type IN ('division','department','office') AND u.id=r.scope_id
       WHERE r.org_id=? ORDER BY r.created_at DESC`,actor.org_id),
     all(db,"SELECT id,name,role FROM employees WHERE org_id=? AND status='Active' AND role<>'guest' ORDER BY name",actor.org_id),
-    all(db,"SELECT id,name,kind FROM units WHERE org_id=? AND kind IN ('Division','Department') ORDER BY name",actor.org_id),
+    all(db,"SELECT id,name,kind FROM units WHERE org_id=? AND kind IN ('Division','Department','Office') ORDER BY name",actor.org_id),
     currentNotice(db,actor),
     jurisdictionVersions(db,actor),
+    employmentData(db,actor),
+    employmentEngineEnabled()?scanHistory(db,actor):Promise.resolve([]),
+    retentionData(db,actor),
   ]);
   const acknowledgements = notice ? await all(db,`SELECT e.id,e.name,a.created_at
     FROM employees e LEFT JOIN staff_privacy_acknowledgements a ON a.employee_id=e.id AND a.notice_id=?
     WHERE e.org_id=? AND e.status='Active' AND e.role<>'guest' ORDER BY e.name`,notice.id,actor.org_id) : [];
-  return json({rows:rules,staff:employees,units,privacyNotice:notice,acknowledgements,jurisdictionPolicies:policies});
+  return json({rows:rules,staff:employees,units,privacyNotice:notice,acknowledgements,jurisdictionPolicies:policies,employment,scans,retention});
 }

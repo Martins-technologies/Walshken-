@@ -1,3 +1,7 @@
+import {employmentTermsOn} from "./employment-engine";
+import {localDate} from "./work";
+import {validateMessageRetention} from "./retention";
+import {employmentEngineEnabled} from "./employment-catalog";
 import { verifiedStaffLocation } from "./jurisdiction-readiness";
 import {staffReadinessEnabled} from "./staff-permissions";
 import {peopleScope} from "./staff-governance";
@@ -88,6 +92,10 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       const contract = date(data.contractStart, "contract start date", false);
       const end = date(data.employmentEnd, "employment end date", false);
       const officeCountry=country(data.country), jurisdiction=str(data.jurisdiction,"jurisdiction",30);
+      if(await employmentTermsOn(db,employee,localDate(now(),employee.time_zone))){
+        const baseline=await one<{employment_type:string;expected_hours:number}>(db,'SELECT employment_type,expected_hours FROM employees WHERE id=?',employee.id);
+        if(officeCountry!==employee.country||jurisdiction!==employee.jurisdiction||data.timeZone!==employee.time_zone||data.employmentType!==baseline?.employment_type||str(data.office,'office',80,false)!==(employee.office_id??'')||Number(data.expectedHours)!==Number(baseline?.expected_hours))return fail(409,'This employee has effective employment assignments. Update work location, classification, office and working hours through Staff policies → Employment assignments.');
+      }
       if(staffReadinessEnabled()) verifiedStaffLocation(officeCountry,jurisdiction);
       const employmentStatus = pick(data.employmentStatus ?? employee.employment_status ?? "Active",employmentStatuses,"employment status");
       if (employmentStatus==="Ended" && (editingOwnAdmin || !end)) {
@@ -237,8 +245,10 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       if(data.confirmation!=="ERASE") return fail(400,"Type ERASE to confirm permanent removal of expired message content.");
       await db.transaction(async (tx) => {
         await one(tx,"SELECT id FROM organizations WHERE id=? FOR UPDATE",actor.org_id);
+        if(employmentEngineEnabled()&&await one(tx,`SELECT h.id FROM staff_legal_holds h WHERE h.org_id=? AND h.scope_type IN ('organization','employee','conversation') AND NOT EXISTS(SELECT 1 FROM staff_legal_hold_releases r WHERE r.hold_id=h.id) LIMIT 1`,actor.org_id))return fail(409,'Active legal holds protect messages. Review their scope before applying retention.');
         const policy=await communicationPolicy(tx,actor);
         if(!policy.message_retention_days) return fail(409,"Set a message retention period first.");
+        await validateMessageRetention(tx,actor.org_id,policy.message_retention_days);
         const cutoff=retentionCutoff(policy.message_retention_days);
         await run(tx,`DELETE FROM message_reactions WHERE message_id IN (
           SELECT m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id WHERE c.org_id=? AND m.created_at<?
@@ -339,6 +349,29 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       await audit(tx,actor,"Encrypted staff factors and integrations migrated without changing authenticator secrets","security migration").run();
       return json({ok:true,message:`Encryption migration completed for ${migrated} authenticator records. Passwords and authenticator codes are unchanged.`});
     });
+  }
+  if(area==='integrations'&&action==='test'){
+    requireSuper(actor);
+    await throttle(db,`integration-test:${actor.id}`,12,60000);
+    const provider=providers.find(provider=>provider.id===data.provider);
+    if(!provider)return fail(400,'Choose a registered integration.');
+    const key=provider.id==='payroll-calculator-review'?calculatorIntegrationId():provider.id;
+    const row=await one<{configuration:string;enabled:number}>(db,'SELECT configuration,enabled FROM integrations WHERE id=?',key);
+    if(!row?.enabled)return fail(409,'Save and enable this integration before testing it.');
+    try{
+      const settings=await decryptSettings(key,row.configuration);
+      if(provider.id==='livekit')await verifyLiveKitConnection(settings as LiveKitSettings);
+      else if(['recording-storage','document-storage-review'].includes(provider.id))await verifyRecordingStorage(settings as RecordingStorage);
+      else if(provider.id==='payroll-calculator-review')await verifyCalculatorConnection(settings as CalculatorSettings);
+      else if(provider.id==='malware-scanner')await verifyScanner(settings as {endpoint:string;apiKey:string});
+      else return fail(409,'This provider requires a recipient-specific delivery test.');
+      await audit(db,actor,'Integration connection test succeeded','integration',key).run();
+      return json({ok:true,message:'Live connection test succeeded.'});
+    }catch(error){
+      await audit(db,actor,'Integration connection test failed','integration',key).run();
+      if(error instanceof Error&&error.name==='AppError')throw error;
+      return fail(502,'The live connection test failed. Review the provider account and integration settings.');
+    }
   }
   if (area === "integrations" && (action === "save" || action === "disable")) {
     requireSuper(actor);
