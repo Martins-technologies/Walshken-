@@ -63,9 +63,9 @@ Production database inspection confirms enabled `livekit` and `recording-storage
 
 Saved provider credentials can be tested from Super Admin Integrations without entering them again. LiveKit tests authenticate to its service. S3 tests check the private bucket, write a verification object, confirm public denial and delete that verification object. Payroll tests check its compatible endpoint. Test success/failure is recorded without credential values.
 
-Saved Vercel encryption keys are sensitive values that the connector cannot retrieve. The original raw LiveKit and S3 credentials previously supplied by the owner have now been entered as protected settings scoped only to the isolated review branch. The runtime can use these server defaults without copying the inaccessible production encryption key. Saved dashboard settings take precedence, including an explicit disable. No secret is returned to the client. The project and database remain the user's existing Walshken resources.
+Saved Vercel encryption keys are sensitive values that the connector cannot retrieve. The original raw LiveKit and S3 credentials previously supplied by the owner have now been entered as protected settings scoped only to the isolated review branch. The runtime can use these server defaults without copying the inaccessible production encryption key. Saved dashboard settings take precedence, including an explicit disable. No secret is returned to the client. The calling page also uses the same resolver when deciding whether the provider is configured. The project and database remain the user's existing Walshken resources.
 
-The review uses the separate private document and task buckets. Its recording history was checked to contain no production object references. The recording provider remains the existing private account. An opt-in deployment preflight authenticates LiveKit, checks private storage, writes a disposable verification object, checks public denial and deletes that object. Hosted preflight results must be reviewed before claiming connectivity. This does not prove two-browser media, webhook delivery or successful recording. Local provider network calls did not complete successfully and are not counted as acceptance.
+The review uses the separate private document and task buckets. Its recording history was checked to contain no production object references. The recording provider remains the existing private account. An opt-in deployment preflight authenticates LiveKit, checks private storage, writes a disposable verification object, checks public denial and deletes that object. Vercel build `dpl_79ntacCYbbCJJsR1Uow3TgEwDJ7R` passed all three protected provider preflights: LiveKit authentication, recording storage and document storage. The build and deployment are READY. This does not prove two-browser media, webhook delivery or successful recording. Local provider network calls did not complete successfully and are not counted as acceptance.
 
 The LiveKit project must also deliver signed events to the review webhook for accurate meeting attendance and recording-start readiness. Its production webhook must remain in service. Review event delivery has not yet been verified.
 
@@ -120,7 +120,9 @@ Existing authenticated `/api/workspace/governance/*` routes now accept employmen
 | Holiday/calendar suites | PASS |
 | New employment suite | PASS with synthetic policy fixtures |
 | ClamAV worker syntax | PASS |
-| Real ClamAV scan and real provider test transactions in the new Preview | NOT EXECUTED |
+| LiveKit authentication and private recording/document storage test transactions from Vercel | PASS in deployment preflight; real service requests, no provider substitutions |
+| Real ClamAV scan | NOT EXECUTED |
+| Hosted staff sign-in page and unauthenticated policy access | PASS: sign-in form rendered; governance endpoint returned 401 |
 | Hosted acceptance across all roles, mobile/accessibility and two-browser calls | NOT EXECUTED |
 | Provider backup restore, penetration test and concurrency load | NOT EXECUTED |
 
