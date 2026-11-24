@@ -1,3 +1,4 @@
+import {integrationSettings} from "./integration-settings";
 import {employmentTermsOn} from "./employment-engine";
 import {localDate} from "./work";
 import {validateMessageRetention} from "./retention";
@@ -356,10 +357,9 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     const provider=providers.find(provider=>provider.id===data.provider);
     if(!provider)return fail(400,'Choose a registered integration.');
     const key=provider.id==='payroll-calculator-review'?calculatorIntegrationId():provider.id;
-    const row=await one<{configuration:string;enabled:number}>(db,'SELECT configuration,enabled FROM integrations WHERE id=?',key);
-    if(!row?.enabled)return fail(409,'Save and enable this integration before testing it.');
+    const settings=await integrationSettings(db,key);
+    if(!settings)return fail(409,'Save and enable this integration before testing it.');
     try{
-      const settings=await decryptSettings(key,row.configuration);
       if(provider.id==='livekit')await verifyLiveKitConnection(settings as LiveKitSettings);
       else if(['recording-storage','document-storage-review'].includes(provider.id))await verifyRecordingStorage(settings as RecordingStorage);
       else if(provider.id==='payroll-calculator-review')await verifyCalculatorConnection(settings as CalculatorSettings);
@@ -387,7 +387,10 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE deleted_at IS NULL LIMIT 1"))return fail(409,"Keep the current storage connection until all retained recordings are deleted. This prevents inaccessible recordings.");
     if (action === "disable") {
       if(provider.id==="recording-storage"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Stop active recordings before disabling storage.");
-      await db.batch([stmt(db,"UPDATE integrations SET enabled=0,updated_at=? WHERE id=?",now(),integrationId),audit(db,actor,"Integration disabled","integration",integrationId)]);
+      const saved=await integrationSettings(db,integrationId,false);
+      if(saved)await run(db,`INSERT INTO integrations(id,configuration,enabled,updated_at) VALUES(?,?,0,?)
+       ON CONFLICT(id) DO UPDATE SET enabled=0,updated_at=excluded.updated_at`,integrationId,await encryptSettings(integrationId,saved),now());
+      await audit(db,actor,"Integration disabled","integration",integrationId).run();
       return json({ ok:true,message:"Integration disabled." });
     }
     const settings: Record<string,string> = {};

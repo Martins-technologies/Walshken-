@@ -1,8 +1,9 @@
+import {integrationSettings} from "./integration-settings";
 import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 import { AccessToken, EgressClient, RoomServiceClient, TrackSource } from "livekit-server-sdk";
 import { S3Client, HeadBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { decryptSettings, fail, one, type Db } from "./server";
+import { fail, type Db } from "./server";
 
 export type LiveKitSettings={url:string;apiKey:string;apiSecret:string};
 export type RecordingStorage={endpoint:string;region:string;bucket:string;accessKey:string;secretKey:string};
@@ -17,9 +18,9 @@ export function validateLiveKit(settings:LiveKitSettings){
   return {...settings,url:url.origin};
 }
 export async function liveKitSettings(db:Db){
-  const row=await one<{configuration:string}>(db,"SELECT configuration FROM integrations WHERE id='livekit' AND enabled=1");
-  if(!row)return fail(409,"A Super Admin must connect LiveKit in Integrations before calls can start.");
-  return validateLiveKit(await decryptSettings("livekit",row.configuration) as LiveKitSettings);
+  const settings=await integrationSettings(db,'livekit');
+  if(!settings)return fail(409,"A Super Admin must connect LiveKit in Integrations before calls can start.");
+  return validateLiveKit(settings as LiveKitSettings);
 }
 export const roomClient=(s:LiveKitSettings)=>new RoomServiceClient(s.url.replace(/^wss:/,"https:"),s.apiKey,s.apiSecret,{requestTimeout:8,failover:false});
 export const egressClient=(s:LiveKitSettings)=>new EgressClient(s.url.replace(/^wss:/,"https:"),s.apiKey,s.apiSecret,{requestTimeout:12,failover:false});
@@ -56,9 +57,9 @@ export function validateStorage(s:RecordingStorage){
 export const storageClient=(s:RecordingStorage)=>new S3Client({endpoint:s.endpoint,region:s.region,forcePathStyle:true,
   credentials:{accessKeyId:s.accessKey,secretAccessKey:s.secretKey},requestHandler:new FetchHttpHandler({requestTimeout:12000}),maxAttempts:2,requestChecksumCalculation:"WHEN_REQUIRED"});
 export async function recordingStorage(db:Db,requireEnabled=true){
-  const row=await one<{configuration:string}>(db,`SELECT configuration FROM integrations WHERE id='recording-storage' ${requireEnabled?"AND enabled=1":""}`);
-  if(!row)return fail(409,"Connect private recording storage in Integrations first.");
-  return validateStorage(await decryptSettings("recording-storage",row.configuration) as RecordingStorage);
+  const settings=await integrationSettings(db,'recording-storage',requireEnabled);
+  if(!settings)return fail(409,"Connect private recording storage in Integrations first.");
+  return validateStorage(settings as RecordingStorage);
 }
 export async function verifyRecordingStorage(settings:RecordingStorage){
   const s=validateStorage(settings),client=storageClient(s),key=`walshken/verification/${crypto.randomUUID()}.txt`;

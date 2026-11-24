@@ -63,7 +63,11 @@ Production database inspection confirms enabled `livekit` and `recording-storage
 
 Saved provider credentials can be tested from Super Admin Integrations without entering them again. LiveKit tests authenticate to its service. S3 tests check the private bucket, write a verification object, confirm public denial and delete that verification object. Payroll tests check its compatible endpoint. Test success/failure is recorded without credential values.
 
-Saved Vercel encryption keys are sensitive values that the connector cannot retrieve. Existing LiveKit and S3 settings require protected entry in the review environment or a supported authenticated migration before hosted provider tests. The project and database remain the user's existing Walshken resources.
+Saved Vercel encryption keys are sensitive values that the connector cannot retrieve. The original raw LiveKit and S3 credentials previously supplied by the owner have now been entered as protected settings scoped only to the isolated review branch. The runtime can use these server defaults without copying the inaccessible production encryption key. Saved dashboard settings take precedence, including an explicit disable. No secret is returned to the client. The project and database remain the user's existing Walshken resources.
+
+The review uses the separate private document and task buckets. Its recording history was checked to contain no production object references. The recording provider remains the existing private account. An opt-in deployment preflight authenticates LiveKit, checks private storage, writes a disposable verification object, checks public denial and deletes that object. Hosted preflight results must be reviewed before claiming connectivity. This does not prove two-browser media, webhook delivery or successful recording. Local provider network calls did not complete successfully and are not counted as acceptance.
+
+The LiveKit project must also deliver signed events to the review webhook for accurate meeting attendance and recording-start readiness. Its production webhook must remain in service. Review event delivery has not yet been verified.
 
 ClamAV is supported through `ops/clamav-gateway.mjs`. A private worker, signature updates and HTTPS gateway are required. The worker has not been provisioned in this task. The gateway protocol and infrastructure requirements are in `ops/clamav-gateway.md`.
 
@@ -126,7 +130,7 @@ Existing authenticated `/api/workspace/governance/*` routes now accept employmen
 
 1. Verify employing entities, actual employee work locations and covered establishment/employee categories. Geography alone cannot determine local tax, wage, social-security and employment-law applicability.
 2. Complete and independently verify the missing country/regional payroll, holiday-pay and specialist employment methods. India and Pakistan statutory deductions are still implementation work. A compatible provider is an alternative once its coverage and contract are accepted.
-3. Restore protected provider configuration in the review environment, provision the scanner worker and configure verified email delivery.
+3. Verify the new protected review provider configuration and signed webhook delivery, provision the scanner worker and configure verified email delivery.
 4. Complete the expanded action permission matrix, all-record archival/export/disposal workflows, notification delivery workflows and remaining report acceptance.
 5. Execute hosted role/media/security/accessibility, provider, reconciliation, restore and load tests.
 
@@ -155,6 +159,10 @@ Full production readiness cannot be asserted until these items are resolved.
 - `lib/walshken/holiday-engine.ts`
 - `lib/walshken/jurisdiction-readiness.ts`
 - `lib/walshken/leave-balances.ts`
+- `lib/walshken/integration-settings.ts`
+- `lib/walshken/livekit.ts`
+- `lib/walshken/document-storage.ts`
+- `lib/walshken/meetings.ts`
 - `lib/walshken/payroll-calculator.ts`
 - `lib/walshken/payroll-engine.ts`
 - `lib/walshken/payroll-tax-ca.ts`
@@ -179,3 +187,6 @@ Full production readiness cannot be asserted until these items are resolved.
 - `supabase/migrations/20261124211828_dynamic_employment_engine.sql`
 - `tests/verify-employment.mjs`
 - `tests/verify-holidays.mjs`
+- `tests/verify-livekit.mjs`
+- `scripts/verify-deployment-providers.mjs`
+- `.env.example`

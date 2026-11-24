@@ -185,7 +185,7 @@ function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
     </Panel>}
     <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage","payroll-calculator-review",...(data.readiness?["resend","malware-scanner"]:[]),...(data.documentStorageEnabled?["document-storage-review"]:[])].includes(provider.id)).map((provider)=>{
       const current=data.rows?.find((row)=>row.id===(provider.id==="payroll-calculator-review"?data.calculatorId:provider.id));
-      return <Panel key={provider.id} title={provider.name} note={provider.description} action={<Status>{current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
+      return <Panel key={provider.id} title={provider.name} note={provider.description} action={<Status>{current?.source==='server'?"Server configuration":current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
         <div className="integration-label"><Icon name="plug" size={17}/>{provider.category}</div>
         {provider.id==="document-storage-review"&&!current&&data.documentBucket&&<p className="form-note">Using the existing encrypted storage connection with the separate private bucket {data.documentBucket}. Dedicated document credentials can be configured here.</p>}
         {data.secureStorage&&<Disclosure title={current?"Update credentials":"Add credentials"}>

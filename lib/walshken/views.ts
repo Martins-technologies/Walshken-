@@ -1,3 +1,4 @@
+import {integrationStatuses} from "./integration-settings";
 import {employmentTermsOn} from "./employment-engine";
 import {calculatorIntegrationId} from "./payroll-calculator";
 import {staffReadinessEnabled} from "./staff-permissions";
@@ -189,9 +190,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       inquiries:section==="website"?await all(db,"SELECT id,kind,name,email,country,service,message,created_at,status,customer_update,CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END AS customer_request FROM inquiries ORDER BY created_at DESC LIMIT 120"):[],
     });
   }
-  if(section==="integrations") return json({readiness:staffReadinessEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await all(db,`SELECT i.id,i.enabled,i.updated_at,t.action AS last_test,t.created_at AS tested_at FROM integrations i
- LEFT JOIN LATERAL (SELECT action,created_at FROM audit WHERE org_id=? AND entity='integration' AND target_id=i.id
- AND action IN ('Integration connection test succeeded','Integration connection test failed') ORDER BY created_at DESC,id DESC LIMIT 1) t ON true ORDER BY i.id`,actor.org_id),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
+  if(section==="integrations") return json({readiness:staffReadinessEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await integrationStatuses(db,actor.org_id),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
   if(section==="reports"){
     const scoped=scope(actor);
     const today=localDate(now(),actor.time_zone);

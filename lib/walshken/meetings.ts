@@ -2,6 +2,7 @@ import { ParticipantInfo_Kind } from "@livekit/protocol";
 import { EgressStatus, EncodedFileType, FileOutput, Output, S3Upload, StartEgressRequest, StorageConfig, TemplateSource, WebhookReceiver, type EgressInfo } from "livekit-server-sdk";
 import { teamOptions } from "./collaboration";
 import { deleteRecordingObject, egressClient, isMissing, liveKitSettings, participantToken, providerCall, publishSources, recordingStorage, roomClient, signedRecording } from "./livekit";
+import {integrationSettings} from './integration-settings';
 import { all, audit, canManage, colleague, datetime, fail, id, integer, json, notify, now, one, pick, requireStaff, requireSuper, run, stmt, str, throttle, type Actor, type Db, type Row } from "./server";
 
 type Meeting={id:string;org_id:string;organizer_id:string;title:string;starts_at:string;ends_at:string;cancelled_at:string|null;
@@ -57,7 +58,7 @@ export async function meetings(db:Db,actor:Actor){
 export async function meetingViews(db:Db,actor:Actor){
   const p=await policy(db,actor.org_id),staff=await teamOptions(db,actor);
   if(isAdmin(actor)&&p.external_meetings)staff.push(...await all<Row>(db,"SELECT id,name || ' (guest)' AS name FROM employees WHERE org_id=? AND status='Active' AND employment_status<>'Ended' AND role='guest' ORDER BY name",actor.org_id));
-  const [rows,provider,storage]=await Promise.all([meetings(db,actor),one(db,"SELECT id FROM integrations WHERE id='livekit' AND enabled=1"),one(db,"SELECT id FROM integrations WHERE id='recording-storage' AND enabled=1")]);
+  const [rows,provider,storage]=await Promise.all([meetings(db,actor),integrationSettings(db,'livekit'),integrationSettings(db,'recording-storage')]);
   return json({rows,staff,guestMeetings:!!p.external_meetings,provider:!!provider,recordingStorage:!!storage,meetingPolicy:isAdmin(actor)?p:{recording_policy:p.recording_policy,recording_retention_days:p.recording_retention_days}});
 }
 async function syncRoom(db:Db,m:Meeting){
