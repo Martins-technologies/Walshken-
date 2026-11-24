@@ -1,3 +1,5 @@
+import {controlsEnabled} from "./capabilities";
+import {workScope,operatingManager} from "./operations-store";
 import { localInstant } from "./attendance-rules";
 import { calendarTeams } from "./collaboration";
 import { holidayDataset, holidaysEnabled, readRule } from "./holiday-access";
@@ -123,8 +125,8 @@ async function holidayEntries(db: Db, actor: Actor, people: Person[], from: stri
 
 export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParams) {
   requireStaff(actor);
-  const management = canManage(actor);
-  const admin = approvalRoles.includes(actor.role);
+  const management = operatingManager(actor);
+  const admin = approvalRoles.includes(actor.role)||canPayroll(actor);
   const modes: CalendarMode[] = ["employee", ...(management ? ["manager" as const] : []), ...(admin ? ["admin" as const] : [])];
   const requested = params.get("mode") ?? (admin ? "admin" : management ? "manager" : "employee");
   if (!modes.includes(requested as CalendarMode)) return fail(403, "This calendar view is outside your role.");
@@ -148,7 +150,7 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
   const kinds = unique((params.get("types") ?? "").split(",").filter(Boolean)) as CalendarKind[];
   if (kinds.some(kind => !Object.hasOwn(calendarTypes, kind))) return fail(400, "Choose a supported calendar event type.");
   const filters = { department: filter("department"), country: filter("country"), employee: filter("employee"), team: filter("team"), kinds };
-  const scoped = personal ? { sql: "e.id=?", args: [actor.id] } : scope(actor);
+  const scoped = personal ? { sql: "e.id=?", args: [actor.id] } : workScope(actor);
   const payrollManagement = mode === "admin" && canPayroll(actor) && payrollEnabled();
   const [people, payrollPeople, groups] = await Promise.all([
     peopleInScope(db, actor, scoped),
@@ -235,6 +237,7 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
       AND t.employee_id IN(${ids})`, actor.org_id, taskDataset(), JSON.stringify(people.map(person => person.id))) : [],
   ]);
   const entries: CalendarEntry[] = [...holidays.entries];
+  if(controlsEnabled()&&selected.length){const banked=await all<{id:string;employee_id:string;effective_on:string;configuration:string}>(db,`SELECT r.id,r.employee_id,r.effective_on,r.configuration FROM operations_requests r WHERE r.org_id=? AND r.release_stage=? AND r.kind='Overtime leave' AND r.status='Approved' AND r.employee_id IN(${ids}) AND r.effective_on BETWEEN ? AND ? AND NOT EXISTS(SELECT 1 FROM operations_requests w WHERE w.org_id=r.org_id AND w.release_stage=r.release_stage AND w.kind='Withdraw arrangement' AND w.status='Approved' AND (w.configuration::jsonb)->>'requestId'=r.id AND w.effective_on<=r.effective_on)`,actor.org_id,workDataset(),JSON.stringify(selected.map(p=>p.id)),from,to);for(const r of banked)entries.push({id:'banked-leave:'+r.id,kind:'leave',title:'Banked overtime time off · '+(JSON.parse(r.configuration).seconds/3600).toFixed(2)+' h',startDate:r.effective_on,endDate:r.effective_on,people:[r.employee_id],status:'Approved',href:'/staff/work-policies?employee='+r.employee_id});}
   const appendDate = (id: string, kind: CalendarKind, title: string, day: string, people: string[], status?: string, href?: string, endDate = day) => {
     if (day <= to && endDate >= from) entries.push({ id, kind, title, startDate: day, endDate, people, status, href });
   };

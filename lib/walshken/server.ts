@@ -1,3 +1,4 @@
+import {allowed,controlsEnabled,type OperatingAuthority} from "./capabilities";
 import { cache } from "react";
 import { workspaceDatabase, type Db } from "./database";
 export type { Db } from "./database";
@@ -9,6 +10,7 @@ export class AppError extends Error {
 }
 export type Row = Record<string, string | number | null>;
 export type Actor = {
+  authorities?: OperatingAuthority[]; scopePermission?: import("./capabilities").Capability;
   id: string; org_id: string; auth_id: string | null; email: string; name: string; role: Role; status: string;
   employee_no: string; department_id: string | null; division_id: string | null; manager_id: string | null;
   office_id: string | null; country: string; jurisdiction: string; time_zone: string; break_policy: string; employment_status?: string; mfa_enabled?: number;
@@ -131,10 +133,12 @@ export function sessionSet(request: Request, value: string, maxAge: number, name
 }
 export async function actorFor(db: Db, token: string): Promise<Actor | null> {
   if (!/^[0-9a-f-]{72}$/.test(token)) return null;
-  return one<Actor>(db, `SELECT e.*, CASE WHEN EXISTS (SELECT 1 FROM staff_mfa m WHERE m.employee_id=e.id AND m.confirmed_at IS NOT NULL)
+  const actor=await one<Actor>(db, `SELECT e.*, CASE WHEN EXISTS (SELECT 1 FROM staff_mfa m WHERE m.employee_id=e.id AND m.confirmed_at IS NOT NULL)
       THEN 1 ELSE 0 END AS mfa_enabled
     FROM employees e JOIN sessions s ON s.employee_id=e.id
     WHERE e.status='Active' AND e.employment_status<>'Ended' AND s.id=? AND s.ended_at IS NULL AND s.expires_at>?`, await digest(token), now());
+  if(actor&&controlsEnabled())actor.authorities=(await all<{permission:OperatingAuthority['permission'];allowed:number;scope:OperatingAuthority['scope']}>(db,"SELECT permission,allowed,scope FROM operating_grants WHERE org_id=? AND employee_id=? AND release_stage=?",actor.org_id,actor.id,process.env.WALSHKEN_WORK_DATASET==='preview'?'preview':'production')).map(r=>({...r,allowed:!!r.allowed}));
+  return actor;
 }
 export async function currentActor(db: Db, request: Request) {
   return actorFor(db, cookieValue(request.headers.get("cookie")));
@@ -165,7 +169,7 @@ export function expiredSession(request: Request) {
   return json({ ok: true }, 200, { "Set-Cookie": sessionSet(request, "", 0) });
 }
 export const canSuper = (actor: Actor) => actor.role === "super_admin";
-export const canPayroll = (actor: Actor) => actor.role === "super_admin" || actor.role === "hr";
+export const canPayroll = (actor: Actor) => ["payroll.prepare","payroll.approve","payroll.finalize","payroll.pay"].some(key=>allowed(actor,key as Parameters<typeof allowed>[1]));
 export const canManage = (actor: Actor) => ["super_admin", "admin", "hr", "manager"].includes(actor.role);
 export const isStaff = (actor: Actor) => actor.role !== "guest";
 export function requireSuper(actor: Actor) { if (!canSuper(actor)) fail(403, "Super Admin access is required."); }

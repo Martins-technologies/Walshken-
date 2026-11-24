@@ -1,3 +1,4 @@
+import {organizationAuthority} from "./capabilities";
 import {createHash} from 'node:crypto';
 import {all,canPayroll,canSuper,date,fail,id,integer,json,now,one,pick,requireStaff,run,scope,str,type Actor,type Db} from './server';
 import {currencyDigits,D,minor,zeroBalance} from './payroll-money';
@@ -10,9 +11,9 @@ export function requirePayrollAdmin(actor:Actor){requirePayrollFeature(actor);if
 export const hash=(value:unknown)=>createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export const payRevision=(row:{revision:number},value:unknown)=>{if(integer(value,'revision',1,2147483647)!==row.revision)return fail(409,'This payroll record changed. Refresh before saving.');};
 export async function payScope(db:Db,actor:Actor,alias='e'){
- if(canSuper(actor))return {sql:'1=1',args:[] as unknown[]};
+ if(canSuper(actor)||organizationAuthority(actor,'payroll'))return {sql:'1=1',args:[] as unknown[]};
  const delegation=canPayroll(actor)?await one(db,'SELECT id FROM payroll_permissions WHERE org_id=? AND employee_id=? AND release_stage=? AND organization_access=1',actor.org_id,actor.id,payrollDataset()):null;
- return delegation?{sql:'1=1',args:[] as unknown[]}:scope(actor,alias);
+ return delegation?{sql:'1=1',args:[] as unknown[]}:scope(actor.role==='employee'&&canPayroll(actor)?{...actor,role:'admin'}:actor,alias);
 }
 export type PayrollEmployee=Actor&{employment_type:string;hire_date:string;contract_start:string|null;employment_end:string|null;expected_hours:number;leave_days:number|null};
 export async function payEmployee(db:Db,actor:Actor,target:string,own=false){if(!own||target!==actor.id)requirePayrollAdmin(actor);else requirePayrollFeature(actor);const s=target===actor.id?{sql:'e.id=?',args:[actor.id]}:await payScope(db,actor);const employee=await one<PayrollEmployee>(db,`SELECT e.* FROM employees e WHERE e.org_id=? AND e.id=? AND e.role<>'guest' AND ${s.sql}`,actor.org_id,target,...s.args);if(!employee)return fail(404,'Employee is outside your payroll scope.');return employee;}

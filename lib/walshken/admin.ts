@@ -1,7 +1,7 @@
 import { passwordMatches } from "./passwords";
 import { documentsEnabled } from "./document-access";
 import {payrollEnabled} from "./payroll-access";
-import {validateCalculatorSettings,verifyCalculatorConnection,type CalculatorSettings} from "./payroll-calculator";
+import {payrollIntegrationId,validateCalculatorSettings,verifyCalculatorConnection,type CalculatorSettings} from "./payroll-calculator";
 import { verifyStaffMfa } from "./staff-mfa";
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
@@ -280,6 +280,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
   if (area === "integrations" && (action === "save" || action === "disable")) {
     requireSuper(actor);
     const provider = providers.find((item) => item.id === data.provider);
+    const integrationId=provider?.id==="payroll-calculator-review"?payrollIntegrationId():provider?.id;
     if (!provider) return fail(400,"Choose a listed integration.");
     if(provider.id==="document-storage-review"){
       if(!documentsEnabled())return fail(404,"Document storage is not enabled on this deployment.");
@@ -290,7 +291,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE deleted_at IS NULL LIMIT 1"))return fail(409,"Keep the current storage connection until all retained recordings are deleted. This prevents inaccessible recordings.");
     if (action === "disable") {
       if(provider.id==="recording-storage"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Stop active recordings before disabling storage.");
-      await db.batch([stmt(db,"UPDATE integrations SET enabled=0,updated_at=? WHERE id=?",now(),provider.id),audit(db,actor,"Integration disabled","integration",provider.id)]);
+      await db.batch([stmt(db,"UPDATE integrations SET enabled=0,updated_at=? WHERE id=?",now(),integrationId),audit(db,actor,"Integration disabled","integration",integrationId!)]);
       return json({ ok:true,message:"Integration disabled." });
     }
     const settings: Record<string,string> = {};
@@ -304,13 +305,13 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       if(provider.id==="document-storage-review"&&settings.bucket==="walshken-call-recordings")return fail(400,"Use a separate private document bucket.");
       if(data.enabled==="1") await verifyRecordingStorage(settings as RecordingStorage);
     }
-    if(provider.id==="payroll-calculator-review"){if(!payrollEnabled())return fail(404,"Payroll is not enabled here.");validateCalculatorSettings(settings as CalculatorSettings);if(data.enabled==="1")await verifyCalculatorConnection(settings as CalculatorSettings);}
-    const protectedValue = await encryptSettings(provider.id, settings);
+    if(provider.id==="payroll-calculator-review"){if(!payrollEnabled())return fail(404,"Payroll is not enabled here.");validateCalculatorSettings(settings as CalculatorSettings);if(data.enabled==="1"){const coverage=await verifyCalculatorConnection(settings as CalculatorSettings);settings.coverage=JSON.stringify(coverage);}}
+    const protectedValue = await encryptSettings(integrationId!, settings);
     await db.batch([
       stmt(db,`INSERT INTO integrations (id,configuration,enabled,updated_at) VALUES (?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET configuration=excluded.configuration,enabled=excluded.enabled,updated_at=excluded.updated_at`,
-        provider.id,protectedValue,data.enabled==="1"?1:0,now()),
-      audit(db,actor,"Integration credentials rotated","integration",provider.id),
+        integrationId!,protectedValue,data.enabled==="1"?1:0,now()),
+      audit(db,actor,"Integration credentials rotated","integration",integrationId!),
     ]);
     return json({ ok:true,message:"Integration settings saved securely." });
   }

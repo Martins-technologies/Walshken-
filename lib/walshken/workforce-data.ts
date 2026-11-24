@@ -1,4 +1,5 @@
-import {all,canManage,canSuper,date,fail,json,now,one,scope,str,type Actor,type Db} from './server';
+import {workScope as scope,operatingManager as canManage,requireCapability} from "./operations-store";
+import {all,canSuper,date,fail,json,now,one,str,type Actor,type Db} from './server';
 import {albertaRules,compliance,dailySegments,dayAdd,defaultPolicy,localInstant,localWall,totals,type WorkBreak,type WorkPolicy} from './attendance-rules';
 import {localDate} from './work';
 import {attendanceFor,entryBreaks,policyAdmin,requireWorkforce,workDataset,workforcePolicy,type Attendance,type Shift} from './workforce';

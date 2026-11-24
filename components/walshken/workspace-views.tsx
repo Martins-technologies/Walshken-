@@ -1,4 +1,6 @@
 "use client";
+import {OperationsWorkspace} from "./operations";
+import {OperationsOverview,type OverviewData} from "./operations-overview";
 import {StaffCalendar} from "./staff-calendar";
 import type {StaffCalendarData} from "@/lib/walshken/staff-calendar-types";
 import {HolidayWorkspace} from "./holidays";
@@ -18,6 +20,8 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  calculatorCoverage?:{jurisdictions:string[];taxYears:number[];protocols:string[];checkedAt:string}|null;
+  operations?:OverviewData;managedOperations?:boolean;
   managedCalendar?: boolean; calendar?: StaffCalendarData;
   managedHolidays?:boolean;managedPayroll?:boolean;managedWorkforce?:boolean;managedTasks?:boolean;taskSummary?:{today:number;overdue:number;pending:number;open:number};
   managedDocuments?:boolean;documentStorageEnabled?:boolean;documentBucket?:string;
@@ -221,6 +225,8 @@ function LegacyDocumentView({actor,data,refresh,admin=false}:{actor:Viewer;data:
 
 export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void;setQuery:(q:string)=>void}){
   const rows=data.rows??[];
+  if(data.managedOperations)return <OperationsWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
+  if(section==="dashboard"&&data.operations)return <OperationsOverview actor={actor} data={data.operations} alerts={data.alerts??[]} meetings={data.meetings??[]} taskSummary={data.taskSummary} setQuery={setQuery}/>;
   if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
