@@ -49,19 +49,20 @@ export const providers = [
   { id: "document-storage-review", name: "Private document storage", category: "Document management", description: "A separate private bucket for documents. Access is checked by the portal on every request.", fields: [["endpoint", "S3 endpoint"], ["region", "Region"], ["bucket", "Private bucket name"], ["accessKey", "S3 access key"], ["secretKey", "S3 secret key"]] },
   { id: "livekit", name: "LiveKit", category: "Video & audio", description: "Secure browser calls, meetings, screen sharing and verified attendance.", fields: [["url", "LiveKit WebSocket URL"], ["apiKey", "API key"], ["apiSecret", "API secret"]] },
   { id: "recording-storage", name: "Private recording storage", category: "Meeting recordings", description: "Private Supabase, S3 or R2 bucket. Credentials stay encrypted on the server.", fields: [["endpoint", "S3 endpoint"], ["region", "Region"], ["bucket", "Private bucket name"], ["accessKey", "S3 access key"], ["secretKey", "S3 secret key"]] },
+  { id: "malware-scanner", name: "Upload malware scanner", category: "Security", description: "A Walshken-compatible ClamAV gateway. New uploads require a verified clean verdict.", fields: [["endpoint","Approved HTTPS scanner endpoint"],["apiKey","Scanner access token"]] },
   { id: "twilio", name: "Twilio", category: "SMS", description: "SMS alerts for workflows that are enabled later.", fields: [["accountSid", "Account SID"], ["authToken", "Auth token"], ["from", "Sender number"]] },
-  { id: "resend", name: "Resend", category: "Email", description: "Transactional email and staff notifications.", fields: [["apiKey", "API key"], ["from", "Verified sender address"]] },
-  {id:"payroll-calculator-review",name:"Validated payroll calculator",category:"Payroll",description:"A signed payroll-v1 calculator for additional jurisdictions and tax years. Canada / Alberta 2026 works without this connection. An authorized administrator must approve the public provider host.",fields:[["approvedHost","Approved provider hostname (example: payroll.yourprovider.com)"],["providerName","Validated provider name"],["endpoint","HTTPS payroll-v1 endpoint"],["apiKey","API key"],["signingSecret","Response signing secret"]]},
+  { id: "resend", name: "Resend", category: "Email", description: "Send staff activation and administrator reset codes by email.", fields: [["apiKey", "API key"], ["from", "Verified sender address"]] },
+  {id:"payroll-calculator-review",name:"Validated payroll calculator",category:"Payroll",description:"A signed payroll-v1 calculator for additional jurisdictions and tax years. Canada / Alberta 2026 works without this connection. The server must allowlist the provider host.",fields:[["providerName","Validated provider name"],["endpoint","HTTPS payroll-v1 endpoint"],["apiKey","API key"],["signingSecret","Response signing secret"]]},
 ] as const;
 
 export const staffNav = [
   { title: "Workspace", items: [["dashboard", "Overview", "layout"], ["messages", "Messages", "message"], ["calls", "Calls & meetings", "video"], ["tasks", "My tasks", "check"], ["projects", "Projects", "project"], ["calendar", "Calendar", "calendar"]] },
-  { title: "People & time", items: [["attendance", "Attendance", "clock"], ["shifts", "Shifts", "shift"], ["timesheets", "Timesheets", "list"], ["salary", "Salary & payslips", "wallet"], ["holiday-calendar", "Holiday calendar", "calendar"], ["leave", "Leave requests", "leave"], ["documents", "Documents", "file"], ["directory", "Team directory", "users"], ["notifications", "Notifications", "bell"], ["work-policies", "Work policies", "shield"], ["profile", "My profile", "user"]] },
+  { title: "People & time", items: [["attendance", "Attendance", "clock"], ["shifts", "Shifts", "shift"], ["timesheets", "Timesheets", "list"], ["salary", "Salary & payslips", "wallet"], ["holiday-calendar", "Holiday calendar", "calendar"], ["leave", "Leave requests", "leave"], ["documents", "Documents", "file"], ["directory", "Team directory", "users"], ["notifications", "Notifications", "bell"], ["profile", "My profile", "user"]] },
 ] as const;
 
 export const adminNav = [
   ["employees", "Employees", "users"], ["departments", "Organization", "building"], ["roles", "Roles & permissions", "shield"],
   ["scheduling", "Shift scheduling", "shift"], ["approvals", "Timesheet approvals", "list"], ["payroll", "Payroll management", "wallet"],
   ["holidays", "Holidays & compliance", "calendar"], ["reports", "Reports", "chart"], ["document-security", "Document security", "lock"],
-  ["audit", "Activity & audit", "history"], ["website", "Website services", "globe"], ["countries", "Country availability", "pin"], ["integrations", "Integrations", "plug"],
+  ["audit", "Activity & audit", "history"], ["governance", "Staff policies", "shield"], ["website", "Website services", "globe"], ["countries", "Country availability", "pin"], ["integrations", "Integrations", "plug"],
 ] as const;

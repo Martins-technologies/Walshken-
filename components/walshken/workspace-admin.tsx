@@ -1,4 +1,5 @@
 "use client";
+import {StaffGovernance} from "./staff-governance";
 import {HolidayWorkspace} from "./holidays";
 import {PayrollWorkspace} from "./payroll";
 import {WorkforceWorkspace} from "./workforce";
@@ -66,6 +67,10 @@ function Employees({actor,data,refresh,rolesOnly,setQuery}:{actor:Viewer;data:Vi
         <Quick path="employees/status" data={{id:row.id,status:row.status==="Active"?"Suspended":"Active"}} refresh={refresh}
           variant={row.status==="Active"?"danger":"outline"}>{row.status==="Active"?"Suspend access":"Reactivate"}</Quick>
       </div>}
+      {data.personnelControls&&!rolesOnly&&row.role==="employee"&&row.id!==actor.id&&<Disclosure title="Edit personnel details">
+        <ActionForm path="employees/edit" fields={[{...field("name","Full name"),value:row.name},{...field("title","Position","text",false),value:row.title},{...field("phone","Contact number","tel",false),value:row.phone}]}
+          extra={{id:row.id}} submit="Save personnel details" refresh={refresh} reset={false}/>
+      </Disclosure>}
       {actor.role==="super_admin"&&<>
         {!rolesOnly&&<Disclosure title="Edit employee profile"><ActionForm key={value(row,"id")} path="employees/edit" fields={[
           { ...field("employeeNo","Employee ID"),value:row.employee_no },
@@ -93,7 +98,7 @@ function Employees({actor,data,refresh,rolesOnly,setQuery}:{actor:Viewer;data:Vi
           onDone={()=>{if(row.id===actor.id)window.location.reload();}}/></Disclosure>}
         {row.id!==actor.id&&<><Disclosure title="Assign role"><ActionForm path="employees/role" fields={[{name:"role",label:"Role",options:roleChoices,value:row.role,required:true}]}
           extra={{id:row.id}} submit="Save role" refresh={refresh} reset={false}/></Disclosure>
-        <Disclosure title="Issue activation or reset code"><ActionForm path="employees/invite" fields={[]} extra={{id:row.id}} submit="Generate code" refresh={refresh}/></Disclosure></>}
+        <Disclosure title="Issue activation or reset code"><ActionForm path="employees/invite" fields={[]} extra={{id:row.id}} submit="Generate code" refresh={refresh}/></Disclosure>{data.readiness&&<Disclosure title="Email activation or reset code"><ActionForm path="employees/email-invite" fields={[]} extra={{id:row.id}} submit="Send access code" refresh={refresh}/></Disclosure>}</>}
       </>}
     </Panel>}
   </>;
@@ -178,9 +183,8 @@ function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
     {data.encryptionMigrationReady&&<Panel title="Move preview access securely" note="Re-encrypts stored authenticator data inside this server so the main review project can use the same passwords and authenticator codes. No encryption key or authenticator secret is returned.">
       <Disclosure title="Complete encryption migration"><ActionForm path="integrations/migrate-encryption" fields={[{name:"password",label:"Current password",type:"password",required:true,autoComplete:"current-password"},{name:"code",label:"Fresh authenticator or saved recovery code",required:true,autoComplete:"one-time-code"}]} submit="Migrate encrypted access data" refresh={refresh}/></Disclosure>
     </Panel>}
-    <Panel title="Payroll and statutory calculation coverage" note="The maintained Alberta/CAD 2026 engine runs inside Walshken. Additional jurisdictions and tax years require a verified rule package and a compatible signed calculator; an arbitrary payroll API key does not establish compatibility."><p>Provider setup requires an approved public hostname, HTTPS endpoint, API key and response-signing secret. The connection verifies supported jurisdictions and years before enabling the service.</p><a className="text-link" href="/api/operations/calculator-contract">Download calculator contract →</a>{data.calculatorCoverage&&<p className="form-note">Last verified {dateText(data.calculatorCoverage.checkedAt,true)} · {data.calculatorCoverage.jurisdictions.join(", ")} · Tax years {data.calculatorCoverage.taxYears.join(", ")}</p>}<a className="text-link" href="/staff/work-policies">Manage sourced rule versions →</a></Panel>
-    <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage","payroll-calculator-review",...(data.documentStorageEnabled?["document-storage-review"]:[])].includes(provider.id)).map((provider)=>{
-      const current=data.rows?.find((row)=>row.id===provider.id||(provider.id==="payroll-calculator-review"&&row.id==="payroll-calculator"));
+    <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage","payroll-calculator-review",...(data.readiness?["resend","malware-scanner"]:[]),...(data.documentStorageEnabled?["document-storage-review"]:[])].includes(provider.id)).map((provider)=>{
+      const current=data.rows?.find((row)=>row.id===(provider.id==="payroll-calculator-review"?data.calculatorId:provider.id));
       return <Panel key={provider.id} title={provider.name} note={provider.description} action={<Status>{current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
         <div className="integration-label"><Icon name="plug" size={17}/>{provider.category}</div>
         {provider.id==="document-storage-review"&&!current&&data.documentBucket&&<p className="form-note">Using the existing encrypted storage connection with the separate private bucket {data.documentBucket}. Dedicated document credentials can be configured here.</p>}
@@ -227,6 +231,7 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
   if(section==="document-security")return <DocumentView actor={actor} data={data} refresh={refresh} admin/>;
   if(section==="website")return <Website data={data} refresh={refresh}/>;
   if(section==="countries")return <Countries data={data} refresh={refresh}/>;
+  if(section==="governance") return <StaffGovernance rows={rows} staff={data.staff??[]} units={data.units??[]} notice={data.privacyNotice} acknowledgements={data.acknowledgements??[]} policies={data.jurisdictionPolicies??[]} refresh={refresh}/>;
   if(section==="integrations")return <Integrations data={data} refresh={refresh}/>;
   if(section==="payroll")return <Payroll data={data} refresh={refresh}/>;
   if(section==="departments")return <Panel title="Organization units">
@@ -244,11 +249,19 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
     <Table rows={rows} columns={[column("name","Name"),dateColumn("on_date","Date"),column("jurisdiction","Jurisdiction"),column("type","Type")]}/>
   </Panel>;
   if(section==="audit"){
+    const filters=data.auditFilters;
     function filter(event:FormEvent<HTMLFormElement>){event.preventDefault();setQuery(new URLSearchParams([...new FormData(event.currentTarget)].map(([key,val])=>[key,String(val)])).toString());}
+    function page(next:number){if(filters)setQuery(new URLSearchParams({page:String(next),q:filters.query,from:filters.from,to:filters.to,category:filters.category}).toString());}
     return <Panel title="Activity log">
-      <form className="table-filter" onSubmit={filter}><label>Search events<input name="q" placeholder="Action, resource or person"/></label>
-        <label>From<input type="date" name="from"/></label><label>Through<input type="date" name="to"/></label><button className="btn btn-blue btn-small">Apply filters</button></form>
-      <Table rows={rows} columns={[dateColumn("created_at","Time",true,actor.timeZone),column("name","Actor"),column("action","Action"),column("entity","Resource"),column("target_id","Record")]}/>
+      <form className="table-filter" onSubmit={filter}>
+        <label>Search events<input name="q" defaultValue={filters?.query} placeholder="Action, resource or person"/></label>
+        {filters&&<label>Category<select name="category" defaultValue={filters.category}><option value="">All categories</option>{filters.categories.map(item=><option key={item}>{item}</option>)}</select></label>}
+        <label>From<input type="date" name="from" defaultValue={filters?.from}/></label>
+        <label>Through<input type="date" name="to" defaultValue={filters?.to}/></label>
+        <button className="btn btn-blue btn-small">Apply filters</button>
+      </form>
+      <Table rows={rows} columns={[dateColumn("created_at","Time",true,actor.timeZone),column("name","Actor"),...(filters?[column("category","Category")]:[]),column("action","Action"),column("entity","Resource"),column("target_id","Record")]}/>
+      {filters&&<div className="row-actions"><button className="btn btn-outline btn-small" disabled={filters.page===1} onClick={()=>page(filters.page-1)}>Previous</button><span>Page {filters.page}</span><button className="btn btn-outline btn-small" disabled={!filters.next} onClick={()=>page(filters.page+1)}>Next</button></div>}
     </Panel>;
   }
   if(section==="reports")return <Panel title="Team operations">

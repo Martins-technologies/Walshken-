@@ -1,3 +1,4 @@
+import {scanStaffUpload} from "./staff-delivery";
 import { audit, cookieValue, digest, fail, json, now, one, run, sessionCookie, stmt, str, throttle, type Actor, type Db } from "./server";
 
 export async function updateContactNumber(db: Db, actor: Actor, data: Record<string, unknown>) {
@@ -26,6 +27,7 @@ export async function updateAvatar(db: Db, actor: Actor, request: Request) {
   const jpeg = content.subarray(0, 3).equals(Buffer.from("ffd8ff", "hex"));
   const webp = content.subarray(0, 4).toString() === "RIFF" && content.subarray(8, 12).toString() === "WEBP";
   if (!png && !jpeg && !webp) fail(400, "Choose a valid PNG, JPEG, or WebP.");
+  await scanStaffUpload(db,content);
   await db.batch([
     stmt(db, `INSERT INTO staff_avatars (employee_id,mime,content,updated_at) VALUES (?,?,?,?)
       ON CONFLICT(employee_id) DO UPDATE SET mime=excluded.mime,content=excluded.content,updated_at=excluded.updated_at`,

@@ -1,7 +1,11 @@
+import { verifiedStaffLocation } from "./jurisdiction-readiness";
+import {staffReadinessEnabled} from "./staff-permissions";
+import {peopleScope} from "./staff-governance";
+import {sendAccessCode,validateEmailSettings,verifyScanner} from "./staff-delivery";
 import { passwordMatches } from "./passwords";
 import { documentsEnabled } from "./document-access";
 import {payrollEnabled} from "./payroll-access";
-import {payrollIntegrationId,validateCalculatorSettings,verifyCalculatorConnection,type CalculatorSettings} from "./payroll-calculator";
+import {calculatorIntegrationId,validateCalculatorSettings,verifyCalculatorConnection,type CalculatorSettings} from "./payroll-calculator";
 import { verifyStaffMfa } from "./staff-mfa";
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
@@ -18,7 +22,7 @@ const types = ["Full-time", "Part-time", "Fixed-term", "Contractor"] as const;
 
 export async function adminAction(db: Db, actor: Actor, area: string, action: string, data: Record<string, unknown>) {
   if (area === "employees") {
-    if (!canManage(actor) || actor.role === "manager") return fail(403, "Employee administration access is required.");
+    if ((!canManage(actor) || actor.role === "manager") && !actor.permissions?.some(rule=>rule.effect==="allow" && rule.action.startsWith("people."))) return fail(403,"Employee administration access is required.");
     if (action === "add") {
       requireSuper(actor);
       const target = id();
@@ -34,6 +38,8 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
         const supervisor = await scopedEmployee(db, actor, manager);
         if (!canManage(supervisor) || supervisor.status !== "Active" || supervisor.employment_status === "Ended") fail(400, "Choose an active manager.");
       }
+      const officeCountry=country(data.country), jurisdiction=str(data.jurisdiction,"jurisdiction",30);
+      if(staffReadinessEnabled()) verifiedStaffLocation(officeCountry,jurisdiction);
       const code = randomBytes(27).toString("base64url");
       await db.batch([
         stmt(db, `INSERT INTO employees
@@ -41,7 +47,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
           employment_type,hire_date,contract_start,phone,expected_hours,break_policy,leave_days)
           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, target, actor.org_id, str(data.employeeNo,"employee ID",40),
           str(data.name,"employee name",100), email(data.email), role, str(data.title,"job title",100,false), department || null,
-          division || null, office || null, manager || null, country(data.country), str(data.jurisdiction,"jurisdiction",30),
+          division || null, office || null, manager || null, officeCountry, jurisdiction,
           timeZone(data.timeZone), pick(data.employmentType || "Full-time",types,"employment type"),
           date(data.hireDate,"hire date",false), date(data.contractStart,"contract start date",false), str(data.phone,"phone number",40,false) || null,
           integer(data.expectedHours === "" || data.expectedHours == null ? "40" : data.expectedHours,"expected weekly hours",0,80), pick(data.breakPolicy || "unpaid",["paid","unpaid"],"break policy"),
@@ -53,8 +59,23 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     }
     const target = str(data.id, "employee", 80);
     const editingOwnAdmin = action==="edit" && target===actor.id && canSuper(actor);
-    const employee = await scopedEmployee(db, actor, target, editingOwnAdmin);
+    const personnelAction = action==="status" ? "people.status" : "people.edit";
+    const visible = peopleScope(actor,personnelAction);
+    const employee = staffReadinessEnabled() && !canSuper(actor) && ["edit","status"].includes(action)
+      ? await one<Actor>(db,`SELECT e.* FROM employees e WHERE e.org_id=? AND e.id=? AND e.id<>? AND e.role='employee' AND ${visible.sql}`,actor.org_id,target,actor.id,...visible.args)
+      : await scopedEmployee(db,actor,target,editingOwnAdmin);
+    if (!employee) return fail(404,"Employee unavailable for this action.");
     if (employee.role === "super_admin" && !editingOwnAdmin) return fail(403, "This administrator is protected.");
+    if (action === "edit" && !canSuper(actor)) {
+      if (!staffReadinessEnabled()) return fail(403,"Super Admin access is required.");
+      await db.transaction(async tx => {
+        const updated = await run(tx,`UPDATE employees e SET name=?,title=?,phone=? WHERE e.org_id=? AND e.id=? AND e.role='employee' AND ${visible.sql}`,
+          str(data.name,"name",100),str(data.title,"title",100,false),str(data.phone,"phone number",40,false)||null,actor.org_id,target,...visible.args);
+        if (!updated.count) return fail(404,"Employee unavailable for this action.");
+        await audit(tx,actor,"Scoped personnel details updated","employee",target).run();
+      });
+      return json({ok:true,message:"Personnel details saved."});
+    }
     if (action === "edit") {
       requireSuper(actor);
       const employeeNo = data.employeeNo === undefined ? employee.employee_no : str(data.employeeNo,"employee ID",40);
@@ -66,6 +87,8 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       const hire = date(data.hireDate, "hire date", false);
       const contract = date(data.contractStart, "contract start date", false);
       const end = date(data.employmentEnd, "employment end date", false);
+      const officeCountry=country(data.country), jurisdiction=str(data.jurisdiction,"jurisdiction",30);
+      if(staffReadinessEnabled()) verifiedStaffLocation(officeCountry,jurisdiction);
       const employmentStatus = pick(data.employmentStatus ?? employee.employment_status ?? "Active",employmentStatuses,"employment status");
       if (employmentStatus==="Ended" && (editingOwnAdmin || !end)) {
         fail(400,editingOwnAdmin?"The Super Admin record must remain active.":"Record the end date before ending employment.");
@@ -96,7 +119,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
           country=?,jurisdiction=?,time_zone=?,employment_type=?,hire_date=?,contract_start=?,employment_end=?,
           phone=?,expected_hours=?,break_policy=?,leave_days=?,work_schedule=?,holiday_calendar=?,holiday_days=?,employment_status=? WHERE id=? AND org_id=?`,
           employeeNo, workEmail, str(data.name,"employee name",100), str(data.title,"job title",100,false), department || null, division || null,
-          office || null, manager || null, country(data.country), str(data.jurisdiction,"jurisdiction",30),
+          office || null, manager || null, officeCountry, jurisdiction,
           timeZone(data.timeZone), pick(data.employmentType,types,"employment type"), hire, contract, end,
           str(data.phone,"phone number",40,false) || null, integer(data.expectedHours,"expected weekly hours",0,80),
           pick(data.breakPolicy,["paid","unpaid"],"break policy"), data.leaveDays !== "" && data.leaveDays != null ? integer(data.leaveDays,"leave days",0,365) : null,
@@ -129,15 +152,23 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       await db.batch([stmt(db,"UPDATE employees SET role=? WHERE id=?",role,target), audit(db,actor,"Role changed","employee",target)]);
       return json({ ok:true, message:"Staff role updated." });
     }
-    if (action === "invite") {
+    if (action === "invite" || (action === "email-invite" && staffReadinessEnabled())) {
       requireSuper(actor);
       if (employee.status !== "Active" || employee.employment_status==="Ended") return fail(409, "Reactivate this employee first.");
       const code = randomBytes(27).toString("base64url");
+      const invitationId = id();
       await db.batch([
         stmt(db,"UPDATE invitations SET consumed_at=? WHERE employee_id=? AND consumed_at IS NULL",now(),target),
-        stmt(db,"INSERT INTO invitations (id,employee_id,code_hash,expires_at) VALUES (?,?,?,?)",id(),target,await digest(code),new Date(Date.now()+48*3_600_000).toISOString()),
+        stmt(db,"INSERT INTO invitations (id,employee_id,code_hash,expires_at) VALUES (?,?,?,?)",invitationId,target,await digest(code),new Date(Date.now()+48*3_600_000).toISOString()),
         audit(db,actor,"Access code issued","employee",target),
       ]);
+      if (action === "email-invite") {
+        const site = process.env.WALSHKEN_STAFF_EMAIL_ORIGIN;
+        if (!site || !/^https:\/\/[a-z0-9.-]+$/i.test(site)) return json({ok:true,code,message:"Email origin is unavailable. Use this access code through your approved delivery process."});
+        const status = await sendAccessCode(db,employee.email,code,invitationId,site);
+        if (status==="sent") return json({ok:true,message:"Access code sent. It expires in 48 hours."});
+        return json({ok:true,code,message:"Email delivery failed. This code is valid for 48 hours."});
+      }
       return json({ ok: true, code, message: "A new access code is ready. It expires in 48 hours." });
     }
   }
@@ -280,8 +311,8 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
   if (area === "integrations" && (action === "save" || action === "disable")) {
     requireSuper(actor);
     const provider = providers.find((item) => item.id === data.provider);
-    const integrationId=provider?.id==="payroll-calculator-review"?payrollIntegrationId():provider?.id;
     if (!provider) return fail(400,"Choose a listed integration.");
+    const integrationId = provider.id==="payroll-calculator-review" ? calculatorIntegrationId() : provider.id;
     if(provider.id==="document-storage-review"){
       if(!documentsEnabled())return fail(404,"Document storage is not enabled on this deployment.");
       if(action==="save"&&(await one(db,"SELECT v.id FROM doc_versions v JOIN doc_entries d ON d.id=v.document_id WHERE d.deleted_at IS NULL LIMIT 1")||await one(db,"SELECT id FROM doc_object_cleanup LIMIT 1")))return fail(409,"Keep the current bucket while document versions exist. A planned storage migration is required to rotate its connection.");
@@ -291,7 +322,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE deleted_at IS NULL LIMIT 1"))return fail(409,"Keep the current storage connection until all retained recordings are deleted. This prevents inaccessible recordings.");
     if (action === "disable") {
       if(provider.id==="recording-storage"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Stop active recordings before disabling storage.");
-      await db.batch([stmt(db,"UPDATE integrations SET enabled=0,updated_at=? WHERE id=?",now(),integrationId),audit(db,actor,"Integration disabled","integration",integrationId!)]);
+      await db.batch([stmt(db,"UPDATE integrations SET enabled=0,updated_at=? WHERE id=?",now(),integrationId),audit(db,actor,"Integration disabled","integration",integrationId)]);
       return json({ ok:true,message:"Integration disabled." });
     }
     const settings: Record<string,string> = {};
@@ -305,13 +336,15 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       if(provider.id==="document-storage-review"&&settings.bucket==="walshken-call-recordings")return fail(400,"Use a separate private document bucket.");
       if(data.enabled==="1") await verifyRecordingStorage(settings as RecordingStorage);
     }
-    if(provider.id==="payroll-calculator-review"){if(!payrollEnabled())return fail(404,"Payroll is not enabled here.");validateCalculatorSettings(settings as CalculatorSettings);if(data.enabled==="1"){const coverage=await verifyCalculatorConnection(settings as CalculatorSettings);settings.coverage=JSON.stringify(coverage);}}
-    const protectedValue = await encryptSettings(integrationId!, settings);
+    if(provider.id==="payroll-calculator-review"){if(!payrollEnabled())return fail(404,"Payroll is not enabled here.");validateCalculatorSettings(settings as CalculatorSettings);if(data.enabled==="1")await verifyCalculatorConnection(settings as CalculatorSettings);}
+    if (provider.id==="resend") validateEmailSettings(settings as {apiKey:string;from:string});
+    if (provider.id==="malware-scanner" && data.enabled==="1") await verifyScanner(settings as {endpoint:string;apiKey:string});
+    const protectedValue = await encryptSettings(integrationId, settings);
     await db.batch([
       stmt(db,`INSERT INTO integrations (id,configuration,enabled,updated_at) VALUES (?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET configuration=excluded.configuration,enabled=excluded.enabled,updated_at=excluded.updated_at`,
-        integrationId!,protectedValue,data.enabled==="1"?1:0,now()),
-      audit(db,actor,"Integration credentials rotated","integration",integrationId!),
+        integrationId,protectedValue,data.enabled==="1"?1:0,now()),
+      audit(db,actor,"Integration credentials rotated","integration",integrationId),
     ]);
     return json({ ok:true,message:"Integration settings saved securely." });
   }

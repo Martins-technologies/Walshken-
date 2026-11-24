@@ -15,7 +15,7 @@ writeFileSync(join(sandbox,"drizzle/00000_test_roles.sql"),"CREATE ROLE anon; CR
 copyFileSync(join(process.cwd(),'supabase/migrations/20261123114028_employee_salary_payroll.sql'),join(sandbox,'drizzle/0013_payroll.sql'));
 mkdirSync(join(sandbox,'public'));copyFileSync(join(process.cwd(),'public/payroll-font.ttf'),join(sandbox,'public/payroll-font.ttf'));
 const holidayMigration=readFileSync(join(process.cwd(),'supabase/migrations/20261123153905_canadian_holidays_compliance.sql'),'utf8'),holidaySeed=holidayMigration.slice(holidayMigration.indexOf('INSERT INTO holiday_rules'));writeFileSync(join(sandbox,'drizzle/0014_holidays.sql'),holidayMigration.slice(0,holidayMigration.indexOf('INSERT INTO holiday_rules')));
-if(process.env.WALSHKEN_TEST_OPERATIONS==='1')copyFileSync(join(process.cwd(),'supabase/migrations/20261124174443_staff_operations_controls.sql'),join(sandbox,'drizzle/0015_operations.sql'));
+if(process.env.WALSHKEN_TEST_READINESS==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261124192707_staff_readiness.sql"),join(sandbox,"drizzle/0015_readiness.sql"));
 const repository=process.cwd();
 process.chdir(sandbox);
 process.on("exit", () => rmSync(sandbox, { recursive: true, force: true }));
@@ -134,7 +134,7 @@ async function endpoint(kind,action,status=200,user=admin,body,query=''){
  const req=new Request(origin+'/api/'+kind+'/'+action+query,{method:body===undefined?'GET':'POST',headers:{origin,...(user?.cookie?{cookie:user.cookie}:{}),...(body?{'Content-Type':'application/json'}:{})},body:body===undefined?undefined:JSON.stringify(body)}),res=await routes[kind][body===undefined?'GET':'POST'](req,{params:Promise.resolve({action})}),ct=res.headers.get('Content-Type')??'',v=ct.includes('json')?await res.json():ct.includes('pdf')?Buffer.from(await res.arrayBuffer()):await res.text();assert.equal(res.status,status,`${kind}/${action}: expected ${status} got ${res.status}: ${v?.error??String(v).slice(0,100)}`);return v;
 }
 const h=(action,body,status=200,user=admin)=>endpoint('holidays',action,status,user,body),p=(action,body,status=200,user=admin)=>endpoint('payroll',action,status,user,body),w=(action,body,status=200,user=admin)=>endpoint('workforce',action,status,user,body),facts=(day,user=admin,id=staffId,query='')=>endpoint('holidays','facts',200,user,undefined,'?employee='+id+'&day='+day+query),listing=(user=admin,query='')=>endpoint('holidays','list',200,user,undefined,query),paylist=id=>endpoint('payroll','list',200,admin,undefined,id?'?period='+id:'');
-async function person(role,name,num){const u={email:(num+'@walshken.test').toLowerCase(),password:secret(),cookie:''},v=await request('employees/add',201,admin,{...employee,name,email:u.email,employeeNo:num,role});await request('session/activate',200,u,{email:u.email,password:u.password,code:v.code});await request('session/login',200,u,u);u.mfa=await enroll(u);u.id=(await request('view/employees',200,admin)).rows.find(r=>r.email===u.email).id;return u;}
+async function person(role,name,num){const u={email:(num+'@walshken.test').toLowerCase(),password:secret(),cookie:''},v=await request('employees/add',201,admin,{...employee,name,email:u.email,employeeNo:num,role});await request('session/activate',200,u,{email:u.email,password:u.password,code:v.code});await request('session/login',200,u,u);await enroll(u);u.id=(await request('view/employees',200,admin)).rows.find(r=>r.email===u.email).id;return u;}
 const hr=await person('hr','Independent holiday reviewer','H-HR-'+runId),outside=await person('employee','Other employee','H-OUT-'+runId);
 await db.prepare("UPDATE employees SET country='CA',jurisdiction='CA-AB',time_zone='America/Edmonton',hire_date='2024-01-02',contract_start='2024-01-05',leave_days=20 WHERE id=?",[adminId]).run();
 await h('event-create',{day:''},400);await endpoint('holidays','facts',400,admin,undefined,'?employee='+staffId);await endpoint('holidays','list',401,null);await endpoint('holidays','list',403,guest);await h('assignment-save',{},403,staff);await endpoint('holidays','private-record',404,outside,undefined,'?employee='+staffId);await request('view/holiday-calendar',200,staff);assert.equal((await request('view/holidays',200,admin)).managedHolidays,true);
@@ -195,4 +195,40 @@ writeFileSync('/tmp/walshken-holiday-ui-data.json',JSON.stringify({actor:{id:adm
 const { verifyCalendar } = await import('./verify-calendar.mjs');
 const calendar = await verifyCalendar({ request, db, admin, staff, outsider: outside, staffId, adminId, department, person, runId, defaultPolicy, localInstant });
 if (process.env.WALSHKEN_CALENDAR_TEST_EXPORT) writeFileSync(process.env.WALSHKEN_CALENDAR_TEST_EXPORT, JSON.stringify(calendar));
-console.log('PART H HOLIDAY TESTS PASSED');if(process.env.WALSHKEN_TEST_OPERATIONS==='1'){const {verifyOperations}=await import('./verify-operations.mjs');await verifyOperations({db,request,admin,adminMfa,staff,hr,outside,guest,staffId,adminId,person,runId,routes,endpoint,setup,w,p,h,defaultPolicy,localInstant,dayAdd,repository});}globalThis.Date=RealDate;process.exit(0);
+if (process.env.WALSHKEN_TEST_READINESS==="1") {
+  globalThis.Date=RealDate;
+  process.env.WALSHKEN_STAFF_READINESS_ENABLED="1";
+  const route = (path,status,user,data) => request("governance/"+path,status,user,data);
+  const jurisdiction = {country:"IN",jurisdiction:"IN-DL",classification:"Office worker",version:"QA-Delhi-v1",
+    effectiveFrom:"2026-01-01",effectiveThrough:"2026-12-31",source:"https://law.delhi.gov.in/node/8508",
+    evidence:"Exercise evidence review using a fictional Delhi office."};
+  await route("jurisdiction-save",403,staff,jurisdiction);
+  await route("jurisdiction-save",400,admin,{...jurisdiction,country:"PK"});
+  await route("jurisdiction-save",201,admin,jurisdiction);
+  const settings=await request("view/governance",200,admin);
+  const entry=settings.jurisdictionPolicies.find(row=>row.version===jurisdiction.version);
+  assert.equal(entry.status,"Draft");
+  await route("jurisdiction-verify",403,admin,{id:entry.id,reason:"Self approval is prohibited"});
+  await route("jurisdiction-withdraw",200,admin,{id:entry.id,reason:"Archive the fictional review example"});
+  assert.equal((await request("view/governance",200,admin)).jurisdictionPolicies[0].status,"Withdrawn");
+  await route("notice-publish",200,admin,{title:"Private staff information",body:"Fictional review notice with records subject to scoped portal access."});
+  const notice=(await request("view/profile",200,staff)).privacyNotice;
+  await route("notice-acknowledge",409,staff,{id:"unknown-notice"});
+  await route("notice-acknowledge",200,staff,{id:notice.id});
+  await route("notice-acknowledge",200,staff,{id:notice.id});
+  assert.ok((await request("view/profile",200,staff)).privacyNotice.acknowledged_at);
+  await route("permission-save",200,admin,{principalType:"role",principal:"manager",scopeType:"employee",scopeId:staffId,capability:"people.read",effect:"deny"});
+  assert.equal((await request("view/governance",200,admin)).rows[0].effect,"deny");
+  await request("view/audit",200,admin);
+  const {managementOverview}=await import("../lib/walshken/staff-oversight.ts");
+  const management=await managementOverview(db,await one(db,"SELECT * FROM employees WHERE id=?",adminId));
+  assert.ok(management.people.employees >= 2);
+  const {workforcePolicy}=await import("../lib/walshken/workforce.ts");
+  const tomorrow=new Date(Date.now()+86400000).toISOString().slice(0,10);
+  const workSeed={...defaultPolicy(),manualAllowed:true};
+  await w("policy-save",{employee:staffId,revision:(await workforcePolicy(db,staffActor)).revision,policy:workSeed,effectiveOn:tomorrow});
+  assert.equal((await workforcePolicy(db,staffActor,tomorrow)).policy.manualAllowed,true);
+  await assert.rejects(()=>db.prepare("UPDATE staff_jurisdiction_versions SET version='silent' WHERE id=?",[entry.id]).run(),/immutable/i);
+  console.log("PASS governance, independent jurisdiction review, staff privacy, scoped permission changes, oversight and effective-dated break policy");
+}
+console.log('PART H HOLIDAY TESTS PASSED');globalThis.Date=RealDate;process.exit(0);

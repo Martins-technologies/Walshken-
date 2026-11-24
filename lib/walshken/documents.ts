@@ -1,3 +1,4 @@
+import {scanStaffUpload} from "./staff-delivery";
 import { createHash,createHmac,timingSafeEqual } from "node:crypto";
 import { all, cookieValue, currentActor, digest, fail, id, integer, json, needsStaffMfa, notify, now, one, pick, run, str, throttle, type Actor,type Db } from "./server";
 import { roles } from "./catalog";
@@ -169,7 +170,9 @@ export async function uploadManagedDocument(db:Db,actor:Actor,request:Request){
  const data=await request.formData(),file=data.get("file");if(!(file instanceof File)||file.size>documentLimits.bytes)return fail(400,"Choose a supported file up to 3 MB.");
  const documentId=str(data.get("id"),"document",80,false),folderId=str(data.get("folder"),"folder",80,false);
  const context=await documentContext(db,actor,documentId||undefined,folderId||undefined);await requireDocumentPermission(db,actor,context,documentId?"edit":"upload");
- const bytes=Buffer.from(await file.arrayBuffer()),inspected=await inspectDocument(file.name,bytes),target=documentId||id(),versionId=id(),key=`walshken/${actor.org_id}/documents/${target}/${versionId}`;
+ const bytes=Buffer.from(await file.arrayBuffer());
+ await scanStaffUpload(db,bytes);
+ const inspected=await inspectDocument(file.name,bytes),target=documentId||id(),versionId=id(),key=`walshken/${actor.org_id}/documents/${target}/${versionId}`;
  // Queue first so a failed storage write or transaction leaves a recoverable cleanup record.
  const cleanupId=id();await run(db,"INSERT INTO doc_object_cleanup(id,org_id,storage_key,created_at) VALUES(?,?,?,?)",cleanupId,actor.org_id,key,now());
  await putDocumentObject(db,key,bytes,inspected.mime);

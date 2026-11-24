@@ -1,12 +1,11 @@
-import {allowed,controlsEnabled} from "./capabilities";
-import {workScope as scope,operatingManager as canManage,requireCapability,operationsAudit} from "./operations-store";
-import {employmentRulesOn,holidaysEnabled} from './holiday-access';
-import {all,audit,canSuper,date,fail,id,integer,json,now,one,pick,requireStaff,run,str,throttle,type Actor,type Db} from './server';
+import {staffReadinessEnabled} from './staff-permissions';
+import {employmentRulesOn,holidaysEnabled,validDay} from './holiday-access';
+import {all,audit,canManage,canSuper,date,fail,id,integer,json,now,one,pick,requireStaff,run,scope,str,throttle,type Actor,type Db} from './server';
 import {albertaRules,compliance,defaultPolicy,interval,iso,localInstant,totals,validatePolicy,type WorkBreak,type WorkPolicy} from './attendance-rules';
 import {localDate} from './work';
 export const workforceEnabled=()=>process.env.WALSHKEN_ATTENDANCE_ENABLED==='1';
 export const workDataset=()=>process.env.WALSHKEN_WORK_DATASET==='preview'?'preview':'production';
-export const policyAdmin=(actor:Actor)=>allowed(actor,'attendance.policy');
+export const policyAdmin=(actor:Actor)=>['super_admin','admin','hr'].includes(actor.role);
 export function requireWorkforce(actor:Actor){if(!workforceEnabled())return fail(404,'Attendance and schedules are not enabled on this deployment.');requireStaff(actor);}
 export type Attendance={id:string;org_id:string;employee_id:string;starts_at:string;ends_at:string|null;time_zone:string;shift_id:string|null;source:string;policy_snapshot:string;revision:number;note:string;release_stage:string};
 export type Shift={id:string;employee_id:string;starts_at:string;ends_at:string;title:string;location:string;time_zone:string;state:string;published:number;revision:number;policy_snapshot:string;series_id:string|null;group_key:string|null;release_stage:string};
@@ -18,8 +17,11 @@ export function requireActive(e:Actor){if(e.status!=='Active'||e.employment_stat
 export async function workforcePolicy(db:Db,employee:Actor,effectiveDay=localDate(now(),employee.time_zone)){
  if(!holidaysEnabled()&&employee.jurisdiction!=='CA-AB')return fail(409,'Assign the employee’s Alberta employment jurisdiction (CA-AB) in their profile before scheduling or approving working time.');
  const verified=holidaysEnabled()?await employmentRulesOn(db,employee,effectiveDay):null,rules=verified?{...verified.rules,source:verified.rules.sources[2]??verified.rules.sources[0],recordId:verified.row.id,contentHash:verified.row.content_hash}:albertaRules;
- const version=controlsEnabled()?await one<{settings:string}>(db,'SELECT settings FROM work_policy_versions WHERE org_id=? AND employee_id=? AND release_stage=? AND effective_on<=? ORDER BY effective_on DESC,created_at DESC,id DESC LIMIT 1',employee.org_id,employee.id,workDataset(),effectiveDay):null;
- const saved=await one<{settings:string;revision:number}>(db,'SELECT settings,revision FROM work_policies WHERE employee_id=? AND org_id=? AND release_stage=?',employee.id,employee.org_id,workDataset());return {policy:version?validatePolicy(JSON.parse(version.settings),rules):saved?validatePolicy(JSON.parse(saved.settings),rules):validatePolicy({...defaultPolicy(employee.break_policy==='paid'),rules},rules),revision:saved?.revision??0};
+ const current=staffReadinessEnabled()?await one<{settings:string;revision:number}>(db,`SELECT settings,revision FROM staff_work_policy_versions
+   WHERE employee_id=? AND org_id=? AND release_stage=? AND effective_on<=? ORDER BY effective_on DESC,revision DESC LIMIT 1`,
+   employee.id,employee.org_id,workDataset(),effectiveDay):null;
+ const saved=current??await one<{settings:string;revision:number}>(db,'SELECT settings,revision FROM work_policies WHERE employee_id=? AND org_id=? AND release_stage=?',employee.id,employee.org_id,workDataset());
+ return {policy:saved?validatePolicy(JSON.parse(saved.settings),rules):validatePolicy({...defaultPolicy(employee.break_policy==='paid'),rules},rules),revision:saved?.revision??0};
 }
 export async function workEvent(db:Db,actor:Actor,employee:string,entity:string,target:string,action:string,detail:unknown=''){
  await run(db,'INSERT INTO work_events(id,org_id,release_stage,employee_id,actor_id,entity,target_id,action,detail,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',id(),actor.org_id,workDataset(),employee,actor.id,entity,target,action,(typeof detail==='string'?detail:JSON.stringify(detail)).slice(0,20000),now());
@@ -51,23 +53,26 @@ export async function recalculateSheet(db:Db,actor:Actor,entry:Attendance,status
  return {hours,issues};
 }
 export async function workforceAction(db:Db,actor:Actor,action:string,data:Record<string,unknown>){
- const required=action==='manual-entry'&&String(data.employee??actor.id)!==actor.id?'attendance.manage':action==='policy-save'?'attendance.policy':action==='correction-review'?'attendance.correct':action==='timesheet-review'?'timesheets.approve':null;if(required){requireCapability(actor,required);if(actor.authorities)actor={...actor,authorities:actor.authorities.filter(a=>!['attendance.','timesheets.','schedules.','leave.'].some(p=>a.permission.startsWith(p))||a.permission===required)};}
  requireWorkforce(actor);const receivedAt=now();await throttle(db,`workforce:${actor.id}`,100,60000);
  return db.transaction(async tx=>{
   await one(tx,'SELECT id FROM organizations WHERE id=? FOR UPDATE',actor.org_id);
   if(action==='policy-save'){
-   if(!policyAdmin(actor))return fail(403,'A scoped administrator or HR must manage break policies.');const employee=await workforceEmployee(tx,actor,str(data.employee,'employee',80),true);requireActive(employee);const current=await workforcePolicy(tx,employee);const policy=validatePolicy(data.policy,current.policy.rules),old=await one<{revision:number}>(tx,'SELECT revision FROM work_policies WHERE employee_id=? AND release_stage=?',employee.id,workDataset());
-   if(Number(data.revision)!==(old?.revision??0))return fail(409,'The break policy changed. Refresh before saving.');
-   if(controlsEnabled()){
-    const effective=date(data.effectiveOn??localDate(now(),employee.time_zone),'policy effective date')!,today=localDate(now(),employee.time_zone);
-    if(effective<today)return fail(409,'New attendance policies take effect today or later. Existing records keep their original policy snapshots.');
-    const reference=str(data.reference,'policy change reference',1000);
-    const previous=await workforcePolicy(tx,employee,today);
-    if(!await one(tx,'SELECT id FROM work_policy_versions WHERE employee_id=? AND release_stage=?',employee.id,workDataset()))await run(tx,'INSERT INTO work_policy_versions(id,org_id,release_stage,employee_id,effective_on,settings,reference,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',id(),actor.org_id,workDataset(),employee.id,'1970-01-01',JSON.stringify(previous.policy),'Previous recorded policy',actor.id,now());
-    await run(tx,'INSERT INTO work_policy_versions(id,org_id,release_stage,employee_id,effective_on,settings,reference,created_by,created_at) VALUES(?,?,?,?,?,?,?,?,?)',id(),actor.org_id,workDataset(),employee.id,effective,JSON.stringify(policy),reference,actor.id,now());
-    await operationsAudit(tx,actor,'Attendance policy version saved',employee.id,previous,{effective,policy,reference});
-    if(effective>today){await run(tx,'INSERT INTO work_policies(id,org_id,employee_id,release_stage,settings,updated_by,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(employee_id,release_stage) DO UPDATE SET revision=work_policies.revision+1,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at',id(),actor.org_id,employee.id,workDataset(),JSON.stringify(previous.policy),actor.id,now());return json({ok:true,message:'Future attendance policy scheduled. Recorded work and the current policy are preserved.'});}
+   if(!policyAdmin(actor))return fail(403,'A scoped administrator or HR must manage break policies.');const employee=await workforceEmployee(tx,actor,str(data.employee,'employee',80),true);requireActive(employee);
+   if(staffReadinessEnabled()){
+    const day=validDay(data.effectiveOn,'effective date'),today=localDate(now(),employee.time_zone);
+    if(day<today)return fail(400,'Work policy changes must start today or later.');
+    const current=await workforcePolicy(tx,employee,day),policy=validatePolicy(data.policy,current.policy.rules);
+    const head=await one<{revision:number}>(tx,'SELECT revision FROM staff_work_policy_versions WHERE employee_id=? AND release_stage=? ORDER BY revision DESC LIMIT 1',employee.id,workDataset());
+    const latest=head?.revision??current.revision;
+    if(Number(data.revision)!==latest)return fail(409,'The break policy changed. Refresh before saving.');
+    await run(tx,`INSERT INTO staff_work_policy_versions(id,org_id,employee_id,release_stage,effective_on,revision,settings,created_by,created_at)
+      VALUES(?,?,?,?,?,?,?,?,?)`,id(),actor.org_id,employee.id,workDataset(),day,latest+1,JSON.stringify(policy),actor.id,now());
+    await workEvent(tx,actor,employee.id,'work-policy',employee.id,'Effective-dated work policy saved',{day,revision:latest+1,policy});
+    await workNotify(tx,actor,employee.id,'Work and break policy updated','Review your work policy effective '+day+'.');
+    return json({ok:true,message:'Employee work policy saved. Existing work records retain their original policy.'});
    }
+   const current=await workforcePolicy(tx,employee);const policy=validatePolicy(data.policy,current.policy.rules),old=await one<{revision:number}>(tx,'SELECT revision FROM work_policies WHERE employee_id=? AND release_stage=?',employee.id,workDataset());
+   if(Number(data.revision)!==(old?.revision??0))return fail(409,'The break policy changed. Refresh before saving.');
    await run(tx,'INSERT INTO work_policies(id,org_id,employee_id,release_stage,settings,updated_by,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(employee_id,release_stage) DO UPDATE SET settings=EXCLUDED.settings,revision=work_policies.revision+1,updated_by=EXCLUDED.updated_by,updated_at=EXCLUDED.updated_at',id(),actor.org_id,employee.id,workDataset(),JSON.stringify(policy),actor.id,now());await workEvent(tx,actor,employee.id,'work-policy',employee.id,'Break policy updated',policy);await workNotify(tx,actor,employee.id,'Work and break policy updated','Review your current break and manual-entry settings.');return json({ok:true,message:'Employee break policy saved. Existing recorded work keeps its original policy.'});
   }
   if(['clock-in','clock-out','break-start','break-end'].includes(action)){
@@ -90,8 +95,9 @@ export async function workforceAction(db:Db,actor:Actor,action:string,data:Recor
    await run(tx,'UPDATE attendance SET revision=revision+1,updated_at=? WHERE id=?',at,active.id);return json({ok:true,message:action==='clock-out'?'Clocked out. Your actual hours are ready for review.':action==='break-start'?'Break started.':'Break ended.'});
   }
   if(action==='manual-entry'){
-   const employee=await workforceEmployee(tx,actor,str(data.employee??actor.id,'employee',80),allowed(actor,'attendance.manage'));requireActive(employee);let {policy}=await workforcePolicy(tx,employee);
-   if(!allowed(actor,'attendance.manage')&&!policy.manualAllowed)return fail(403,'Manual time entry has not been authorized for your account.');const start=data.startsAt?iso(data.startsAt,'work start'):localInstant(data.startsLocal,employee.time_zone,String(data.fold??'earlier')),end=data.endsAt?iso(data.endsAt,'work end'):localInstant(data.endsLocal,employee.time_zone,String(data.fold??'earlier'));interval(start,end);if(holidaysEnabled())policy=(await workforcePolicy(tx,employee,localDate(start,employee.time_zone))).policy;if(end>now())return fail(400,'Manual work must already have taken place.');await noWorkOverlap(tx,employee.id,start,end);
+   const employee=await workforceEmployee(tx,actor,str(data.employee??actor.id,'employee',80),canManage(actor));requireActive(employee);
+   if(!staffReadinessEnabled()&&!canManage(actor)&&!(await workforcePolicy(tx,employee)).policy.manualAllowed)return fail(403,'Manual time entry has not been authorized for your account.');
+   const start=data.startsAt?iso(data.startsAt,'work start'):localInstant(data.startsLocal,employee.time_zone,String(data.fold??'earlier')),end=data.endsAt?iso(data.endsAt,'work end'):localInstant(data.endsLocal,employee.time_zone,String(data.fold??'earlier'));interval(start,end);const {policy}=await workforcePolicy(tx,employee,localDate(start,employee.time_zone));if(!canManage(actor)&&!policy.manualAllowed)return fail(403,'Manual time entry was not authorized for this employee on that date.');if(end>now())return fail(400,'Manual work must already have taken place.');await noWorkOverlap(tx,employee.id,start,end);
    const breaks=proposedBreaks(data.breaks??[],start,end,policy,employee.time_zone),target=id(),note=str(data.note,'reason for manual entry',1500);let shift:Shift|null=null;const shiftId=str(data.shift,'shift',80,false);
    if(shiftId){shift=await one<Shift>(tx,"SELECT * FROM shifts WHERE id=? AND employee_id=? AND release_stage=? AND state='Published'",shiftId,employee.id,workDataset());if(!shift||end<=shift.starts_at||start>=shift.ends_at)return fail(400,'The selected shift does not match this employee and work interval.');if(await one(tx,'SELECT id FROM attendance WHERE shift_id=?',shift.id))return fail(409,'This shift already has a work record. Request a correction instead.');}
    await run(tx,'INSERT INTO attendance(id,org_id,employee_id,starts_at,ends_at,time_zone,shift_id,source,policy_snapshot,release_stage,workflow_version,created_by,updated_at,note) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?,?)',target,actor.org_id,employee.id,start,end,employee.time_zone,shift?.id??null,'Manual',JSON.stringify(policy),workDataset(),actor.id,now(),note);
@@ -106,7 +112,7 @@ export async function workforceAction(db:Db,actor:Actor,action:string,data:Recor
    const c=await one<{id:string;employee_id:string;requested_by:string;revision:number;status:string}>(tx,'SELECT * FROM corrections WHERE id=? AND release_stage=?',str(data.id,'correction',80),workDataset());if(!c||c.employee_id!==actor.id&&c.requested_by!==actor.id)return fail(404,'Correction unavailable.');revision(c,data.revision);if(c.status!=='Pending')return fail(409,'Only a pending request can be cancelled.');await run(tx,"UPDATE corrections SET status='Cancelled',revision=revision+1 WHERE id=?",c.id);await workEvent(tx,actor,actor.id,'correction',c.id,'Correction cancelled');return json({ok:true,message:'Correction cancelled.'});
   }
   if(action==='correction-review'){
-   if(!allowed(actor,'attendance.correct'))return fail(403,'Attendance corrections require a scoped administrator or HR.');
+   if(!policyAdmin(actor))return fail(403,'Attendance corrections require a scoped administrator or HR.');
    const c=await one<{id:string;attendance_id:string;employee_id:string;status:string;revision:number;attendance_revision:number;requested_by:string;proposed_start:string;proposed_end:string;proposed_breaks:string;note:string}>(tx,'SELECT * FROM corrections WHERE id=? AND release_stage=?',str(data.id,'correction',80),workDataset());if(!c)return fail(404,'Correction unavailable.');const employee=await workforceEmployee(tx,actor,c.employee_id,true);if(c.employee_id===actor.id||c.requested_by===actor.id)return fail(403,'You cannot review your own hours or a correction you proposed.');revision(c,data.revision);if(c.status!=='Pending')return fail(409,'This correction is no longer pending.');
    const decision=pick(data.decision,['Approved','Returned'] as const,'correction decision'),note=str(data.note,'review reason',1500),entry=await attendanceFor(tx,actor,c.attendance_id);
    if(decision==='Approved'){

@@ -1,3 +1,4 @@
+import {scanStaffUpload} from "./staff-delivery";
 import { createHash,createHmac,timingSafeEqual } from "node:crypto";
 import { GetObjectCommand,PutObjectCommand,DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { storageClient,validateStorage } from "./livekit";
@@ -14,7 +15,9 @@ export async function taskFileUpload(db:Db,actor:Actor,request:Request){
  requireTasks(actor);await throttle(db,`task-files:${actor.id}`,12,60000);if(Number(request.headers.get('content-length')??0)>documentLimits.bytes+20000)return fail(413,"Choose a file up to 3 MB.");
  const data=await request.formData(),task=await taskFor(db,actor,str(data.get('id'),"task",80));editable(task.status);
  const file=data.get('file');if(!(file instanceof File)||!file.size||file.size>documentLimits.bytes)return fail(400,"Choose a supported file up to 3 MB.");
- const bytes=Buffer.from(await file.arrayBuffer()),info=await inspectDocument(file.name,bytes),target=id(),key=`walshken/${actor.org_id}/tasks/${taskDataset()}/${task.id}/${target}`,queued=id();
+ const bytes=Buffer.from(await file.arrayBuffer());
+ await scanStaffUpload(db,bytes);
+ const info=await inspectDocument(file.name,bytes),target=id(),key=`walshken/${actor.org_id}/tasks/${taskDataset()}/${task.id}/${target}`,queued=id();
  await run(db,"INSERT INTO task_file_cleanup(id,org_id,storage_key,created_at) VALUES(?,?,?,?)",queued,actor.org_id,key,now());
  const s=await storage(db),client=storageClient(s);try{await client.send(new PutObjectCommand({Bucket:s.bucket,Key:key,Body:bytes,ContentType:info.mime,CacheControl:'private, no-store'}));}finally{client.destroy();}
  try{await db.transaction(async tx=>{

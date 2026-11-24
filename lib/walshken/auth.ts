@@ -1,3 +1,5 @@
+import {recordSignInFailure} from "./staff-oversight";
+import {AppError} from "./server";
 import { timingSafeEqual } from "node:crypto";
 import { verifyStaffMfa } from "./staff-mfa";
 import { passwordHash, passwordMatches } from "./passwords";
@@ -16,13 +18,20 @@ export async function login(request: Request, action: string, data: Record<strin
   const password = data.password;
   if (typeof password !== "string" || !password || password.length > 160) return fail(400,"Enter a valid password.");
   const ip = request.headers.get("x-vercel-forwarded-for") ?? "local";
+  if (action === "login") {
+    try {
+      await throttle(db, `login-ip:${ip}`, 240, 300_000);
+      await throttle(db, `login-email:${mailbox}`, 6, 300_000);
+      const actor = await one<Actor & { password_hash: string }>(db, "SELECT e.*,c.password_hash FROM employees e JOIN credentials c ON c.employee_id=e.id WHERE e.email=?", mailbox);
+      if (!await passwordMatches(password, actor?.password_hash) || !actor || actor.status !== "Active" || actor.employment_status === "Ended") return fail(401,"Email or password is incorrect.");
+      return await issueSession(request,db,actor,actor.password_hash,tx=>verifyStaffMfa(tx,actor.id,data.mfaCode));
+    } catch (error) {
+      if (error instanceof AppError) await recordSignInFailure(db,mailbox,error.status);
+      throw error;
+    }
+  }
   await throttle(db, `login-ip:${ip}`, 240, 300_000);
   await throttle(db, `login-email:${mailbox}`, 6, 300_000);
-  if (action === "login") {
-    const actor = await one<Actor & { password_hash: string }>(db, "SELECT e.*,c.password_hash FROM employees e JOIN credentials c ON c.employee_id=e.id WHERE e.email=?", mailbox);
-    if (!await passwordMatches(password, actor?.password_hash) || !actor || actor.status !== "Active" || actor.employment_status==="Ended") return fail(401, "Email or password is incorrect.");
-    return issueSession(request, db, actor, actor.password_hash, (tx) => verifyStaffMfa(tx, actor.id, data.mfaCode));
-  }
 
   if (password.length < 12) return fail(400, "Use a password with at least 12 characters.");
   const code = str(data.code, "setup code", 180);

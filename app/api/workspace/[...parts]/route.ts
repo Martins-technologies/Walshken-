@@ -1,3 +1,4 @@
+import {governanceAction} from "@/lib/walshken/staff-governance";
 import {workforceEnabled} from '@/lib/walshken/workforce';
 import { collaborationRelease, releasedMutationAreas } from "@/lib/walshken/release";
 import { documentsEnabled } from "@/lib/walshken/document-access";
@@ -59,8 +60,9 @@ export async function POST(request: Request, context: Context) {
     if(area==="profile"&&action==="photo") return await updateAvatar(db,actor,request);
     if(area==="profile"&&action==="remove-photo") return await removeAvatar(db,actor);
     if(area==="documents"&&action==="upload") return await uploadDocument(db,actor,request);
-    if(collaborationRelease()&&!releasedMutationAreas.has(area))return fail(404,"This feature is not released yet.");
+    if(collaborationRelease()&&area!=="governance"&&!releasedMutationAreas.has(area))return fail(404,"This feature is not released yet.");
     const data=await payload(request);
+    if(area==="governance") return await governanceAction(db,actor,action,data);
     if(area==="profile"&&action==="contact") return await updateContactNumber(db,actor,data);
     if(area==="mfa") return await staffMfaAction(request,db,actor,action,data);
     if(area==="session"&&action==="password") return await changePassword(request,db,actor,data);

@@ -1,6 +1,4 @@
 "use client";
-import {OperationsWorkspace} from "./operations";
-import {OperationsOverview,type OverviewData} from "./operations-overview";
 import {StaffCalendar} from "./staff-calendar";
 import type {StaffCalendarData} from "@/lib/walshken/staff-calendar-types";
 import {HolidayWorkspace} from "./holidays";
@@ -20,8 +18,13 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
-  calculatorCoverage?:{jurisdictions:string[];taxYears:number[];protocols:string[];checkedAt:string}|null;
-  operations?:OverviewData;managedOperations?:boolean;
+  readiness?:boolean;
+  personnelControls?:boolean;
+  privacyNotice?:RecordRow|null;
+  acknowledgements?:RecordRow[];
+  jurisdictionPolicies?:RecordRow[];
+  auditFilters?:import("./staff-governance").AuditFilters;
+  calculatorId?:string;
   managedCalendar?: boolean; calendar?: StaffCalendarData;
   managedHolidays?:boolean;managedPayroll?:boolean;managedWorkforce?:boolean;managedTasks?:boolean;taskSummary?:{today:number;overdue:number;pending:number;open:number};
   managedDocuments?:boolean;documentStorageEnabled?:boolean;documentBucket?:string;
@@ -225,8 +228,6 @@ function LegacyDocumentView({actor,data,refresh,admin=false}:{actor:Viewer;data:
 
 export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void;setQuery:(q:string)=>void}){
   const rows=data.rows??[];
-  if(data.managedOperations)return <OperationsWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
-  if(section==="dashboard"&&data.operations)return <OperationsOverview actor={actor} data={data.operations} alerts={data.alerts??[]} meetings={data.meetings??[]} taskSummary={data.taskSummary} setQuery={setQuery}/>;
   if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
@@ -285,6 +286,11 @@ export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:st
         </dl>:<p className="form-note">No current compensation rate is recorded.</p>}
       </Panel>}
       <StaffSecurity enabled={Boolean(row.mfa_enabled)} required={Boolean(data.mfaRequired)}/>
+      {data.privacyNotice&&<Panel title={String(data.privacyNotice.title)} note={`Published ${String(data.privacyNotice.created_at).slice(0,10)}`}>
+        <p style={{whiteSpace:"pre-wrap"}}>{data.privacyNotice.body}</p>
+        {data.privacyNotice.acknowledged_at?<p>Acknowledged on {String(data.privacyNotice.acknowledged_at).slice(0,10)}.</p>
+          :<Quick path="governance/notice-acknowledge" data={{id:data.privacyNotice.id}} refresh={refresh}>Acknowledge notice</Quick>}
+      </Panel>}
       <Panel title="Change password" note="Saving a new password signs you out on every device.">
         <ActionForm path="session/password" fields={[
           {name:"currentPassword",label:"Current password",type:"password",required:true,max:160,autoComplete:"current-password"},

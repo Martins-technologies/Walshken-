@@ -1,13 +1,11 @@
-import {payrollIntegrationId} from "./payroll-calculator";
-import {decryptSettings} from "./server";
-import {operationsOverview} from "./operations-overview";
-import {operationsData} from "./operations";
-import {allowed,controlsEnabled} from "./capabilities";
-import {operatingManager} from "./operations-store";
+import {calculatorIntegrationId} from "./payroll-calculator";
+import {staffReadinessEnabled} from "./staff-permissions";
+import {currentNotice,governanceData,peopleScope} from "./staff-governance";
+import {auditExplorer,managementOverview} from "./staff-oversight";
 import { staffCalendar, staffCalendarEnabled } from "./staff-calendar";
 import {holidaysEnabled,assignmentOn,holidayRule} from './holiday-access';
 import {holidayData} from './holiday-data';
-import {payrollDataset,payrollEnabled} from './payroll-access';
+import {hasPayrollAccess,payrollDataset,payrollEnabled} from './payroll-access';
 import {payrollData} from './payroll-data';
 import {workforceEnabled} from './workforce';
 import {workforceData} from './workforce-data';
@@ -23,16 +21,17 @@ import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
-  if(section==="work-policies")return controlsEnabled()&&actor.role!=="guest";
+  if(section==="governance") return staffReadinessEnabled() && canSuper(actor);
   if(collaborationRelease()&&!releasedSections.has(section)&&!(holidaysEnabled()&&["holidays","holiday-calendar"].includes(section))&&!(payrollEnabled()&&["payroll","salary"].includes(section))&&!(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section))&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
   if(section==="holiday-calendar")return holidaysEnabled()&&actor.role!=="guest";
-  if(holidaysEnabled()&&section==="holidays")return allowed(actor,"holidays.manage")||allowed(actor,"holidays.evidence");
+  if(holidaysEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
   if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
-  if(workforceEnabled()&&section==="holidays")return allowed(actor,"holidays.manage")||allowed(actor,"holidays.evidence");
-  if(["payroll","holidays"].includes(section)) return canPayroll(actor);
-  if(section==="employees") return canManage(actor)&&actor.role!=="manager";
-  if(["scheduling","approvals","reports"].includes(section)) return operatingManager(actor);
+  if(workforceEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
+  if(section==="payroll") return hasPayrollAccess(actor);
+  if(section==="holidays") return canPayroll(actor);
+  if(section==="employees") return (canManage(actor)&&actor.role!=="manager") || Boolean(actor.permissions?.some(rule=>rule.action==="people.read" && rule.effect==="allow"));
+  if(["scheduling","approvals","reports"].includes(section)) return canManage(actor);
   return known.has(section);
 }
 async function staffChoices(db:Db,actor:Actor){
@@ -60,7 +59,7 @@ async function notifications(db:Db,actor:Actor){
 
 export async function view(db:Db,actor:Actor,section:string,params:URLSearchParams){
   if(!canOpen(actor,section)) return fail(403,"You do not have access to this section.");
-  if(section==="work-policies")return operationsData(db,actor,params);
+  if(section==="governance") return governanceData(db,actor);
   if(holidaysEnabled()&&["holidays","holiday-calendar"].includes(section))return holidayData(db,actor,params);
   if(payrollEnabled()&&["payroll","salary"].includes(section))return payrollData(db,actor,params);
   if(section==="profile"){
@@ -79,12 +78,13 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
         WHERE employee_id=? AND effective_on<=? ${payrollEnabled()?"AND release_stage=? AND voided_at IS NULL":""} ORDER BY effective_on DESC LIMIT 1`,actor.id,localDate(now(),actor.time_zone),...(payrollEnabled()?[payrollDataset()]:[])),
     ]);
     let holidayCalendar=row?.holiday_calendar;if(holidaysEnabled()&&actor.role!=='guest'){const a=await assignmentOn(db,actor,localDate(now(),actor.time_zone),false);if(a)holidayCalendar=(await holidayRule(db,actor,a.jurisdiction,localDate(now(),actor.time_zone),a.rule_id)).config.calendar.name+' · '+a.location;}
-    return json({row:row&&{...row,holiday_calendar:holidayCalendar,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired});
+    return json({row:row&&{...row,holiday_calendar:holidayCalendar,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired,privacyNotice:await currentNotice(db,actor)});
   }
   if(section==="dashboard"&&collaborationRelease()){
     const [conversations,events,alerts]=await Promise.all([messageViews(db,actor).then(response=>response.json()),meetings(db,actor),notifications(db,actor)]);
     const taskData=tasksEnabled()&&actor.role!=="guest"?await taskDashboard(db,actor).then(r=>r.json()):null;
-    return json({operations:controlsEnabled()&&actor.role!=="guest"?await operationsOverview(db,actor,params.get("team")==="1"):undefined,collaborationOverview:true,conversations:conversations.rows,meetings:events.filter(row=>!row.ended_at&&!row.cancelled_at&&String(row.ends_at)>now()),alerts,taskSummary:taskData?.stats});
+    const management = staffReadinessEnabled() && canSuper(actor) ? await managementOverview(db,actor) : null;
+    return json({management,collaborationOverview:true,conversations:conversations.rows,meetings:events.filter(row=>!row.ended_at&&!row.cancelled_at&&String(row.ends_at)>now()),alerts,taskSummary:taskData?.stats});
   }
   if(section==="dashboard"){
     const [tasks,shiftRows,alerts,active,unsubmitted]=await Promise.all([
@@ -147,7 +147,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
   }
   if(section==="holidays") return json({rows:await all(db,"SELECT id,name,on_date,jurisdiction,type FROM holidays WHERE org_id=? ORDER BY on_date DESC LIMIT 150",actor.org_id)});
   if(section==="employees"||section==="roles"){
-    const scoped=scope(actor);
+    const scoped=staffReadinessEnabled()?peopleScope(actor,"people.read","e",true):scope(actor);
     const query=(params.get("q")??"").trim().slice(0,100);
     const requestedPage=Number(params.get("page")??"1");
     const pageSize=30;
@@ -163,13 +163,14 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
         e.time_zone,e.expected_hours,e.break_policy,e.leave_days,e.holiday_days,e.work_schedule,e.holiday_calendar,e.employment_status,e.manager_id,e.department_id,e.division_id,e.office_id,
         u.name AS department FROM employees e LEFT JOIN units u ON u.id=e.department_id
         WHERE ${filter} ORDER BY e.name,e.id LIMIT ? OFFSET ?`,...args,pageSize,(page-1)*pageSize),
-      canSuper(actor)?all(db,"SELECT id,kind,name FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id):[],
+      (canSuper(actor)||staffReadinessEnabled())?all(db,"SELECT id,kind,name FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id):[],
       canSuper(actor)?all(db,"SELECT id,name FROM employees WHERE org_id=? AND status='Active' AND role IN ('super_admin','admin','hr','manager') ORDER BY name",actor.org_id):[],
     ]);
-    return json({rows,units,staff,registry:{query,page,pages,total}});
+    return json({rows,units,staff,personnelControls:staffReadinessEnabled() && !canSuper(actor),readiness:staffReadinessEnabled(),registry:{query,page,pages,total}});
   }
   if(section==="departments") return json({rows:await all(db,"SELECT id,kind,name,country,region,time_zone FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id)});
   if(section==="audit"){
+    if(staffReadinessEnabled()) return auditExplorer(db,actor,params);
     const query=(params.get("q")??"").trim().slice(0,100);
     const start=params.get("from")??"";
     const end=params.get("to")??"";
@@ -186,7 +187,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       inquiries:section==="website"?await all(db,"SELECT id,kind,name,email,country,service,message,created_at,status,customer_update,CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END AS customer_request FROM inquiries ORDER BY created_at DESC LIMIT 120"):[],
     });
   }
-  if(section==="integrations"){const calculator=await one<{configuration:string;enabled:number}>(db,"SELECT configuration,enabled FROM integrations WHERE id=?",payrollIntegrationId());let calculatorCoverage=null;if(calculator){const settings=await decryptSettings(payrollIntegrationId(),calculator.configuration);try{calculatorCoverage=JSON.parse(settings.coverage??"null");}catch{calculatorCoverage=null;}}return json({calculatorCoverage,documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});}
+  if(section==="integrations") return json({readiness:staffReadinessEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await all(db,"SELECT id,enabled,updated_at FROM integrations ORDER BY id"),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
   if(section==="reports"){
     const scoped=scope(actor);
     const today=localDate(now(),actor.time_zone);
