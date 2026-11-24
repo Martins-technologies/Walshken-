@@ -4,10 +4,10 @@ import { documentsEnabled } from "@/lib/walshken/document-access";
 import { tasksEnabled } from "@/lib/walshken/tasks";
 import { attendanceReport, meetingDetail, meetingAction } from "@/lib/walshken/meetings";
 import { staffMfaAction } from "@/lib/walshken/staff-mfa";
-import { closeOtherSessions, removeAvatar, staffAvatar, updateAvatar } from "@/lib/walshken/staff-profile";
+import { closeOtherSessions, removeAvatar, staffAvatar, updateAvatar, updateContactNumber } from "@/lib/walshken/staff-profile";
 import { adminAction } from "@/lib/walshken/admin";
 import { changePassword, login } from "@/lib/walshken/auth";
-import { documentAction, downloadDocument, messageAction, messagesFor, uploadDocument } from "@/lib/walshken/collaboration";
+import { documentAction, downloadDocument, messageAction, messageDocumentChoices, messagesFor, uploadDocument } from "@/lib/walshken/collaboration";
 import { checkOrigin, currentActor, database, endSession, fail, handleError, json, needsStaffMfa, payload, pick, requireStaff } from "@/lib/walshken/server";
 import { view } from "@/lib/walshken/views";
 import { payrollAction, taskDetails, timeAction, workAction } from "@/lib/walshken/work";
@@ -33,6 +33,7 @@ export async function GET(request: Request, context: Context) {
     if (area === "meeting-attendance") return await attendanceReport(db,actor,action);
     if (area === "view") return await view(db,actor,action,params);
     if (area === "files") return await downloadDocument(db,actor,action,params.get("mode")==="preview");
+    if (area === "messages" && action === "attachments") return await messageDocumentChoices(db,actor,params.get("conversation")??"",params.get("q")??"");
     if (area === "conversation") return await messagesFor(db,actor,action,params.get("q")??"",params.get("before")??"",params.get("pinned")==="1");
     if (area === "task-comments") { requireStaff(actor); return json({rows:await taskDetails(db,actor,action)}); }
     return fail(404,"This workspace endpoint is unavailable.");
@@ -60,6 +61,7 @@ export async function POST(request: Request, context: Context) {
     if(area==="documents"&&action==="upload") return await uploadDocument(db,actor,request);
     if(collaborationRelease()&&!releasedMutationAreas.has(area))return fail(404,"This feature is not released yet.");
     const data=await payload(request);
+    if(area==="profile"&&action==="contact") return await updateContactNumber(db,actor,data);
     if(area==="mfa") return await staffMfaAction(request,db,actor,action,data);
     if(area==="session"&&action==="password") return await changePassword(request,db,actor,data);
     if(area==="payroll"&&process.env.WALSHKEN_PAYROLL_ENABLED==="1")return fail(404,"Use the reviewed payroll workflow.");

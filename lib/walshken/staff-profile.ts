@@ -1,4 +1,19 @@
-import { audit, cookieValue, digest, fail, json, now, one, run, sessionCookie, stmt, throttle, type Actor, type Db } from "./server";
+import { audit, cookieValue, digest, fail, json, now, one, run, sessionCookie, stmt, str, throttle, type Actor, type Db } from "./server";
+
+export async function updateContactNumber(db: Db, actor: Actor, data: Record<string, unknown>) {
+  if (typeof data.phone !== "string") return fail(400, "Enter a phone number or leave the field empty.");
+  const phone = str(data.phone, "phone number", 40, false);
+  if (phone && (!/^[+0-9().\s-]+(?:\s*(?:ext\.?|x)\s*\d+)?$/i.test(phone) || phone.replace(/\D/g, "").length < 5)) {
+    return fail(400, "Enter a valid phone number.");
+  }
+  await throttle(db, `profile-contact:${actor.id}`, 10, 60_000);
+  await db.transaction(async (tx) => {
+    const changed = await run(tx, `UPDATE employees SET phone=? WHERE id=? AND org_id=?
+      AND status='Active' AND employment_status<>'Ended' AND phone IS DISTINCT FROM ?`, phone || null, actor.id, actor.org_id, phone || null);
+    if (changed.count) await audit(tx, actor, "Profile contact number updated", "employee", actor.id).run();
+  });
+  return json({ ok: true, message: "Contact number saved." });
+}
 
 export async function updateAvatar(db: Db, actor: Actor, request: Request) {
   await throttle(db, `profile-photo:${actor.id}`, 10, 60_000);

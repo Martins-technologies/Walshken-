@@ -9,6 +9,7 @@ const sandbox = mkdtempSync(join(tmpdir(), "walshken-route-test-"));
 mkdirSync(join(sandbox,"drizzle"));
 for(const name of readdirSync(join(process.cwd(),"drizzle")))if(name.endsWith(".sql"))copyFileSync(join(process.cwd(),"drizzle",name),join(sandbox,"drizzle",name));
 copyFileSync(join(process.cwd(),"supabase/migrations/20261122145905_staff_document_security.sql"),join(sandbox,"drizzle/0010_documents.sql"));
+copyFileSync(join(process.cwd(),"supabase/migrations/20261123220736_messaging_document_references.sql"),join(sandbox,"drizzle/0011_message_documents.sql"));
 writeFileSync(join(sandbox,"drizzle/00000_test_roles.sql"),"CREATE ROLE anon; CREATE ROLE authenticated;");
 const repository=process.cwd();
 process.chdir(sandbox);
@@ -222,6 +223,10 @@ const group=(await request('messages/create',201,admin,{kind:'Group',title:'Docu
 const groupFolder=(await post('folder-add',{name:'Project documents',group},201)).id;
 const groupFile=(await post('upload',file('project.png',png,{folder:groupFolder}),201)).id;
 await rule('group',group,'all','',['view']);assert.ok((await list(staff)).rows.some(r=>r.id===groupFile));
+await request('messages/remove-group',200,admin,{conversation:group});
+assert.ok(!(await list(staff)).rows.some(r=>r.id===groupFile));
+await request('messages/restore-group',200,admin,{conversation:group});
+assert.ok((await list(staff)).rows.some(r=>r.id===groupFile));
 await db.prepare('DELETE FROM conversation_members WHERE conversation_id=? AND employee_id=?',[group,staffId]).run();await post('detail',{id:groupFile},403,staff);
 console.log('PASS organization, department, group, ancestor-folder and document scopes, including membership and folder revocation');
 
@@ -237,6 +242,50 @@ await rule('document',documentId,'employee',staffId,['forward'],'deny');await do
 await rule('document',documentId,'employee',coworkerId,['view'],'deny');await post('forward',{id:documentId,recipient:coworkerId},403);
 console.log('PASS internal forwarding, recipient notifications, explicit recipient denial and sender revocation');
 
+// Chat shares document references without granting the recipient access.
+const chatDocument=(await post('upload',file('secure-chat.png',png),201)).id;
+const dm=(await request('messages/create',201,admin,{kind:'Direct',members:[staffId]})).id;
+const privateGroup=(await request('messages/create',201,admin,{kind:'Group',title:'Private document discussion',members:[staffId,coworkerId]})).id;
+const attachments=(thread)=>`messages/attachments?conversation=${thread}&q=secure-chat`;
+await request(attachments(dm),404,admin);
+process.env.WALSHKEN_MESSAGE_DOCUMENTS_ENABLED='1';
+await request(attachments(dm),401);
+await request(attachments(dm),404,coworker);
+await request('messages/send',403,admin,{conversation:dm,document:chatDocument});
+await rule('document',chatDocument,'employee',staffId,['view','forward']);
+assert.deepEqual((await request(attachments(dm),200,staff)).documents,[{id:chatDocument,name:'secure-chat.png'}]);
+const sent=await request('messages/send',201,admin,{conversation:dm,document:chatDocument});
+const attached=(await request('conversation/'+dm,200,staff)).rows.find(row=>row.id===sent.id);
+assert.equal(attached.attachment_id,chatDocument);
+assert.equal(attached.attachment_name,'secure-chat.png');
+assert.equal(attached.body,'');
+await request('messages/send',403,admin,{conversation:privateGroup,document:chatDocument});
+await rule('document',chatDocument,'employee',coworkerId,['view']);
+await request('communication-policy/save',200,admin,{creation:'All staff',approval:'0',members:'Owners',forwarding:'All staff',external:'1',messageChanges:'Sender',retentionDays:30});
+const external=(await request('messages/create',201,admin,{kind:'External',title:'External project',members:[staffId,guestId]})).id;
+await request(attachments(external),403,staff);
+await request('messages/send',403,admin,{conversation:external,document:chatDocument});
+await request('messages/forward',403,admin,{conversation:dm,destination:external,id:sent.id});
+await request('messages/forward',201,staff,{conversation:dm,destination:privateGroup,id:sent.id});
+assert.equal((await request('conversation/'+privateGroup,200,coworker)).rows[0].attachment_id,chatDocument);
+const chatPreview=await post('access',{id:chatDocument,purpose:'view'},200,coworker);
+const chatToken='?token='+encodeURIComponent(chatPreview.token)+'&page=1';
+await documentRequest('content',200,coworker,undefined,chatToken);
+await documentRequest('content',403,staff,undefined,chatToken);
+await post('access',{id:chatDocument,purpose:'download'},403,coworker);
+await rule('document',chatDocument,'employee',coworkerId,['view'],'deny');
+const revokedAttachment=(await request('conversation/'+privateGroup,200,coworker)).rows[0];
+assert.equal(revokedAttachment.attachment_unavailable,1);
+assert.equal(revokedAttachment.attachment_id,null);
+assert.equal(revokedAttachment.attachment_name,null);
+await documentRequest('content',403,coworker,undefined,chatToken);
+await request('messages/forward',403,staff,{conversation:dm,destination:privateGroup,id:sent.id});
+const chatEvents=await db.prepare("SELECT id FROM doc_events WHERE document_id=? AND action='Shared in conversation'",[chatDocument]).all();
+assert.equal(chatEvents.results.length,2);
+console.log('PASS private and group chat attachments, authorized forwarding, guest and public denial, current ACLs, token binding and audit history');
+
+// Put the independent format checks in a fresh rate-limit window.
+offset+=60_001;
 // Build real supported file fixtures and rasterize all of them.
 function makePdf(){const objects=['<< /Type /Catalog /Pages 2 0 R >>','<< /Type /Pages /Count 1 /Kids [3 0 R] >>','<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>','<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];const content='BT /F1 18 Tf 40 740 Td (Private work instruction) Tj ET';objects.push('<< /Length '+content.length+' >>\nstream\n'+content+'\nendstream');let body='%PDF-1.4\n',offsets=[0];for(const[i,obj]of objects.entries()){offsets.push(Buffer.byteLength(body));body+=(i+1)+' 0 obj\n'+obj+'\nendobj\n';}const offset=Buffer.byteLength(body);body+='xref\n0 6\n0000000000 65535 f \n'+offsets.slice(1).map(v=>String(v).padStart(10,'0')+' 00000 n \n').join('')+'trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n'+offset+'\n%%EOF';return Buffer.from(body);}
 const zip=new JSZip();zip.file('[Content_Types].xml','<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');zip.file('_rels/.rels','<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');zip.file('word/document.xml','<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Private Word work instruction</w:t></w:r></w:p></w:body></w:document>');const docx=await zip.generateAsync({type:'nodebuffer'});

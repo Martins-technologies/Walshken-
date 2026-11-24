@@ -118,6 +118,17 @@ await request("view/payroll",403,staff);
 await request("payroll/rate",403,staff,{employee:staffId,amount:3000});
 assert.equal((await request("view/profile",200,admin)).compensation,null);
 console.log("PASS mandatory MFA, role enforcement, admin and employee profile edits, private effective-dated salary");
+await request("profile/contact",401,null,{phone:"+1 403 555 0130"});
+await request("profile/contact",400,staff,{phone:"phone me"});
+await request("profile/contact",200,staff,{phone:"+1 403 555 0130",role:"super_admin"});
+const staffContact=(await request("view/profile",200,staff)).row;
+assert.equal(staffContact.phone,"+1 403 555 0130");
+assert.equal(staffContact.role,"employee");
+assert.notEqual((await request("view/profile",200,admin)).row.phone,staffContact.phone);
+await request("profile/contact",200,staff,{phone:""});
+assert.equal((await request("view/profile",200,staff)).row.phone,null);
+console.log("PASS authenticated staff can edit only their own contact number");
+
 
 const imageBytes=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jSioAAAAASUVORK5CYII=","base64");
 const photo=new FormData();
