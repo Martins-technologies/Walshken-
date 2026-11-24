@@ -233,7 +233,7 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
   if(section==="document-security")return <DocumentView actor={actor} data={data} refresh={refresh} admin/>;
   if(section==="website")return <Website data={data} refresh={refresh}/>;
   if(section==="countries")return <Countries data={data} refresh={refresh}/>;
-  if(section==="governance") return <StaffGovernance employment={data.employment} retention={data.retention} scans={data.scans??[]} rows={rows} staff={data.staff??[]} units={data.units??[]} notice={data.privacyNotice} acknowledgements={data.acknowledgements??[]} policies={data.jurisdictionPolicies??[]} refresh={refresh}/>;
+  if(section==="governance") return <StaffGovernance scanRequired={data.scanRequired} employment={data.employment} retention={data.retention} scans={data.scans??[]} rows={rows} staff={data.staff??[]} units={data.units??[]} notice={data.privacyNotice} acknowledgements={data.acknowledgements??[]} policies={data.jurisdictionPolicies??[]} refresh={refresh}/>;
   if(section==="integrations")return <Integrations data={data} refresh={refresh}/>;
   if(section==="payroll")return <Payroll data={data} refresh={refresh}/>;
   if(section==="departments")return <Panel title="Organization units">

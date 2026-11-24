@@ -1,3 +1,4 @@
+import {requireEmployeeAction,requireOrganizationAction} from './staff-authority';
 import {integrationSettings} from "./integration-settings";
 import {employmentTermsOn} from "./employment-engine";
 import {localDate} from "./work";
@@ -29,9 +30,10 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
   if (area === "employees") {
     if ((!canManage(actor) || actor.role === "manager") && !actor.permissions?.some(rule=>rule.effect==="allow" && rule.action.startsWith("people."))) return fail(403,"Employee administration access is required.");
     if (action === "add") {
-      requireSuper(actor);
+      if(staffReadinessEnabled())await requireOrganizationAction(db,actor,'people.create');else requireSuper(actor);
       const target = id();
       const role = pick(data.role, roles.filter((role) => role !== "super_admin"), "staff role");
+      if(!canSuper(actor)&&role!=='employee')return fail(403,'Only a Super Admin may create privileged staff accounts.');
       const department = str(data.department, "department", 80, false);
       const division = str(data.division, "division", 80, false);
       const office = str(data.office, "office", 80, false);
@@ -71,7 +73,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       : await scopedEmployee(db,actor,target,editingOwnAdmin);
     if (!employee) return fail(404,"Employee unavailable for this action.");
     if (employee.role === "super_admin" && !editingOwnAdmin) return fail(403, "This administrator is protected.");
-    if (action === "edit" && !canSuper(actor)) {
+    if (action === "edit" && !canSuper(actor) && data.fullEmployment!==true) {
       if (!staffReadinessEnabled()) return fail(403,"Super Admin access is required.");
       await db.transaction(async tx => {
         const updated = await run(tx,`UPDATE employees e SET name=?,title=?,phone=? WHERE e.org_id=? AND e.id=? AND e.role='employee' AND ${visible.sql}`,
@@ -82,7 +84,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       return json({ok:true,message:"Personnel details saved."});
     }
     if (action === "edit") {
-      requireSuper(actor);
+      if(!canSuper(actor)){await requireEmployeeAction(db,actor,'people.edit',target,false);await requireEmployeeAction(db,actor,'people.employment',target,false);if(employee.country!==data.country||employee.jurisdiction!==data.jurisdiction)await requireEmployeeAction(db,actor,'people.jurisdiction',target,false);}
       const employeeNo = data.employeeNo === undefined ? employee.employee_no : str(data.employeeNo,"employee ID",40);
       const workEmail = data.email === undefined ? employee.email : email(data.email);
       const department = str(data.department, "department", 80, false);

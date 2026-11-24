@@ -1,3 +1,4 @@
+import {validateNationalPackage,type NationalTaxPackage} from "./payroll-tax-national";
 import type {CanadaAlbertaParameters} from "./payroll-tax-ca";
 import {D} from "./payroll-money";
 import {fail,integer,str} from "./server";
@@ -9,14 +10,18 @@ export type WorkSettings = {
 };
 export type OvertimeSettings = {dailyHours:number;weeklyHours:number;multiplier:string;weekStart:number};
 export type LeaveSettings = {workdays:number[];dayMinutes:number;yearStartMonth:number;proration:"None"|"Daily";categories:{code:string;name:string;paid:boolean;annualMinutes:number;carryMinutes:number;accrual:"Annual"|"Monthly";minimumServiceDays:number}[]};
+export type PayStandards={currency:string;minimumHourly:string;minimumMonthly:string;vacationPercent:string;longServiceYears:number;longServiceVacationPercent:string;paymentDeadlineDays:number;holidayPremiumMultiplier:string;holidayMethod:'Normal day'|'Average worked day'|'Percent of earnings';holidayWindowDays:number;holidayWindowBasis:'Before holiday'|'Complete workweeks';holidayDivisor:number;holidayPayOnNonWorkday:boolean;holidayPercent:string;minimumServiceDays:number;minimumWorkedDays:number;reportingHours:number;reportingRate:'Minimum wage'|'Ordinary wage'};
 export type HolidaySettings = {dates:{date:string;name:string;required:boolean}[]};
-export type PolicySettings = WorkSettings|OvertimeSettings|LeaveSettings|HolidaySettings|CanadaAlbertaParameters;
+export type PolicySettings = WorkSettings|OvertimeSettings|LeaveSettings|HolidaySettings|CanadaAlbertaParameters|NationalTaxPackage|PayStandards;
 
 export function validateEmploymentSettings(category:EmploymentCategory,input:unknown):PolicySettings|null {
  if(category==="Evidence")return null;
  if(typeof input!=="object"||input===null||Array.isArray(input))return fail(400,"Provide a complete policy configuration.");
  const v=input as Record<string,unknown>;
  if(category==="Canada Alberta payroll")return validateCanadaTaxParameters(v);
+ if(category==="Canada payroll")return validateCanadaTaxParameters(v,true);
+ if(category==="India payroll"||category==="Pakistan payroll")return validateNationalPackage(v);
+ if(category==="Pay standards")return validatePayStandards(v);
  if(category==="Work") {
   const settings:WorkSettings={
    maxShiftMinutes:integer(v.maxShiftMinutes,"maximum shift minutes",1,1440),
@@ -60,9 +65,9 @@ export function validateEmploymentSettings(category:EmploymentCategory,input:unk
  })};
 }
 
-function validateCanadaTaxParameters(v:Record<string,unknown>):CanadaAlbertaParameters {
+export function validateCanadaTaxParameters(v:Record<string,unknown>,regional=false):CanadaAlbertaParameters {
  const year=integer(v.year,"Canadian tax year",2026,2100);
- if(v.validFrom!==year+"-01-01"||v.validThrough!==year+"-12-31")return fail(400,"An annual tax version must explicitly cover its calendar year.");
+ if(!regional&&(v.validFrom!==year+"-01-01"||v.validThrough!==year+"-12-31")||regional&&(!(String(v.validFrom)>=year+"-01-01"&&String(v.validThrough)<=year+"-12-31"&&String(v.validFrom)<=String(v.validThrough))))return fail(400,"An annual tax version must explicitly cover its calendar year.");
  const result={...v,year,version:str(v.version,"tax parameter version",100),source:str(v.source,"tax source",1500),validFrom:String(v.validFrom),validThrough:String(v.validThrough)} as CanadaAlbertaParameters;
  for(const key of ["ympe","yampe","cpp2Max","bpaMax","bpaMin","abClaim","cea","cppExemption","bpaPhaseStart","bpaPhaseEnd","abSupplementThreshold","bonusFlatThreshold"] as const)result[key]=integer(v[key],key,0,10_000_000);
  for(const key of ["cppRate","cppBaseRate","eiRate","cppMax","eiMax","cpp2Rate","eiEmployerMultiplier","abSupplementRate","bonusFlatRate"] as const){
@@ -71,7 +76,7 @@ function validateCanadaTaxParameters(v:Record<string,unknown>):CanadaAlbertaPara
   result[key]=raw;
  }
  if(result.ympe<=result.cppExemption||result.bpaPhaseEnd<=result.bpaPhaseStart||result.yampe<result.ympe||new D(result.cppRate).lte(0)||new D(result.cppBaseRate).gt(result.cppRate)||result.bpaMin>result.bpaMax)return fail(400,"Canadian tax-year limits are inconsistent.");
- if(!result.source.startsWith('https://www.canada.ca/'))return fail(400,"Canadian native tax parameters require an official CRA source.");
+ if(!result.source.startsWith('https://www.canada.ca/')&&!(regional&&result.source.startsWith('https://www.revenuquebec.ca/')))return fail(400,"Canadian native tax parameters require an official CRA source.");
  for(const key of ["federalBrackets","provincialBrackets"] as const){
   const input=v[key];
   if(!Array.isArray(input)||input.length<2||input.length>10)return fail(400,"Enter the full supported federal and Alberta bracket tables.");
@@ -84,5 +89,25 @@ function validateCanadaTaxParameters(v:Record<string,unknown>):CanadaAlbertaPara
    return [threshold,rate,offset] as [number,string,number];
   });
  }
+ if(regional){
+  const r=v.region as import('./payroll-tax-regions').CanadaRegionSettings;
+  if(!r||!['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'].includes(r.code)||!r.name)return fail(400,'Select the actual Canadian payroll tax province or territory.');
+  for(const n of ['basic','basicMinimum','phaseFrom','phaseTo','workersMaximum'] as const)if(r[n]!==undefined)integer(r[n],n,0,10000000);
+  if((r.phaseFrom!==undefined||r.phaseTo!==undefined)&&!(r.phaseTo!>r.phaseFrom!))return fail(400,'Basic-amount phase-out dates are invalid.');
+  const rate=(x:unknown)=>{if(!/^\d*\.?\d+$/.test(String(x))||new D(String(x)).lt(0)||new D(String(x)).gt(1))return fail(400,'Invalid Canadian regional tax rate.');};
+  if(r.reduction){rate(r.reduction.rate);for(const n of ['amount','from','through'] as const)integer(r.reduction[n],n,0,10000000);}
+  for(const band of r.surtax??[]){rate(band.rate);integer(band.threshold,'surtax threshold',0,10000000);}
+  for(const band of r.health??[]){rate(band.rate);for(const n of ['from','base','cap'] as const)integer(band[n],n,0,10000000);}
+  if(r.dependantReduction)for(const n of ['basic','perDependant'] as const)integer(r.dependantReduction[n],n,0,10000000);
+  if(r.code==='QC'){for(const n of ['qpRate','qpEmployerRate','workersRate'] as const)rate(r[n]);if(!r.qpMax||r.workersMaximum===undefined)return fail(400,'The Quebec QPIP limit and worker deduction must be supplied for this year.');}
+  result.region=r;
+ }
  return result;
+}
+
+function validatePayStandards(v:Record<string,unknown>):PayStandards{
+ const amount=(key:string)=>{const raw=str(v[key],key,30);if(!/^\d+(?:\.\d{1,4})?$/.test(raw)||new D(raw).gt(100000000))return fail(400,'Invalid statutory earnings value.');return raw;};
+ if(!['CAD','INR','PKR'].includes(String(v.currency))||!['Normal day','Average worked day','Percent of earnings'].includes(String(v.holidayMethod))||!['Minimum wage','Ordinary wage'].includes(String(v.reportingRate)))return fail(400,'Complete currency, holiday method and reporting-pay basis.');
+ if(!['Before holiday','Complete workweeks'].includes(String(v.holidayWindowBasis))||typeof v.holidayPayOnNonWorkday!=='boolean')return fail(400,'Configure holiday reference-window boundaries and non-working-day entitlement.');
+ return {holidayWindowBasis:v.holidayWindowBasis as PayStandards['holidayWindowBasis'],holidayDivisor:integer(v.holidayDivisor,'fixed holiday divisor, or zero for actual worked days',0,366),holidayPayOnNonWorkday:v.holidayPayOnNonWorkday,currency:String(v.currency),minimumHourly:amount('minimumHourly'),minimumMonthly:amount('minimumMonthly'),vacationPercent:amount('vacationPercent'),longServiceYears:integer(v.longServiceYears,'long service years',0,80),longServiceVacationPercent:amount('longServiceVacationPercent'),paymentDeadlineDays:integer(v.paymentDeadlineDays,'payment deadline days',0,365),holidayPremiumMultiplier:amount('holidayPremiumMultiplier'),holidayMethod:v.holidayMethod as PayStandards['holidayMethod'],holidayWindowDays:integer(v.holidayWindowDays,'holiday reference days',1,366),holidayPercent:amount('holidayPercent'),minimumServiceDays:integer(v.minimumServiceDays,'holiday service days',0,3650),minimumWorkedDays:integer(v.minimumWorkedDays,'holiday qualifying workdays',0,366),reportingHours:integer(v.reportingHours,'minimum reporting hours',0,24),reportingRate:v.reportingRate as PayStandards['reportingRate']};
 }

@@ -1,3 +1,4 @@
+import {actionScope,hasAction,requireEmployeeAction} from "./staff-authority";
 import {applicablePolicy,employmentPersonOn,employmentTermsOn} from "./employment-engine";
 import type {WorkSettings} from "./employment-settings";
 import {staffReadinessEnabled} from './staff-permissions';
@@ -7,13 +8,14 @@ import {albertaRules,compliance,defaultPolicy,interval,iso,localInstant,totals,v
 import {localDate} from './work';
 export const workforceEnabled=()=>process.env.WALSHKEN_ATTENDANCE_ENABLED==='1';
 export const workDataset=()=>process.env.WALSHKEN_WORK_DATASET==='preview'?'preview':'production';
-export const policyAdmin=(actor:Actor)=>['super_admin','admin','hr'].includes(actor.role);
+export const policyAdmin=(actor:Actor)=>['super_admin','admin','hr'].includes(actor.role)||Boolean(actor.staffAction==='attendance.policy'&&hasAction(actor,'attendance.policy'));
+export function workforceScope(actor:Actor,alias='e',includeSelf=true){return staffReadinessEnabled()?actionScope(actor,actor.staffAction??'attendance.read',alias,includeSelf):scope(actor,alias,includeSelf);}
 export function requireWorkforce(actor:Actor){if(!workforceEnabled())return fail(404,'Attendance and schedules are not enabled on this deployment.');requireStaff(actor);}
 export type Attendance={id:string;org_id:string;employee_id:string;starts_at:string;ends_at:string|null;time_zone:string;shift_id:string|null;source:string;policy_snapshot:string;revision:number;note:string;release_stage:string};
 export type Shift={id:string;employee_id:string;starts_at:string;ends_at:string;title:string;location:string;time_zone:string;state:string;published:number;revision:number;policy_snapshot:string;series_id:string|null;group_key:string|null;release_stage:string};
 export type Sheet={id:string;attendance_id:string;employee_id:string;status:string;revision:number;work_date:string;gross_seconds:number;unpaid_seconds:number;paid_seconds:number;compliance_issues:string};
 export async function workforceEmployee(db:Db,actor:Actor,target:string,management=false){
- if(management&&!canManage(actor))return fail(403,'Scoped management access is required.');const s=scope(actor,'e');const e=await one<Actor>(db,`SELECT e.* FROM employees e WHERE e.org_id=? AND e.id=? AND e.role<>'guest' AND ${s.sql}`,actor.org_id,target,...s.args);if(!e)return fail(404,'Employee is outside your current scope.');return employmentPersonOn(db,e,localDate(now(),e.time_zone));
+ if(management&&!canManage(actor)&&(!actor.staffAction||!hasAction(actor,actor.staffAction)))return fail(403,'Scoped management access is required.');const s=workforceScope(actor,'e');const e=await one<Actor>(db,`SELECT e.* FROM employees e WHERE e.org_id=? AND e.id=? AND e.role<>'guest' AND ${s.sql}`,actor.org_id,target,...s.args);if(!e)return fail(404,'Employee is outside your current scope.');return employmentPersonOn(db,e,localDate(now(),e.time_zone));
 }
 export function requireActive(e:Actor){if(e.status!=='Active'||e.employment_status==='Ended')return fail(409,'This employee does not have an active employment account.');}
 export async function workforcePolicy(db:Db,employee:Actor,effectiveDay=localDate(now(),employee.time_zone)){
@@ -42,7 +44,7 @@ export async function notifyManagers(db:Db,actor:Actor,employee:Actor,title:stri
  const recipients=await all<Actor>(db,"SELECT * FROM employees WHERE org_id=? AND role IN('super_admin','admin','hr','manager') AND status='Active' AND employment_status<>'Ended'",actor.org_id);
  for(const person of recipients){if(person.id===employee.id)continue;const s=scope(person,'e',false);if(await one(db,`SELECT id FROM employees e WHERE e.id=? AND ${s.sql}`,employee.id,...s.args))await workNotify(db,actor,person.id,title,body,section);}
 }
-export async function attendanceFor(db:Db,actor:Actor,target:string){const s=scope(actor,'e'),entry=await one<Attendance>(db,`SELECT a.* FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE a.id=? AND a.org_id=? AND a.release_stage=? AND a.workflow_version=1 AND ${s.sql}`,target,actor.org_id,workDataset(),...s.args);if(!entry)return fail(404,'Attendance entry unavailable in your current scope.');return entry;}
+export async function attendanceFor(db:Db,actor:Actor,target:string){const s=workforceScope(actor,'e'),entry=await one<Attendance>(db,`SELECT a.* FROM attendance a JOIN employees e ON e.id=a.employee_id WHERE a.id=? AND a.org_id=? AND a.release_stage=? AND a.workflow_version=1 AND ${s.sql}`,target,actor.org_id,workDataset(),...s.args);if(!entry)return fail(404,'Attendance entry unavailable in your current scope.');return entry;}
 export const entryBreaks=(db:Db,target:string)=>all<WorkBreak>(db,'SELECT * FROM breaks WHERE attendance_id=? AND voided_at IS NULL ORDER BY starts_at',target);
 export function revision(row:{revision:number},v:unknown){if(integer(v,'record revision',1,2147483647)!==row.revision)return fail(409,'This record changed. Refresh before saving.');}
 export async function noWorkOverlap(db:Db,employee:string,start:string,end:string,except=''){
@@ -61,6 +63,7 @@ export async function recalculateSheet(db:Db,actor:Actor,entry:Attendance,status
  return {hours,issues};
 }
 export async function workforceAction(db:Db,actor:Actor,action:string,data:Record<string,unknown>){
+ actor={...actor,staffAction:action==='policy-save'?'attendance.policy':action==='correction-review'?'attendance.corrections':action==='timesheet-review'?'attendance.approve':'attendance.edit'};
  requireWorkforce(actor);const receivedAt=now();await throttle(db,`workforce:${actor.id}`,100,60000);
  return db.transaction(async tx=>{
   await one(tx,'SELECT id FROM organizations WHERE id=? FOR UPDATE',actor.org_id);
@@ -85,7 +88,8 @@ export async function workforceAction(db:Db,actor:Actor,action:string,data:Recor
   }
   if(['clock-in','clock-out','break-start','break-end'].includes(action)){
    const employee=await workforceEmployee(tx,actor,actor.id);requireActive(employee);const at=receivedAt,active=await one<Attendance>(tx,'SELECT * FROM attendance WHERE employee_id=? AND release_stage=? AND ends_at IS NULL',actor.id,workDataset());
-   if(action==='clock-in'){
+   if(staffReadinessEnabled()&&['clock-in','clock-out','break-start','break-end'].includes(action))await requireEmployeeAction(tx,actor,'attendance.edit',actor.id);
+  if(action==='clock-in'){
     if(active)return fail(409,'You are already clocked in.');const {policy}=await workforcePolicy(tx,employee);
     const shiftInput=str(data.shift,'scheduled shift',80,false);let shift:Shift|null=null;
     if(shiftInput){shift=await one<Shift>(tx,"SELECT * FROM shifts WHERE id=? AND employee_id=? AND release_stage=? AND state='Published' AND workflow_version=1",shiftInput,actor.id,workDataset());if(!shift||Date.parse(at)<Date.parse(shift.starts_at)-7200000||Date.parse(at)>=Date.parse(shift.ends_at))return fail(409,'Choose your current published shift (clock-in opens two hours before its start).');if(await one(tx,'SELECT id FROM attendance WHERE shift_id=? AND release_stage=?',shift.id,workDataset()))return fail(409,'This shift already has a work record. Request a correction if needed.');}
@@ -112,7 +116,7 @@ export async function workforceAction(db:Db,actor:Actor,action:string,data:Recor
    await insertBreaks(tx,target,breaks,policy);const entry=await attendanceFor(tx,actor,target);await recalculateSheet(tx,actor,entry,'Submitted');await workEvent(tx,actor,employee.id,'attendance',target,'Manual time submitted',{start,end,breaks,note});await notifyManagers(tx,actor,employee,'Manual work requires review',`${employee.name} submitted a manual work interval.`);return json({ok:true,id:target,message:'Manual entry recorded and submitted for independent approval.'},201);
   }
   if(action==='correction-request'){
-   const entry=await attendanceFor(tx,actor,str(data.id,'attendance entry',80));if(entry.employee_id!==actor.id&&!policyAdmin(actor))return fail(403,'Only the employee or a scoped administrator may propose attendance corrections.');const employee=await workforceEmployee(tx,actor,entry.employee_id);revision(entry,data.revision);const start=data.startsAt?iso(data.startsAt,'correct start'):localInstant(data.startsLocal,entry.time_zone,String(data.fold??'earlier')),end=data.endsAt?iso(data.endsAt,'correct end'):localInstant(data.endsLocal,entry.time_zone,String(data.fold??'earlier'));interval(start,end);if(end>now())return fail(400,'Corrected work must already have taken place.');await noWorkOverlap(tx,entry.employee_id,start,end,entry.id);
+   const entry=await attendanceFor(tx,actor,str(data.id,'attendance entry',80));if(entry.employee_id!==actor.id&&!policyAdmin(actor)&&!hasAction(actor,'attendance.edit'))return fail(403,'Only the employee or a scoped administrator may propose attendance corrections.');const employee=await workforceEmployee(tx,actor,entry.employee_id);revision(entry,data.revision);const start=data.startsAt?iso(data.startsAt,'correct start'):localInstant(data.startsLocal,entry.time_zone,String(data.fold??'earlier')),end=data.endsAt?iso(data.endsAt,'correct end'):localInstant(data.endsLocal,entry.time_zone,String(data.fold??'earlier'));interval(start,end);if(end>now())return fail(400,'Corrected work must already have taken place.');await noWorkOverlap(tx,entry.employee_id,start,end,entry.id);
    if(await one(tx,"SELECT id FROM corrections WHERE attendance_id=? AND release_stage=? AND status='Pending'",entry.id,workDataset()))return fail(409,'This entry already has a pending correction.');const policy=validatePolicy(JSON.parse(entry.policy_snapshot)),breaks=proposedBreaks(data.breaks??[],start,end,policy,entry.time_zone),target=id(),note=str(data.note,'correction reason',1500);
    await run(tx,'INSERT INTO corrections(id,attendance_id,employee_id,note,release_stage,proposed_start,proposed_end,proposed_breaks,attendance_revision,requested_by) VALUES(?,?,?,?,?,?,?,?,?,?)',target,entry.id,entry.employee_id,note,workDataset(),start,end,JSON.stringify(breaks),entry.revision,actor.id);await workEvent(tx,actor,entry.employee_id,'correction',target,'Attendance correction requested',{start,end,breaks,note});await notifyManagers(tx,actor,employee,'Attendance correction requested',employee.name+' has a proposed clock-record correction.');return json({ok:true,id:target,message:'Correction request sent to an administrator. Recorded hours stay unchanged until approval.'},201);
   }
@@ -120,7 +124,7 @@ export async function workforceAction(db:Db,actor:Actor,action:string,data:Recor
    const c=await one<{id:string;employee_id:string;requested_by:string;revision:number;status:string}>(tx,'SELECT * FROM corrections WHERE id=? AND release_stage=?',str(data.id,'correction',80),workDataset());if(!c||c.employee_id!==actor.id&&c.requested_by!==actor.id)return fail(404,'Correction unavailable.');revision(c,data.revision);if(c.status!=='Pending')return fail(409,'Only a pending request can be cancelled.');await run(tx,"UPDATE corrections SET status='Cancelled',revision=revision+1 WHERE id=?",c.id);await workEvent(tx,actor,actor.id,'correction',c.id,'Correction cancelled');return json({ok:true,message:'Correction cancelled.'});
   }
   if(action==='correction-review'){
-   if(!policyAdmin(actor))return fail(403,'Attendance corrections require a scoped administrator or HR.');
+   if(!policyAdmin(actor)&&!hasAction(actor,'attendance.corrections'))return fail(403,'Attendance corrections require a scoped administrator or HR.');
    const c=await one<{id:string;attendance_id:string;employee_id:string;status:string;revision:number;attendance_revision:number;requested_by:string;proposed_start:string;proposed_end:string;proposed_breaks:string;note:string}>(tx,'SELECT * FROM corrections WHERE id=? AND release_stage=?',str(data.id,'correction',80),workDataset());if(!c)return fail(404,'Correction unavailable.');const employee=await workforceEmployee(tx,actor,c.employee_id,true);if(c.employee_id===actor.id||c.requested_by===actor.id)return fail(403,'You cannot review your own hours or a correction you proposed.');revision(c,data.revision);if(c.status!=='Pending')return fail(409,'This correction is no longer pending.');
    const decision=pick(data.decision,['Approved','Returned'] as const,'correction decision'),note=str(data.note,'review reason',1500),entry=await attendanceFor(tx,actor,c.attendance_id);
    if(decision==='Approved'){
@@ -137,12 +141,12 @@ export async function workforceAction(db:Db,actor:Actor,action:string,data:Recor
     if(sheet.employee_id!==actor.id)return fail(403,'Submit your own timesheet.');if(!['Draft','Returned'].includes(sheet.status))return fail(409,'Only a draft or returned timesheet can be submitted.');if(!entry.ends_at)return fail(409,'Clock out first.');
     await run(tx,"UPDATE timesheets SET status='Submitted',submitted_at=?,revision=revision+1,updated_at=? WHERE id=?",now(),now(),sheet.id);await workEvent(tx,actor,employee.id,'timesheet',sheet.id,'Timesheet submitted');await notifyManagers(tx,actor,employee,'Timesheet ready for review',employee.name+' submitted recorded hours.');return json({ok:true,message:'Timesheet submitted for approval.'});
    }
-   if(!canManage(actor)||employee.id===actor.id)return fail(403,'An authorized manager must review another employee’s hours.');if(sheet.status!=='Submitted')return fail(409,'This timesheet is not awaiting approval.');
+   if((!canManage(actor)&&!hasAction(actor,'attendance.approve'))||employee.id===actor.id)return fail(403,'An authorized manager must review another employee’s hours.');if(sheet.status!=='Submitted')return fail(409,'This timesheet is not awaiting approval.');
    const decision=pick(data.decision,['Approved','Returned'] as const,'timesheet decision'),note=str(data.note,'review note',1500,decision==='Returned');
    if(decision==='Approved'){
     await workforcePolicy(tx,employee);if(!entry.ends_at||Date.parse(entry.ends_at)-Date.parse(entry.starts_at)>86400000)return fail(409,'Correct the missed or excessive clock interval before approval.');
     const breaks=await entryBreaks(tx,entry.id);const hours=totals(entry.starts_at,entry.ends_at,breaks);if(hours.gross!==sheet.gross_seconds||hours.unpaid!==sheet.unpaid_seconds||hours.paid!==sheet.paid_seconds)return fail(409,'The recorded totals changed. Recalculate through an attendance correction first.');
-    const issues=JSON.parse(sheet.compliance_issues) as string[];if(issues.length&&(!policyAdmin(actor)||data.acknowledge!==true||!note))return fail(409,'A scoped administrator must document and acknowledge the compliance incident before approving actual pay. The incident remains visible and no missing break is deducted.');
+    const issues=JSON.parse(sheet.compliance_issues) as string[];if(issues.length&&((!policyAdmin(actor)&&!hasAction(actor,'attendance.approve'))||data.acknowledge!==true||!note))return fail(409,'A scoped administrator must document and acknowledge the compliance incident before approving actual pay. The incident remains visible and no missing break is deducted.');
    }
    await run(tx,'UPDATE timesheets SET status=?,reviewer_id=?,reviewed_at=?,review_note=?,revision=revision+1,updated_at=? WHERE id=?',decision,actor.id,now(),note,now(),sheet.id);await workEvent(tx,actor,employee.id,'timesheet',sheet.id,'Timesheet '+decision.toLowerCase(),{note,complianceIssues:JSON.parse(sheet.compliance_issues),incidentAcknowledged:data.acknowledge===true});await workNotify(tx,actor,employee.id,'Timesheet '+decision.toLowerCase(),note||'Your recorded hours were reviewed.','timesheets');return json({ok:true,message:'Timesheet '+decision.toLowerCase()+'.'});
   }

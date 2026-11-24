@@ -148,5 +148,5 @@ export async function governanceData(db: Db, actor: Actor) {
   const acknowledgements = notice ? await all(db,`SELECT e.id,e.name,a.created_at
     FROM employees e LEFT JOIN staff_privacy_acknowledgements a ON a.employee_id=e.id AND a.notice_id=?
     WHERE e.org_id=? AND e.status='Active' AND e.role<>'guest' ORDER BY e.name`,notice.id,actor.org_id) : [];
-  return json({rows:rules,staff:employees,units,privacyNotice:notice,acknowledgements,jurisdictionPolicies:policies,employment,scans,retention});
+  return json({rows:rules,staff:employees,units,privacyNotice:notice,acknowledgements,jurisdictionPolicies:policies,employment,scans,retention,scanRequired:process.env.WALSHKEN_MALWARE_SCANNING_REQUIRED!=="0"});
 }

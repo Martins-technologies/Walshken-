@@ -8,4 +8,4 @@ export const rounded=(value:Decimal.Value,digits=2)=>new D(value).toDecimalPlace
 export function toMinor(value:Decimal.Value,digits=2){const n=new D(value).mul(new D(10).pow(digits)).toDecimalPlaces(0).toNumber();if(!Number.isSafeInteger(n)||Math.abs(n)>2_000_000_000)return fail(400,'Calculated amount exceeds the supported range.');return n;}
 export const prorate=(amount:number,numerator:number,denominator:number)=>new D(amount).mul(numerator).div(denominator).toDecimalPlaces(0).toNumber();
 export function payForSeconds(rate:number,seconds:number,multiplier='1'){return new D(rate).mul(seconds).div(3600).mul(multiplier).toDecimalPlaces(0).toNumber();}
-export const zeroBalance=()=>({gross:0,taxable:0,pensionable:0,insurable:0,federal:0,provincial:0,cpp:0,cpp2:0,ei:0,qpp:0,qpip:0,bonus:0,bonusPretax:0,bonusEnhanced:0,bonusCpp:0,bonusEi:0,vacationAccrued:0,vacationUsed:0});
+export const zeroBalance=()=>({gross:0,taxable:0,pensionable:0,insurable:0,federal:0,provincial:0,cpp:0,cpp2:0,ei:0,qpp:0,qpp2:0,qpip:0,bonus:0,bonusPretax:0,bonusEnhanced:0,bonusCpp:0,bonusEi:0,vacationAccrued:0,vacationUsed:0});

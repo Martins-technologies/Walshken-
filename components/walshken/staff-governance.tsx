@@ -10,8 +10,8 @@ import { ActionForm, Disclosure, Panel, Quick, Table, options, type RecordRow, t
 export type AuditFilters = {q?:string;query:string;employee?:string;administrator?:string;country?:string;department?:string;from:string;to:string;category:string;categories:string[];page:number;next:boolean};
 const text = (name:string,label:string,type="text",required=true): Field => ({name,label,type,required});
 
-export function StaffGovernance({rows,staff,units,notice,acknowledgements,policies,employment,scans,retention,refresh}: {
-  retention?:RetentionData|null;scans:RecordRow[];employment?:EmploymentManagementData|null;rows:RecordRow[];staff:RecordRow[];units:RecordRow[];notice?:RecordRow|null;acknowledgements:RecordRow[];policies:RecordRow[];refresh:()=>void;
+export function StaffGovernance({rows,staff,units,notice,acknowledgements,policies,employment,scans,retention,scanRequired=true,refresh}: {
+  scanRequired?:boolean;retention?:RetentionData|null;scans:RecordRow[];employment?:EmploymentManagementData|null;rows:RecordRow[];staff:RecordRow[];units:RecordRow[];notice?:RecordRow|null;acknowledgements:RecordRow[];policies:RecordRow[];refresh:()=>void;
 }) {
   const [principal,setPrincipal] = useState("employee");
   const [scope,setScope] = useState("organization");
@@ -63,7 +63,7 @@ export function StaffGovernance({rows,staff,units,notice,acknowledgements,polici
         {row.status==="Draft"&&<ActionForm path="governance/jurisdiction-verify" extra={{id:row.id}} fields={[text("reason","Independent verification reference")]} submit="Verify evidence" refresh={refresh}/>}
       </Disclosure>)}
     </Panel>
-    {employment&&<Panel title="Upload security" note="Pending, failed and infected uploads remain private. A clean result is required before a file can be released.">
+    {employment&&<Panel title="Upload security" note={scanRequired?"Pending, failed and infected uploads remain private. A clean result is required before a file can be released.":"Live malware scanning is deferred for this deployment. File-format validation and access permissions remain active. Uploads are not certified malware-free."}>
       <Table rows={scans} columns={[{key:'name',title:'Uploaded by'},{key:'file_name',title:'File'},{key:'created_at',title:'Received'},{key:'status',title:'Scan result'}]}/>
     </Panel>}
     {retention&&<RetentionManagement data={retention} refresh={refresh}/>}

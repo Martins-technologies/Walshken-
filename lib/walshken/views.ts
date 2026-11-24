@@ -1,3 +1,6 @@
+import {enterpriseEnabled} from './payroll-statutory';
+import {privacyData} from './staff-privacy';
+import {actionScope,hasAction} from './staff-authority';
 import {integrationStatuses} from "./integration-settings";
 import {employmentTermsOn} from "./employment-engine";
 import {calculatorIntegrationId} from "./payroll-calculator";
@@ -23,11 +26,13 @@ import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
+  if(section==="privacy")return enterpriseEnabled()&&actor.role!=="guest";
   if(section==="governance") return staffReadinessEnabled() && canSuper(actor);
   if(collaborationRelease()&&!releasedSections.has(section)&&!(holidaysEnabled()&&["holidays","holiday-calendar"].includes(section))&&!(payrollEnabled()&&["payroll","salary"].includes(section))&&!(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section))&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
   if(section==="holiday-calendar")return holidaysEnabled()&&actor.role!=="guest";
   if(holidaysEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
   if(actor.role==="guest") return ["dashboard","profile","messages","calls","documents","notifications"].includes(section);
+  if(section==="audit"&&staffReadinessEnabled())return hasAction(actor,"audit.read");
   if(["departments","roles","document-security","audit","website","countries","integrations"].includes(section)) return canSuper(actor);
   if(workforceEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
   if(section==="payroll") return hasPayrollAccess(actor);
@@ -61,6 +66,7 @@ async function notifications(db:Db,actor:Actor){
 
 export async function view(db:Db,actor:Actor,section:string,params:URLSearchParams){
   if(!canOpen(actor,section)) return fail(403,"You do not have access to this section.");
+  if(section==="privacy")return privacyData(db,actor);
   if(section==="governance") return governanceData(db,actor);
   if(holidaysEnabled()&&["holidays","holiday-calendar"].includes(section))return holidayData(db,actor,params);
   if(payrollEnabled()&&["payroll","salary"].includes(section))return payrollData(db,actor,params);
@@ -169,6 +175,10 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       (canSuper(actor)||staffReadinessEnabled())?all(db,"SELECT id,kind,name FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id):[],
       canSuper(actor)?all(db,"SELECT id,name FROM employees WHERE org_id=? AND status='Active' AND role IN ('super_admin','admin','hr','manager') ORDER BY name",actor.org_id):[],
     ]);
+    if(staffReadinessEnabled()&&!canSuper(actor)){
+      const sensitive=actionScope(actor,'people.sensitive'),permitted=await all<{id:string}>(db,`SELECT e.id FROM employees e WHERE e.org_id=? AND (${sensitive.sql})`,actor.org_id,...sensitive.args),ids=new Set(permitted.map(r=>r.id));
+      for(const row of rows)if(!ids.has(String(row.id)))for(const key of ['phone','hire_date','contract_start','employment_end','expected_hours','break_policy','leave_days','holiday_days','work_schedule','holiday_calendar'])delete row[key];
+    }
     return json({rows,units,staff,personnelControls:staffReadinessEnabled() && !canSuper(actor),readiness:staffReadinessEnabled(),registry:{query,page,pages,total}});
   }
   if(section==="departments") return json({readiness:staffReadinessEnabled(),rows:await all(db,"SELECT id,kind,name,country,region,time_zone FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id)});

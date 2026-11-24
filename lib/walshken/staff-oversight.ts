@@ -1,3 +1,4 @@
+import {actionScope,hasAction} from './staff-authority';
 import { all, one, run, id, now, digest, orgId, audit, date, integer, str, fail, json, requireSuper, type Actor, type Db } from "./server";
 import { localDate } from "./work";
 import { workDataset, workforceEnabled } from "./workforce";
@@ -27,7 +28,8 @@ export async function recordSignInFailure(db: Db, account: string, status: numbe
 }
 
 export async function auditExplorer(db: Db, actor: Actor, params: URLSearchParams) {
-  requireSuper(actor);
+  const exporting=params.get('export')==='csv';if(!hasAction(actor,exporting?'audit.export':'audit.read'))return fail(403,'Audit access is not authorized.');
+  const authority=actionScope(actor,exporting?'audit.export':'audit.read','subject',false);
   const from = date(params.get("from"),"start date",false) ?? "";
   const to = date(params.get("to"),"end date",false) ?? "";
   const query = str(params.get("q"),"search text",100,false);
@@ -52,12 +54,12 @@ export async function auditExplorer(db: Db, actor: Actor, params: URLSearchParam
     WITH events AS (${selected.map(source=>`SELECT x.*, '${source.type}' AS category FROM (${source.sql}) x`).join(" UNION ALL ")})
     SELECT a.*,e.name,subject.name AS employee,subject.country,subject.department_id FROM events a
     LEFT JOIN employees e ON e.id=a.actor_id AND e.org_id=?
-    LEFT JOIN employees subject ON subject.id=a.employee_id AND subject.org_id=e.org_id
-    WHERE (?='' OR strpos(lower(concat_ws(' ',a.action,a.entity,a.target_id,e.name)),lower(?))>0)
+    LEFT JOIN employees subject ON subject.id=a.employee_id AND subject.org_id=?
+    WHERE (?=1 OR (${authority.sql})) AND (?='' OR strpos(lower(concat_ws(' ',a.action,a.entity,a.target_id,e.name)),lower(?))>0)
     AND (?='' OR left(a.created_at,10)>=?) AND (?='' OR left(a.created_at,10)<=?)
     AND (?='' OR a.employee_id=?) AND (?='' OR a.actor_id=?)
     AND (?='' OR subject.country=?) AND (?='' OR subject.department_id=?)
-    ORDER BY a.created_at DESC,a.category,a.id LIMIT ? OFFSET ?`,...selected.flatMap(source=>source.args),actor.org_id,query,query,from,from,to,to,
+    ORDER BY a.created_at DESC,a.category,a.id LIMIT ? OFFSET ?`,...selected.flatMap(source=>source.args),actor.org_id,actor.org_id,actor.role==='super_admin'?1:0,...authority.args,query,query,from,from,to,to,
     employee,employee,administrator,administrator,country,country,department,department,csv?1001:51,csv?0:(page-1)*50) : [];
   if(csv){
     if(rows.length>1000)return fail(400,'Narrow the audit filters to export up to 1,000 events.');

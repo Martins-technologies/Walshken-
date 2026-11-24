@@ -1,3 +1,4 @@
+import {privacyAction,privacyDownload} from "@/lib/walshken/staff-privacy";
 import {governanceAction} from "@/lib/walshken/staff-governance";
 import {workforceEnabled} from '@/lib/walshken/workforce';
 import { collaborationRelease, releasedMutationAreas } from "@/lib/walshken/release";
@@ -29,6 +30,7 @@ export async function GET(request: Request, context: Context) {
     }
     if(collaborationRelease()&&["files","task-comments"].includes(area))return fail(404,"This feature is not released yet.");
     const params = new URL(request.url).searchParams;
+    if (area === "privacy-download") return await privacyDownload(db,actor,action);
     if (area === "profile" && action === "photo") return await staffAvatar(db, actor);
     if (area === "meeting") return await meetingDetail(db,actor,action);
     if (area === "meeting-attendance") return await attendanceReport(db,actor,action);
@@ -60,8 +62,9 @@ export async function POST(request: Request, context: Context) {
     if(area==="profile"&&action==="photo") return await updateAvatar(db,actor,request);
     if(area==="profile"&&action==="remove-photo") return await removeAvatar(db,actor);
     if(area==="documents"&&action==="upload") return await uploadDocument(db,actor,request);
-    if(collaborationRelease()&&area!=="governance"&&!releasedMutationAreas.has(area))return fail(404,"This feature is not released yet.");
+    if(collaborationRelease()&&area!=="governance"&&area!=="privacy"&&!releasedMutationAreas.has(area))return fail(404,"This feature is not released yet.");
     const data=await payload(request);
+    if(area==="privacy")return await privacyAction(db,actor,action,data);
     if(area==="governance") return await governanceAction(db,actor,action,data);
     if(area==="profile"&&action==="contact") return await updateContactNumber(db,actor,data);
     if(area==="mfa") return await staffMfaAction(request,db,actor,action,data);

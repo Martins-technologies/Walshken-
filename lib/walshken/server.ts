@@ -12,7 +12,7 @@ export type Row = Record<string, string | number | null>;
 export type Actor = {
   id: string; org_id: string; auth_id: string | null; email: string; name: string; role: Role; status: string;
   employee_no: string; department_id: string | null; division_id: string | null; manager_id: string | null;
-  office_id: string | null; country: string; jurisdiction: string; time_zone: string; break_policy: string; employment_status?: string; mfa_enabled?: number; permissions?: StaffPermission[]; payrollAction?: import("./staff-permissions").StaffAction;
+  office_id: string | null; country: string; jurisdiction: string; time_zone: string; break_policy: string; employment_status?: string; mfa_enabled?: number; permissions?: StaffPermission[]; payrollAction?: import("./staff-permissions").StaffAction; staffAction?: import("./staff-permissions").StaffAction;
 };
 export const orgId = "walshken";
 export const staffMfaRequired = () => process.env.WALSHKEN_REQUIRE_STAFF_MFA === "1";

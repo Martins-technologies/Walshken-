@@ -24,6 +24,7 @@ const notes:Record<string,string>={
   documents:"Upload and share files with permitted colleagues.",
   directory:"Find teammates in your workspace scope.",
   notifications:"Keep up with assignments, decisions and schedule updates.",
+  privacy:"Request authorized personal-data exports and manage retained archive copies.",
   profile:"Review your employment record and recent sessions.",
   employees:"Manage staff access and onboarding.",
   departments:"Set up divisions, departments and offices.",

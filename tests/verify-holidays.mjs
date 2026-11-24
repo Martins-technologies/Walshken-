@@ -17,6 +17,7 @@ mkdirSync(join(sandbox,'public'));copyFileSync(join(process.cwd(),'public/payrol
 const holidayMigration=readFileSync(join(process.cwd(),'supabase/migrations/20261123153905_canadian_holidays_compliance.sql'),'utf8'),holidaySeed=holidayMigration.slice(holidayMigration.indexOf('INSERT INTO holiday_rules'));writeFileSync(join(sandbox,'drizzle/0014_holidays.sql'),holidayMigration.slice(0,holidayMigration.indexOf('INSERT INTO holiday_rules')));
 if(process.env.WALSHKEN_TEST_READINESS==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261124192707_staff_readiness.sql"),join(sandbox,"drizzle/0015_readiness.sql"));
 if(process.env.WALSHKEN_TEST_EMPLOYMENT==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261124211828_dynamic_employment_engine.sql"),join(sandbox,"drizzle/0016_employment.sql"));
+if(process.env.WALSHKEN_TEST_ENTERPRISE==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261124223624_enterprise_payroll_privacy_workflows.sql"),join(sandbox,"drizzle/0017_enterprise.sql"));
 const repository=process.cwd();
 process.chdir(sandbox);
 process.on("exit", () => rmSync(sandbox, { recursive: true, force: true }));
@@ -143,6 +144,10 @@ assert.equal(canadianCalendars.length,14);const counts={'CA-AB':9,'CA-BC':11,'CA
 const ab=canadianCalendars.find(c=>c.code==='CA-AB');assert.equal(holidayDates(ab,2026).find(h=>h.key==='victoria').date,'2026-05-18');assert.equal(holidayDates(ab,2027).find(h=>h.key==='good-friday').date,'2027-03-26');assert.equal(holidayDates(ab,2028).find(h=>h.key==='family').date,'2028-02-21');assert.equal(holidayDates(canadianCalendars.find(c=>c.code==='CA-MB'),2026).find(h=>h.key==='remembrance').status,'Special law');assert.equal(holidayDates(canadianCalendars.find(c=>c.code==='CA-QC'),2026,'Easter Monday').find(h=>h.key==='quebec-easter').date,'2026-04-06');
 console.log('PASS all fourteen Canadian legal calendars, movable dates, statutory/optional/special-law distinctions and scoped access');
 await p('settings-save',{revision:0,legalName:'Isolated verified employer',address:'Local private employment record',country:'CA',businessNumber:'LOCAL-ONLY',statementNote:'Isolated tests only'});await p('permission-save',{employee:hr.id,organizationAccess:true});
+if(process.env.WALSHKEN_TEST_ENTERPRISE_ONLY==='1'){
+ globalThis.Date=RealDate;process.env.WALSHKEN_STAFF_READINESS_ENABLED='1';process.env.WALSHKEN_EMPLOYMENT_ENGINE_ENABLED='1';
+ await request('view/governance',200,admin);const {verifyEnterprise}=await import('./verify-enterprise.mjs');await verifyEnterprise({db,request,admin,staff,hr,person,adminId,staffId,runId});console.log('ENTERPRISE INTEGRATION TESTS PASSED');process.exit(0);
+}
 const policy={...defaultPayPolicy(employee),frequency:'Weekly',reviewed:true,reference:'Verified TD1 and standard employment agreement'};
 async function setup(target){await p('profile-save',{employee:target,effectiveOn:'2026-01-01',currentId:'',note:'Verified payroll profile',policy},201);await p('rate-add',{employee:target,amount:'25',currency:'CAD',effectiveOn:'2026-01-01',unit:'Hour',note:'Authorized actual effective rate'},201);const o=await p('opening-add',{employee:target,year:2026,asOf:'2025-12-31',balances:Object.fromEntries(Object.keys(zeroBalance()).map(k=>[k,'0'])),reference:'Confirmed no previous 2026 payroll in isolated test'},201);await p('opening-review',{id:o.id,revision:1,decision:'Approved',note:'Independently verified opening balances'},200,hr);await h('private-record-save',{employee:target,currentId:'',dateOfBirth:'1990-03-08',address:'Private isolated home address',reference:'Verified private employment evidence'},201);return h('assignment-save',{country:'CA',province:'AB',jurisdiction:'CA-AB',calendar:'CA-AB',effectiveOn:'2026-01-01',location:'Verified Calgary work location',office:'',ruleId:'holiday-rule-CA-AB-2026-v1',reference:'Verified employment location and schedule',weekdays:[1,2,3,4,5],dailyMinutes:480,targetType:'Employees',employees:[target],currentId:''},201);}
 await setup(staffId);assert.ok((await request('view/profile',200,staff)).row.holiday_calendar.includes('Alberta'));let f=await facts('2026-07-01');assert.equal(f.eligible,null);assert.ok(f.issues.some(x=>x.includes('complete work-history')));await h('assessment-submit',{employee:staffId,day:'2026-07-01',reference:'Cannot assume missing history means ineligible'},409);
@@ -264,5 +269,8 @@ if (process.env.WALSHKEN_TEST_READINESS==="1") {
 if(process.env.WALSHKEN_TEST_EMPLOYMENT==="1") {
  const {verifyEmployment}=await import('./verify-employment.mjs');
  await verifyEmployment({db,request,admin,staff,hr,person,adminId,staffId,runId});
+}
+if(process.env.WALSHKEN_TEST_ENTERPRISE==='1'){
+ const {verifyEnterprise}=await import('./verify-enterprise.mjs');await verifyEnterprise({db,request,admin,staff,hr,person,adminId,staffId,runId});
 }
 console.log('PART H HOLIDAY TESTS PASSED');globalThis.Date=RealDate;process.exit(0);

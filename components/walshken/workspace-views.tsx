@@ -1,4 +1,5 @@
 "use client";
+import {StaffPrivacy,type PrivacyData} from "./staff-privacy";
 import {StaffCalendar} from "./staff-calendar";
 import type {StaffCalendarData} from "@/lib/walshken/staff-calendar-types";
 import {HolidayWorkspace} from "./holidays";
@@ -18,7 +19,9 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  privacy?:boolean;events?:RecordRow[];categories?:readonly string[];actorId?:string;canManage?:boolean;canExport?:boolean;canDispose?:boolean;
   retention?:import("./retention-management").RetentionData|null;
+  scanRequired?:boolean;
   scans?:RecordRow[];
   employment?:import("./employment-management").EmploymentManagementData|null;
   readiness?:boolean;
@@ -234,6 +237,7 @@ export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:st
   if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
+  if(section==="privacy")return <StaffPrivacy data={data as PrivacyData} refresh={refresh}/>;
   if(section==="dashboard")return <Overview actor={actor} data={data} refresh={refresh}/>;
   if(section==="tasks")return data.managedTasks?<TaskWorkspace actor={actor} initial={data}/>:<Tasks actor={actor} data={data} refresh={refresh}/>;
   if(["attendance","shifts","timesheets","leave"].includes(section))return <TimeViews section={section} actor={actor} data={data} refresh={refresh}/>;

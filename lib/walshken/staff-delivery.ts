@@ -2,7 +2,7 @@ import {publicEndpoint} from "./payroll-calculator";
 import {employmentEngineEnabled} from "./employment-catalog";
 import {quarantinedUpload} from "./upload-quarantine";
 import { createHash } from "node:crypto";
-import { decryptSettings, fail, one, type Actor,type Db } from "./server";
+import { audit, decryptSettings, fail, one, type Actor,type Db } from "./server";
 import { staffReadinessEnabled } from "./staff-permissions";
 
 type ScannerSettings = { endpoint: string; apiKey: string };
@@ -30,6 +30,10 @@ export async function verifyScanner(settings: ScannerSettings) {
 
 export async function scanStaffUpload(db: Db, bytes: Buffer,actor:Actor,name:string) {
   if (!staffReadinessEnabled()) return;
+  if(process.env.WALSHKEN_MALWARE_SCANNING_REQUIRED==='0'){
+    await audit(db,actor,'Upload screening deferred by deployment policy; format validation remains required','upload screening').run();
+    return;
+  }
   if(employmentEngineEnabled())return quarantinedUpload(db,actor,bytes,name,()=>scanBytes(db,bytes));
   if(await scanBytes(db,bytes)==='infected')return fail(422,'This file did not pass malware screening.');
 }

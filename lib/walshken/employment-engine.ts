@@ -24,14 +24,14 @@ export async function employmentPersonOn<T extends Pick<Actor,"id"|"org_id">>(db
  return terms?{...employee,...terms,id:employee.id,employmentTermsId:terms.id}:employee;
 }
 
-export async function applicablePolicy(db:Db,employee:Pick<Actor,"id"|"org_id">,day:string,category:EmploymentCategory,required=true) {
+export async function applicablePolicy(db:Db,employee:Pick<Actor,"id"|"org_id">,day:string,category:EmploymentCategory,required=true,taxJurisdiction?:string) {
  const terms=await employmentTermsOn(db,employee,day);
  if(!terms){if(required)return fail(409,"Record effective employment circumstances before applying this policy.");return null;}
  const rows=await all<EmploymentPolicy>(db,`SELECT v.* FROM staff_jurisdiction_versions v
   WHERE v.org_id=? AND v.country=? AND v.jurisdiction=? AND v.classification=? AND v.category=?
   AND v.effective_from<=? AND v.effective_through>=?
   AND (SELECT decision FROM staff_jurisdiction_decisions WHERE version_id=v.id ORDER BY created_at DESC,id DESC LIMIT 1)='Verified'
-  ORDER BY v.effective_from DESC,v.created_at DESC,v.id DESC`,employee.org_id,terms.country,terms.jurisdiction,terms.classification,category,day,day);
+  ORDER BY v.effective_from DESC,v.created_at DESC,v.id DESC`,employee.org_id,terms.country,taxJurisdiction??terms.jurisdiction,terms.classification,category,day,day);
  if(!rows.length){if(required)return fail(409,`${category} policy for ${terms.jurisdiction} / ${terms.classification} on ${day} is PENDING LEGAL VERIFICATION.`);return null;}
  const row=rows[0];
  if(rows.some(previous=>previous.id!==row.id&&!isPredecessor(previous.id,row,rows)))return fail(409,"Overlapping policy coverage needs a verified supersession chain.");
