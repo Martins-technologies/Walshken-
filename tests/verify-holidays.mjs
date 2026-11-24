@@ -228,6 +228,35 @@ if (process.env.WALSHKEN_TEST_READINESS==="1") {
   const workSeed={...defaultPolicy(),manualAllowed:true};
   await w("policy-save",{employee:staffId,revision:(await workforcePolicy(db,staffActor)).revision,policy:workSeed,effectiveOn:tomorrow});
   assert.equal((await workforcePolicy(db,staffActor,tomorrow)).policy.manualAllowed,true);
+  const orgUnit = "QA Office Review";
+  await request("organization/add",201,admin,{kind:"Office",name:orgUnit,country:"IN",region:"Delhi",timeZone:"Asia/Kolkata"});
+  const office=(await request("view/departments",200,admin)).rows.find(row=>row.name===orgUnit);
+  await request("organization/edit",403,staff,{id:office.id,name:"Changed office",country:"IN",region:"Delhi",timeZone:"Asia/Kolkata"});
+  await request("organization/edit",200,admin,{id:office.id,name:"Changed office",country:"IN",region:"Delhi",timeZone:"Asia/Kolkata"});
+  await request("organization/delete-unused",400,admin,{id:office.id,confirmation:""});
+  await request("organization/delete-unused",200,admin,{id:office.id,confirmation:"DELETE"});
+  assert.equal((await request("view/departments",200,admin)).rows.some(row=>row.id===office.id),false);
+  const paySettings=await paylist();
+  await p("settings-save",{...paySettings.settings,revision:paySettings.settingsRevision,independentApproval:true});
+  assert.equal(defaultPayPolicy({country:"PK",jurisdiction:"PK-PB"}).currency,"PKR");
+  assert.equal(defaultPayPolicy({country:"IN",jurisdiction:"IN-DL"}).overtime,"Configured rule");
+  const shortWorker=await person('employee','Reporting pay regression employee','H-SHORT-'+runId);
+  await setup(shortWorker.id);
+  const shortId=(await w('manual-entry',{employee:shortWorker.id,startsAt:localInstant('2026-08-20T09:00','America/Edmonton'),
+    endsAt:localInstant('2026-08-20T10:00','America/Edmonton'),breaks:[],note:'Required one-hour reporting period'},201)).id;
+  const shortSheet=await db.prepare('SELECT * FROM timesheets WHERE attendance_id=?',[shortId]).first();
+  await w('timesheet-review',{id:shortSheet.id,revision:shortSheet.revision,decision:'Approved',note:'Verified required reporting',acknowledge:true},200,hr);
+  const shortPeriod=await period('Required reporting pay','2026-08-17','2026-08-23',shortWorker.id);
+  await p('calculate',{period:shortPeriod,employee:shortWorker.id});
+  let shortResult=await paylist(shortPeriod);
+  assert.equal(shortResult.rows[0].calculation.lines.find(line=>line.kind==="Reporting pay").amount,2000);
+  assert.equal(shortResult.rows[0].regular_seconds,3600);
+  await p('period-submit',{id:shortPeriod,revision:shortResult.selected.revision});
+  shortResult=await paylist(shortPeriod);
+  const review={id:shortResult.rows[0].id,revision:shortResult.rows[0].revision,decision:"Approved",note:"Independent review of the required work",acknowledge:true};
+  await p("payroll-review",review,403,admin);
+  await p("payroll-review",review,200,hr);
+  console.log("PASS organization unit management, local currency defaults, reporting pay calculation and independent payroll approval");
   await assert.rejects(()=>db.prepare("UPDATE staff_jurisdiction_versions SET version='silent' WHERE id=?",[entry.id]).run(),/immutable/i);
   console.log("PASS governance, independent jurisdiction review, staff privacy, scoped permission changes, oversight and effective-dated break policy");
 }

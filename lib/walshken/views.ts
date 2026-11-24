@@ -168,7 +168,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
     ]);
     return json({rows,units,staff,personnelControls:staffReadinessEnabled() && !canSuper(actor),readiness:staffReadinessEnabled(),registry:{query,page,pages,total}});
   }
-  if(section==="departments") return json({rows:await all(db,"SELECT id,kind,name,country,region,time_zone FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id)});
+  if(section==="departments") return json({readiness:staffReadinessEnabled(),rows:await all(db,"SELECT id,kind,name,country,region,time_zone FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id)});
   if(section==="audit"){
     if(staffReadinessEnabled()) return auditExplorer(db,actor,params);
     const query=(params.get("q")??"").trim().slice(0,100);

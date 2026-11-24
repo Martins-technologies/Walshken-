@@ -240,6 +240,18 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
       {name:"country",label:"Office country",options:countryChoices},{name:"timeZone",label:"Office time zone",placeholder:"For example, Europe/London"},field("region","Province or region","text",false),
     ]} submit="Create unit" refresh={refresh}/></Disclosure>
     <Table rows={rows} columns={[column("name","Name"),column("kind","Type"),column("country","Country"),column("region","Region"),column("time_zone","Time zone")]}/>
+    {data.readiness&&rows.map(row=><Disclosure key={row.id} title={`Manage ${row.name}`}>
+      <ActionForm path="organization/edit" extra={{id:row.id}} fields={[
+        {...field("name","Name"),value:row.name},
+        ...(row.kind==="Office"?[
+          {name:"country",label:"Office country",options:countryChoices,value:row.country,required:true},
+          {...field("timeZone","Office time zone"),value:row.time_zone},
+          {...field("region","Province or region","text",false),value:row.region},
+        ]:[]),
+      ]} submit="Save unit" refresh={refresh}/>
+      <ActionForm path="organization/delete-unused" extra={{id:row.id}} fields={[field("confirmation","Type DELETE to remove this unused unit")]} submit="Delete unused unit" refresh={refresh}/>
+    </Disclosure>)}
+
   </Panel>;
   if(section==="holidays")return <Panel title="Holiday calendar" note="Calendar entries are references for scheduling. Statutory pay is determined by validated jurisdiction rules.">
     <Disclosure title="Add a holiday"><ActionForm path="holidays/add" fields={[

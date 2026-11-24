@@ -24,7 +24,7 @@ export async function reportingReviews(db: Db, org: string, employee: string, st
 // Alberta standard reporting periods are separated by unpaid gaps longer than one hour.
 export function reportingSupplements(
   work: DayWork[], breaks: (WorkBreak & {attendance_id:string})[], reviews: ReportingReview[],
-  period: PayPeriod, rates: PayRate[], policy: PayPolicy, minimumHourly: number, holidayMultiplier: string,
+  period: PayPeriod, rates: PayRate[], policy: PayPolicy, minimumHourly: number,
 ) {
   const sheets = new Map(work.filter(day=>day.sheet.status==="Approved" && day.day>=period.starts_on && day.day<=period.ends_on).map(day=>[day.sheet.id,day.sheet]));
   const added: {sheetId:string;day:string;amount:number;reviewId?:string;revision:number;minimum:number;actual:number;paidSeconds:number}[] = [];
@@ -35,7 +35,6 @@ export function reportingSupplements(
     const gaps = intervals.filter(b=>!b.paid && b.ends_at && Date.parse(b.ends_at)-Date.parse(b.starts_at)>3_600_000)
       .sort((a,b)=>a.starts_at.localeCompare(b.starts_at));
     const boundaries = [sheet.starts_at,...gaps.flatMap(gap=>[gap.starts_at,gap.ends_at!]),sheet.ends_at];
-    const paidByDay = new Map<string,number>();
     for (let index=0; index<boundaries.length; index+=2) {
       const segments = dailySegments(boundaries[index],boundaries[index+1],intervals,sheet.time_zone);
       let actual = 0, paidSeconds = 0;
@@ -43,12 +42,8 @@ export function reportingSupplements(
         const source = work.find(day=>day.sheet.id===sheet.id&&day.day===segment.day);
         if (!source) continue;
         const rate = rateOn(rates,segment.day);
-        const previous = paidByDay.get(segment.day) ?? 0;
-        const regular = Math.max(0,Math.min(segment.paid,source.regular-previous));
-        paidByDay.set(segment.day,previous+segment.paid);
         paidSeconds += segment.paid;
-        actual += source.holiday ? wages(rate,segment.paid,policy,holidayMultiplier)
-          : wages(rate,regular,policy)+wages(rate,segment.paid-regular,policy,policy.overtimeMultiplier);
+        actual += wages(rate,segment.paid,policy);
       }
       const day = segments.at(-1)?.day;
       const minimum = 3*minimumHourly;

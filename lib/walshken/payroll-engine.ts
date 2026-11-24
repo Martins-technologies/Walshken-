@@ -49,7 +49,7 @@ export async function buildPayroll(db:Db,actor:Actor,target:string,p:PayPeriod):
  }
  if (staffReadinessEnabled() && !salary && !contract && policy.jurisdiction==='CA-AB') {
   const reporting = reportingSupplements(work.daily,work.breaks, facts.reporting, p, rates, policy,
-    compliance?.rules.settings.minimumHourlyMinor ?? 1500, compliance?.rules.settings.holidayPremiumMultiplier ?? '1.5');
+    compliance?.rules.settings.minimumHourlyMinor ?? 1500);
   for (const topup of reporting) {
     line('Reporting pay','Minimum reporting pay supplement',topup.amount,{date:topup.day,sourceId:topup.sheetId,vacationable:true});
     if (!sources.some(source=>source.type==='Reporting pay'&&source.id===topup.sheetId&&source.day===topup.day)) {

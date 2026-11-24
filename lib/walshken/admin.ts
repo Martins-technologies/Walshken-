@@ -184,6 +184,38 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     ]);
     return json({ ok:true, message:`${kind} added.` },201);
   }
+  if (area === "organization" && staffReadinessEnabled() && ["edit","delete-unused"].includes(action)) {
+    requireSuper(actor);
+    const target=str(data.id,"organization unit",80);
+    return db.transaction(async tx=>{
+      await one(tx,"SELECT id FROM organizations WHERE id=? FOR UPDATE",actor.org_id);
+      const unit=await one<{kind:string;country:string|null;region:string|null;time_zone:string|null}>(tx,
+        "SELECT kind,country,region,time_zone FROM units WHERE org_id=? AND id=? FOR UPDATE",actor.org_id,target);
+      if(!unit)return fail(404,"Organization unit unavailable.");
+      if(action==="delete-unused"){
+        if(data.confirmation!=="DELETE")return fail(400,"Type DELETE to confirm removal of the unused unit.");
+        if(await one(tx,`SELECT id FROM staff_action_permissions WHERE org_id=? AND scope_id=? AND scope_type IN ('department','division')
+          UNION ALL SELECT id FROM employees WHERE org_id=? AND (office_id=? OR department_id=? OR division_id=?) LIMIT 1`,
+          actor.org_id,target,actor.org_id,target,target,target))return fail(409,"Move employees and remove scoped rights before deleting this unit.");
+        try {
+          await run(tx,"DELETE FROM units WHERE org_id=? AND id=?",actor.org_id,target);
+        } catch(error) {
+          if((error as {code?:string}).code==="23503")return fail(409,"This unit is referenced by business records. Keep it for their history.");
+          throw error;
+        }
+        await audit(tx,actor,"Unused organization unit removed","unit",target).run();
+        return json({ok:true,message:"Unused organization unit removed."});
+      }
+      const name=str(data.name,"unit name",100);
+      const region=unit.kind==="Office"?str(data.region,"province or region",80,false):null;
+      const zone=unit.kind==="Office"?timeZone(data.timeZone):null;
+      const location=unit.kind==="Office"?country(data.country):null;
+      if(location && location!==unit.country && await one(tx,"SELECT id FROM employees WHERE org_id=? AND office_id=? LIMIT 1",actor.org_id,target))return fail(409,"Reassign employees to a new office before changing this office’s country.");
+      await run(tx,"UPDATE units SET name=?,country=?,region=?,time_zone=? WHERE org_id=? AND id=?",name,location,region,zone,actor.org_id,target);
+      await audit(tx,actor,"Organization unit updated","unit",target).run();
+      return json({ok:true,message:"Organization unit updated."});
+    });
+  }
   if (area === "communication-policy") {
     if(!communicationAdmin(actor))return fail(403,"Administrator access is required.");
     if (action === "save") {
