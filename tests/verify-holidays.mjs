@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, symlinkSync, mkdirSync, readdirSync, copyFileSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {GET as PAYROLL_GET,POST as PAYROLL_POST} from '../app/api/payroll/[action]/route.ts';
 import { GET, POST } from "../app/api/workspace/[...parts]/route.ts";
 import { createHmac, randomBytes } from "node:crypto";
 
@@ -35,14 +36,14 @@ const coworker = { password: secret(), email: `coworker-${runId}@walshken.test`,
 const staff = { password: secret(), email: `staff-${runId}@walshken.test`, cookie: "" };
 
 async function request(path, expected, user = null, body) {
-  const incoming = new Request(origin + "/api/workspace/" + path, {
+  const incoming = new Request(origin + (path.startsWith("payroll/")?"/api/":"/api/workspace/") + path, {
     method: body === undefined ? "GET" : "POST",
     headers: { origin, ...(user?.cookie ? { cookie: user.cookie } : {}),
       ...(body && !(body instanceof FormData) ? { "content-type": "application/json" } : {}) },
     body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
   });
   const context = { params: Promise.resolve({ parts: path.split("?")[0].split("/") }) };
-  const response = await (body === undefined ? GET : POST)(incoming, context);
+  const response = path.startsWith("payroll/")?await (body===undefined?PAYROLL_GET:PAYROLL_POST)(incoming,{params:Promise.resolve({action:path.split("/")[1]})}):await (body === undefined ? GET : POST)(incoming, context);
   const contentType = response.headers.get("content-type") ?? "";
   const result = contentType.includes("application/json") ? await response.json() : Buffer.from(await response.arrayBuffer());
   assert.equal(response.status, expected, `${path} expected ${expected}, got ${response.status} — ${result?.error ?? ""}`);

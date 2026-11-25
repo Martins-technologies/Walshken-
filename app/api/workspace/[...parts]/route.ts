@@ -15,6 +15,7 @@ import { view } from "@/lib/walshken/views";
 import { payrollAction, taskDetails, timeAction, workAction } from "@/lib/walshken/work";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 type Context = { params: Promise<{ parts: string[] }> };
 
 export async function GET(request: Request, context: Context) {

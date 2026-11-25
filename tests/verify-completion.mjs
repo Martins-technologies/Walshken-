@@ -42,7 +42,7 @@ export async function verifyCompletion({db,request,admin,staff,hr,person,adminId
 async function verifyEmployerWorkflows(context){
  const {db,request,admin,hr,staff}=context,{employerSchemeCodes,nativeEmployerCodes}=await import('../lib/walshken/employer-catalog.ts'),{cumulativeLevy,quebecHsfRate}=await import('../lib/walshken/employer-levies.ts'),{verifyCountryWorkflows}=await import('./verify-enterprise.mjs');
  const grant=capability=>request('governance/permission-save',200,admin,{principalType:'employee',principal:hr.id,scopeType:'organization',scopeId:'',capability,effect:'allow'});await grant('payroll.employer.review');await grant('payroll.employer');
- process.env.WALSHKEN_EMPLOYER_VALIDATION_ENABLED='1';
+ process.env.WALSHKEN_EMPLOYER_VALIDATION_ENABLED='1';await request('payroll/employer-save',403,staff,{configuration:{}});await request('payroll/employer-save',400,admin,{configuration:{}});
  const profiles=new Map();
  await verifyCountryWorkflows({...context,runId:context.runId+'-employer',beforeCalculate:async({pa,employee,period,country,jurisdiction})=>{
   await pa('calculate',{period:period.id,employee:employee.id},409);

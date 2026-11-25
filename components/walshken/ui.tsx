@@ -40,7 +40,8 @@ export function Table({ columns, rows, empty, actions }:{
       {actions&&<td><div className="row-actions">{actions(row)}</div></td>}</tr>)}</tbody></table></div>;
 }
 export async function api(path:string,data?:Record<string,unknown>|FormData){
-  const response=await fetch(`/api/workspace/${path}`,data===undefined?{cache:"no-store"}:data instanceof FormData
+  const endpoint=path.startsWith('payroll/')?`/api/${path}`:`/api/workspace/${path}`;
+  const response=await fetch(endpoint,data===undefined?{cache:"no-store"}:data instanceof FormData
     ?{method:"POST",body:data}:{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
   const result=await response.json().catch(()=>({error:"The server did not return a usable response."}));
   if(!response.ok) throw new Error(result.error||"This action could not be completed.");
