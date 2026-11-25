@@ -1,4 +1,6 @@
 import { projectLifecycleEnabled, projectsView } from "./projects";
+import {performanceEnabled} from "./staff-performance";
+import {managementTeamsEnabled, organizationMembershipData} from "./staff-unit-memberships";
 import {notificationEmailData} from "./notification-email";
 import {enterpriseEnabled} from './payroll-statutory';
 import {privacyData} from './staff-privacy';
@@ -21,6 +23,7 @@ import { documentsEnabled } from "./document-access";
 import { documentList } from "./documents";
 import { tasksEnabled,taskDashboard } from "./tasks";
 import { meetingViews, meetings } from "./meetings";
+import { meetingInvitesEnabled } from "./meeting-invitations";
 import { adminNav, staffNav } from "./catalog";
 import { messageViews, teamOptions } from "./collaboration";
 import { all, canManage, canPayroll, canSuper, fail, json, loadCatalog, needsStaffMfa, now, one, requireStaff, requireSuper, scope, staffMfaRequired, type Actor, type Db, type Row } from "./server";
@@ -30,6 +33,7 @@ const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((ite
 export function canOpen(actor:Actor,section:string){
   if(section==="privacy")return enterpriseEnabled()&&actor.role!=="guest";
   if(section==="governance") return staffReadinessEnabled() && canSuper(actor);
+  if(section==="reports"&&performanceEnabled()&&actor.role!=="guest"&&hasAction(actor,"performance.read"))return true;
   if(collaborationRelease()&&!releasedSections.has(section)&&!(holidaysEnabled()&&["holidays","holiday-calendar"].includes(section))&&!(payrollEnabled()&&["payroll","salary"].includes(section))&&!(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section))&&!(tasksEnabled()&&section==="tasks")&&!(documentsEnabled()&&["documents","document-security"].includes(section)))return false;
   if(section==="holiday-calendar")return holidaysEnabled()&&actor.role!=="guest";
   if(holidaysEnabled()&&section==="holidays")return ["super_admin","admin","hr"].includes(actor.role);
@@ -108,6 +112,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
     ]);
     return json({tasks,shifts:shiftRows,alerts,active,drafts:unsubmitted?.count??0});
   }
+  if(section==="reports"&&performanceEnabled()&&(!canManage(actor)||!workforceEnabled()))return json({performanceOnly:true});
   if(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section)){const query=new URLSearchParams(params);if(!query.has("team")&&["scheduling","approvals","reports","holidays"].includes(section))query.set("team","1");return workforceData(db,actor,query);}
   if(section==="tasks") return tasksEnabled()?taskDashboard(db,actor,params):json({rows:await taskRows(db,actor),staff:canManage(actor)?await staffChoices(db,actor):[],projects:await projectRows(db,actor)});
   if(section==="projects") return projectLifecycleEnabled()?projectsView(db,actor,params):json({rows:await projectRows(db,actor)});
@@ -183,7 +188,8 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
     }
     return json({rows,units,staff,personnelControls:staffReadinessEnabled() && !canSuper(actor),readiness:staffReadinessEnabled(),registry:{query,page,pages,total}});
   }
-  if(section==="departments") return json({readiness:staffReadinessEnabled(),rows:await all(db,"SELECT id,kind,name,country,region,time_zone FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id)});
+  if(section==="departments") return json({readiness:staffReadinessEnabled(),rows:await all(db,"SELECT id,kind,name,country,region,time_zone FROM units WHERE org_id=? ORDER BY kind,name",actor.org_id),
+    ...(managementTeamsEnabled()?await organizationMembershipData(db,actor):{})});
   if(section==="audit"){
     if(staffReadinessEnabled()) return auditExplorer(db,actor,params);
     const query=(params.get("q")??"").trim().slice(0,100);
@@ -202,7 +208,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       inquiries:section==="website"?await all(db,"SELECT id,kind,name,email,country,service,message,created_at,status,customer_update,CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END AS customer_request FROM inquiries ORDER BY created_at DESC LIMIT 120"):[],
     });
   }
-  if(section==="integrations") return json({readiness:staffReadinessEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await integrationStatuses(db,actor.org_id),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
+  if(section==="integrations") return json({readiness:staffReadinessEnabled(),meetingInviteEmail:meetingInvitesEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await integrationStatuses(db,actor.org_id),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
   if(section==="reports"){
     const scoped=scope(actor);
     const today=localDate(now(),actor.time_zone);

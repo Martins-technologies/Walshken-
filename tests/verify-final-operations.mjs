@@ -18,6 +18,9 @@ export async function verifyFinalOperations({db,request,admin,staff,hr,person,ad
  await request("projects/milestone-complete",200,admin,{id:project,revision:2,milestone:milestone.id});
  await request("projects/submit",200,admin,{id:project,revision:3});
  await request("projects/review",403,admin,{id:project,revision:4,decision:"Approve",reason:"Ready"});
+ await request("projects/review",404,hr,{id:project,revision:4,decision:"Return",reason:"Confirm delivery"});
+ await request("governance/permission-save",200,admin,{principalType:"employee",principal:hr.id,scopeType:"employee",
+  scopeId:staffId,capability:"projects.review",effect:"allow"});
  await request("projects/review",200,hr,{id:project,revision:4,decision:"Return",reason:"Confirm delivery"});
  await request("projects/submit",200,admin,{id:project,revision:5});
  await request("projects/review",200,hr,{id:project,revision:6,decision:"Approve",reason:"All evidence reviewed"});
@@ -66,6 +69,8 @@ export async function verifyFinalOperations({db,request,admin,staff,hr,person,ad
  await request("governance/employment-coverage",403,staff,{employee:staffId,day:"2027-01-01"});
  console.log("PASS authenticated, Super Admin-only employment coverage inspection");
  await verifyDatedLeave({db,request,admin,person,adminId,runId});
+ const {verifyProjectManagement}=await import("./verify-project-management.mjs");
+ await verifyProjectManagement({db,request,admin,staff,hr,person,adminId,staffId,runId});
 
 }
 

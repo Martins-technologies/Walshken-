@@ -47,7 +47,7 @@ export function Workspace({section,allowed,actor}:{section:string;allowed:readon
   const initialKeys = section === "calendar" ? ["mode","view","anchor","from","to","department","country","employee","team","types"]
     : ["shifts","scheduling","approvals","leave"].includes(section) ? ["from","to","team","exceptions"]
       : ["payroll","salary"].includes(section) ? ["period"]
-      : section === "projects" ? ["q","status","order","page"] : [];
+      : section === "projects" ? ["q","status","order","page","project"] : [];
   const [drawer,setDrawer]=useState(false),[data,setData]=useState<ViewData|null>(null),[error,setError]=useState(""),[query,setQuery]=useState(()=>{
     const params=new URLSearchParams(typeof window==="undefined"?"":window.location.search);
     return new URLSearchParams([...params].filter(([key])=>initialKeys.includes(key))).toString();

@@ -1,4 +1,5 @@
 import {requireEmployeeAction,requireOrganizationAction} from './staff-authority';
+import {managementTeamsEnabled,organizationMembershipAction} from './staff-unit-memberships';
 import {integrationSettings} from "./integration-settings";
 import {verifyStorageRotation} from "./storage-rotation";
 import {employmentTermsOn} from "./employment-engine";
@@ -28,6 +29,8 @@ const employmentStatuses = ["Active", "On leave", "Ended"] as const;
 const types = ["Full-time", "Part-time", "Fixed-term", "Contractor"] as const;
 
 export async function adminAction(db: Db, actor: Actor, area: string, action: string, data: Record<string, unknown>) {
+  if (area === "organization" && ["membership-add","membership-remove"].includes(action))
+    return organizationMembershipAction(db,actor,action,data);
   if (area === "employees") {
     if ((!canManage(actor) || actor.role === "manager") && !actor.permissions?.some(rule=>rule.effect==="allow" && rule.action.startsWith("people."))) return fail(403,"Employee administration access is required.");
     if (action === "add") {
@@ -187,7 +190,8 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
   if (area === "organization" && action === "add") {
     requireSuper(actor);
     const target = id();
-    const kind = pick(data.kind, ["Department","Division","Office"], "organization unit type");
+    const kinds = managementTeamsEnabled()?["Department","Division","Office","Team"]:["Department","Division","Office"];
+    const kind = pick(data.kind, kinds, "organization unit type");
     await db.batch([
       stmt(db,"INSERT INTO units (id,org_id,kind,name,country,region,time_zone) VALUES (?,?,?,?,?,?,?)",
         target,actor.org_id,kind,str(data.name,"name",100),kind==="Office"?country(data.country):null,

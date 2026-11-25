@@ -1,3 +1,4 @@
+import { projectLifecycleEnabled, projectScope } from "./project-authority";
 import { all,canManage,canSuper,date,fail,id,integer,json,now,one,pick,requireStaff,run,scope,str,throttle,type Actor,type Db } from "./server";
 import { localDate } from "./work";
 import { activeTaskStatuses,taskPriorities,type TaskItem,type TaskTimeEntry } from "./task-types";
@@ -34,8 +35,12 @@ async function eligibleReviewer(db:Db,actor:Actor,employee:Actor,target:string){
 }
 async function validProject(db:Db,actor:Actor,target:string){
  if(!target)return null;
- const project=await one(db,`SELECT p.id FROM projects p WHERE p.id=? AND p.org_id=? AND p.status='Active'
- AND (?=1 OR p.owner_id=? OR (p.department_id IS NOT NULL AND p.department_id=?) OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=? AND t.release_stage=?))`,target,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,taskDataset());
+ const authority=projectLifecycleEnabled()?projectScope(actor,"read",taskDataset()):null;
+ const project=authority
+  ?await one(db,`SELECT p.id FROM projects p JOIN employees owner ON owner.id=p.owner_id AND owner.org_id=p.org_id
+    WHERE p.id=? AND p.org_id=? AND p.status='Active' AND (${authority.sql})`,target,actor.org_id,...authority.args)
+  :await one(db,`SELECT p.id FROM projects p WHERE p.id=? AND p.org_id=? AND p.status='Active'
+    AND (?=1 OR p.owner_id=? OR (p.department_id IS NOT NULL AND p.department_id=?) OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=? AND t.release_stage=?))`,target,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,taskDataset());
  if(!project)return fail(403,"That project reference is outside your authorized scope.");return target;
 }
 export async function taskTotals(db:Db,target:string){
@@ -187,7 +192,11 @@ export async function taskDashboard(db:Db,actor:Actor,params=new URLSearchParams
  const pageSize=30,pages=Math.max(1,Math.ceil(filtered.length/pageSize)),page=Math.min(pages,Math.max(1,Math.floor(Number(params.get('page'))||1)));
  const people=canManage(actor)?await all(db,`SELECT e.id,e.name,e.role,e.department_id,e.division_id,e.manager_id,d.name AS department,v.name AS division FROM employees e LEFT JOIN units d ON d.id=e.department_id LEFT JOIN units v ON v.id=e.division_id WHERE e.org_id=? AND e.status='Active' AND e.employment_status<>'Ended' AND e.role<>'guest' AND ${scope(actor,'e').sql} ORDER BY e.name`,actor.org_id,...scope(actor,'e').args):[];
  const reviewers=canManage(actor)?await all(db,"SELECT id,name,role,department_id,division_id,manager_id FROM employees WHERE org_id=? AND status='Active' AND employment_status<>'Ended' AND role IN('super_admin','admin','manager','hr') ORDER BY name",actor.org_id):[];
- const projects=canManage(actor)?await all(db,`SELECT p.id,p.name FROM projects p WHERE p.org_id=? AND p.status='Active' AND (?=1 OR p.owner_id=? OR p.department_id=? OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=? AND t.release_stage=?)) ORDER BY p.name`,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,taskDataset()):[];
+ const projectRead=projectLifecycleEnabled()?projectScope(actor,"read",taskDataset()):null;
+ const projects=!canManage(actor)?[]:projectRead
+  ?await all(db,`SELECT p.id,p.name FROM projects p JOIN employees owner ON owner.id=p.owner_id AND owner.org_id=p.org_id
+   WHERE p.org_id=? AND p.status='Active' AND (${projectRead.sql}) ORDER BY p.name`,actor.org_id,...projectRead.args)
+  :await all(db,`SELECT p.id,p.name FROM projects p WHERE p.org_id=? AND p.status='Active' AND (?=1 OR p.owner_id=? OR p.department_id=? OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=? AND t.release_stage=?)) ORDER BY p.name`,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,taskDataset());
  const running=await one(db,`SELECT l.id,l.task_id,l.starts_at,t.title FROM task_time_entries l JOIN tasks t ON t.id=l.task_id WHERE l.employee_id=? AND l.org_id=? AND t.release_stage=? AND l.kind='Timer' AND l.ends_at IS NULL AND l.voided_at IS NULL`,actor.id,actor.org_id,taskDataset());
  const teamRows=team?people.map(person=>{const tasks=mapped.filter(t=>t.employee_id===person.id),planned=tasks.filter(t=>t.status!=='Cancelled');return {...person,open:tasks.filter(t=>!['Completed','Cancelled'].includes(t.status)).length,overdue:tasks.filter(t=>t.overdue).length,pending:tasks.filter(t=>t.approval_status==='Pending').length,completed:tasks.filter(t=>t.status==='Completed').length,estimatedSeconds:planned.reduce((n,t)=>n+t.estimate_minutes*60,0),actualSeconds:tasks.reduce((n,t)=>n+t.actual_seconds,0),progress:planned.length?Math.round(planned.reduce((n,t)=>n+t.progress,0)/planned.length):0};}):[];
  return json({managedTasks:true,rows:filtered.slice((page-1)*pageSize,page*pageSize),stats,team,manager:canManage(actor),staff:people,reviewers,projects,teamRows,running,serverTime:now(),today:localDate(now(),actor.time_zone),registry:{page,pages,total:filtered.length},query:{q,bucket,status,priority,employee}});

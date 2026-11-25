@@ -6,6 +6,7 @@ import { Icon } from "./brand";
 export type RecordRow = Record<string, string | number | null>;
 export type ResponseData = { ok?: boolean; message?: string; code?: string; error?: string; id?: string; url?: string };
 export type Field = {
+  preserveLocalValue?: boolean;
   name: string; label: string; type?: string; options?: readonly (string | readonly [string,string])[];
   value?: string | number | null; placeholder?: string; required?: boolean; min?: number; max?: number; multiple?: boolean; autoComplete?: string;
 };
@@ -72,7 +73,7 @@ export function ActionForm({path,fields,submit,refresh,extra={},file=false,onDon
       const data:Record<string,unknown>={...Object.fromEntries(formData),...extra};
       for(const field of fields) if(field.type==="checkbox") data[field.name]=formData.has(field.name);
       for(const field of fields) if(field.multiple) data[field.name]=formData.getAll(field.name);
-      for(const field of fields) if(field.type==="datetime-local"&&data[field.name]) data[field.name]=new Date(String(data[field.name])).toISOString();
+      for(const field of fields) if(field.type==="datetime-local"&&!field.preserveLocalValue&&data[field.name]) data[field.name]=new Date(String(data[field.name])).toISOString();
       const result=await api(path,file?formData:data) as ResponseData;
       if(reset) form.reset();
       setStatus(result.message??"Saved.");setCode(result.code??"");refresh?.();onDone?.(result);

@@ -5,8 +5,12 @@ const enterprise = { ...readiness, WALSHKEN_TEST_ENTERPRISE: "1", WALSHKEN_TEST_
 const suites = {
   "public-seo": ["tests/verify-public-seo.mjs"],
   staff: ["tests/verify-staff.mjs"],
+  "management-teams": ["tests/verify-staff.mjs", { WALSHKEN_TEST_MANAGEMENT_TEAMS: "1" }],
+  "preview-maintenance-auth": ["tests/verify-preview-maintenance-auth.mjs"],
+  performance: ["tests/verify-staff-performance.mjs"],
   notifications: ["tests/verify-staff.mjs", { WALSHKEN_TEST_NOTIFICATIONS: "1" }],
   messages: ["tests/verify-messages.mjs"],
+  "communication-governance": ["tests/verify-messages.mjs", { WALSHKEN_TEST_COMMUNICATION_GOVERNANCE: "1" }],
   calls: ["tests/verify-livekit.mjs"],
   documents: ["tests/verify-documents.mjs"],
   tasks: ["tests/verify-tasks.mjs"],

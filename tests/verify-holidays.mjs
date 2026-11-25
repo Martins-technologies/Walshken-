@@ -23,6 +23,10 @@ if(process.env.WALSHKEN_TEST_SOURCE==="1") copyFileSync(join(process.cwd(),"supa
 if(process.env.WALSHKEN_TEST_SOURCE==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261125053842_source_disposal_employer_validation.sql"),join(sandbox,"drizzle/0018_source_disposal.sql"));
 if(process.env.WALSHKEN_TEST_FINAL_OPS==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261125093948_project_lifecycle_and_workforce_reporting.sql"),join(sandbox,"drizzle/0019_operations.sql"));
 if(process.env.WALSHKEN_TEST_FINAL_OPS==="1") copyFileSync(join(process.cwd(),"supabase/migrations/20261125101811_reviewed_leave_carry_forward.sql"),join(sandbox,"drizzle/0020_leave_carry.sql"));
+if(process.env.WALSHKEN_TEST_FINAL_OPS==="1") {
+  copyFileSync(join(process.cwd(),"supabase/migrations/20261125231710_staff_unit_memberships.sql"),join(sandbox,"drizzle/0021_staff_units.sql"));
+  copyFileSync(join(process.cwd(),"supabase/migrations/20261126041500_project_assignments_and_deliverables.sql"),join(sandbox,"drizzle/0022_projects.sql"));
+}
 const repository=process.cwd();
 process.chdir(sandbox);
 process.on("exit", () => rmSync(sandbox, { recursive: true, force: true }));

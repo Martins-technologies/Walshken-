@@ -1,0 +1,54 @@
+.picker {
+  display: grid;
+  gap: 12px;
+}
+
+.results {
+  display: grid;
+  gap: 6px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.results button {
+  display: grid;
+  grid-template-columns: 32px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 8px 10px;
+  text-align: left;
+  min-height: 48px;
+}
+
+.results button:hover:not(:disabled) {
+  background: var(--cloud);
+}
+
+.contact {
+  display: grid;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contact small {
+  color: var(--muted);
+}
+
+.confirmation {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #edd7a6;
+  background: #fffaf0;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}

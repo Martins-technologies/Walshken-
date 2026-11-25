@@ -1,3 +1,6 @@
+import { authorizedDirectReply, checkDirect, communicationAccess, communicationGovernanceEnabled, communicationGroupPeople, communicationPeople,
+  directPeer, eligibleGroupPeer, inCommunicationDepartment, existingDirect, mustConfirmCrossDepartment } from "./communication-access";
+import { communicationContent, communicationOversight, communicationSupport, communicationVisibility } from "./communication-management";
 import { documentEvaluation } from "./document-access";
 import { attachableDocuments, messageDocumentName, messageDocumentsEnabled, shareMessageDocument } from "./message-documents";
 import { messageReactions } from "./catalog";
@@ -35,17 +38,19 @@ export function retentionCutoff(days: number) {
 }
 
 function activeChannels(actor: Actor, policy: CommunicationPolicy) {
+  const additionalDepartments = communicationGovernanceEnabled() && actor.role !== "guest";
   return {sql:`c.status='Active' AND (c.closes_at IS NULL OR c.closes_at>?)
     AND (?=1 OR c.kind<>'External') AND (?=0 OR c.kind='External')
     AND (c.kind<>'Private' OR ?=1)
     AND ((?=1 AND c.created_by=?) OR (
-      (c.department_id IS NULL OR c.department_id=?)
+      (c.department_id IS NULL OR c.department_id=?${additionalDepartments ? ` OR EXISTS(SELECT 1 FROM staff_unit_memberships r
+        WHERE r.org_id=c.org_id AND r.employee_id=? AND r.unit_id=c.department_id)` : ""})
       AND (c.country IS NULL OR c.country=?)
       AND (c.project_id IS NULL OR EXISTS (SELECT 1 FROM projects p WHERE p.id=c.project_id AND p.org_id=c.org_id
         AND (p.owner_id=? OR p.department_id=? OR EXISTS (SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=?))))
     ))`,
     args:[now(),policy.external_messaging,actor.role==="guest"?1:0,canManage(actor)?1:0,canSuper(actor)?1:0,actor.id,
-      actor.department_id,actor.country,actor.id,actor.department_id,actor.id]};
+      actor.department_id,...(additionalDepartments?[actor.id]:[]),actor.country,actor.id,actor.department_id,actor.id]};
 }
 export async function calendarTeams(db: Db, actor: Actor) {
   const filter = activeChannels(actor, await communicationPolicy(db, actor));
@@ -63,6 +68,11 @@ async function channel(db:Db, actor:Actor, target:string, policy:CommunicationPo
   return row;
 }
 async function requireDirectPeer(db: Db, actor: Actor, conversation: string) {
+  if (communicationGovernanceEnabled()) {
+    if (!await authorizedDirectReply(db,actor,conversation)) return fail(403, "This teammate is outside your current messaging scope.");
+    return;
+  }
+
   const peer = await one(db, `SELECT e.id FROM conversation_members m JOIN employees e ON e.id=m.employee_id
     WHERE m.conversation_id=? AND e.org_id=? AND e.id<>? AND e.status='Active' AND e.employment_status<>'Ended'
       AND e.role<>'guest' AND (?=1 OR e.role='super_admin' OR e.department_id=? OR e.manager_id=? OR e.id=?)`,
@@ -100,8 +110,8 @@ export async function messagesFor(db:Db,actor:Actor,target:string,query:string,b
       AND (?='' OR m.created_at || '/' || m.id < ?)
       AND (?='' OR (m.deleted_at IS NULL AND strpos(lower(m.body),lower(?))>0))
       ORDER BY m.created_at DESC,m.id DESC LIMIT 51`,cutoff,target,cutoff,pinned?1:0,cursor,cursor,q,q);
-    const members=await all(tx,`SELECT e.id,e.name,e.role,m.last_read_at FROM conversation_members m JOIN employees e ON e.id=m.employee_id
-      WHERE m.conversation_id=? AND e.status='Active' AND e.employment_status<>'Ended' ORDER BY e.name`,target);
+    const members=await all(tx,`SELECT e.id,e.name,e.role,m.last_read_at,u.name AS department FROM conversation_members m JOIN employees e ON e.id=m.employee_id
+      LEFT JOIN units u ON u.id=e.department_id AND u.org_id=e.org_id AND u.kind='Department' WHERE m.conversation_id=? AND e.status='Active' AND e.employment_status<>'Ended' ORDER BY e.name`,target);
     const page=rows.slice(0,50), last=page.at(-1);
     const names = new Map<string, string | null>();
     if (page.some(row => row.document_id)) {
@@ -129,14 +139,15 @@ export async function messageViews(db:Db,actor:Actor) {
       FROM conversations c JOIN conversation_members m ON m.conversation_id=c.id WHERE c.org_id=? AND m.employee_id=? AND ${filter.sql}
       ORDER BY COALESCE((SELECT MAX(msg.created_at) FROM messages msg WHERE msg.conversation_id=c.id),c.created_at) DESC,c.id`,
       actor.id,retentionCutoff(policy.message_retention_days),retentionCutoff(policy.message_retention_days),actor.id,retentionCutoff(policy.message_retention_days),actor.org_id,actor.id,...filter.args);
-  const staff=await teamOptions(db,actor);
+  const staff=await (communicationGovernanceEnabled()?communicationGroupPeople(db,actor):teamOptions(db,actor));
   if (communicationAdmin(actor)&&policy.external_messaging) {
     staff.push(...await all<Row>(db,`SELECT id,name,'Guest' AS role FROM employees WHERE org_id=? AND role='guest' AND status='Active' AND employment_status<>'Ended' ORDER BY name`,actor.org_id));
   }
   const removedGroups=actor.role==="guest"?[]:await all(db,`SELECT id,title,kind FROM conversations
     WHERE org_id=? AND kind<>'Direct' AND status='Removed' AND (?=1 OR created_by=?)
     ORDER BY title,id LIMIT 100`,actor.org_id,canSuper(actor)?1:0,actor.id);
-  return json({rows,staff,removedGroups,messageDocumentsEnabled:messageDocumentsEnabled()&&actor.role!=="guest",
+  return json({rows,staff,removedGroups,communicationGovernanceEnabled:communicationGovernanceEnabled(),
+    communicationOversight:Object.values(communicationAccess(actor)).some(Boolean),messageDocumentsEnabled:messageDocumentsEnabled()&&actor.role!=="guest",
     groups:canCreateGroups(actor,policy)?conversationKinds.filter(kind=>kind!=="Direct"
       && ((kind!=="Company"&&kind!=="External")||communicationAdmin(actor))
       && (kind!=="Private"||canManage(actor))
@@ -157,9 +168,11 @@ async function eligibleParticipant(db:Db,actor:Actor,target:string,scope:Channel
     if(!employee) return fail(404,"Participant is unavailable.");
     return employee;
   }
-  const person=await colleague(db,actor,target);
+  const managed = communicationGovernanceEnabled();
+  const person=await (managed ? eligibleGroupPeer(db,actor,target) : colleague(db,actor,target));
   if (person.employment_status==="Ended" ||
-      (scope.department_id&&scope.department_id!==person.department_id) ||
+      (scope.department_id&&scope.department_id!==person.department_id &&
+        (!managed || !await inCommunicationDepartment(db,person,scope.department_id))) ||
       (scope.country&&scope.country!==person.country) ||
       (scope.kind==="Private"&&!canManage(person))) return fail(403,"That participant is outside the group’s scope.");
   if(scope.project_id && !await one(db,`SELECT p.id FROM projects p WHERE p.id=? AND p.org_id=?
@@ -173,6 +186,14 @@ export async function messageAction(db:Db,actor:Actor,action:string,data:Record<
 }
 async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string,unknown>){
   const policy = await communicationPolicy(db,actor);
+  if (communicationGovernanceEnabled()) {
+    if(action==="check-direct") return checkDirect(db,actor,data);
+    if(action==="people") return communicationPeople(db,actor,data);
+    if(action==="oversight") return communicationOversight(db,actor,data,retentionCutoff(policy.message_retention_days));
+    if(action==="oversight-content") return communicationContent(db,actor,data,retentionCutoff(policy.message_retention_days));
+    if(action==="directory-visibility") return communicationVisibility(db,actor,data);
+    if(action==="communication-support") return communicationSupport(db,actor,data);
+  }
   if(action==="remove-group"||action==="restore-group"){
     requireStaff(actor);
     const target = str(data.conversation,"conversation",80);
@@ -224,30 +245,40 @@ async function mutateMessages(db:Db,actor:Actor,action:string,data:Record<string
     const market=kind==="Country"?country(data.country):null;
     const closes=kind==="Temporary"?datetime(data.closesAt,"closing date"):null;
     if(closes&&closes<=now()) return fail(400,"Choose a future closing date.");
-    if(department&&((!canSuper(actor)&&actor.department_id!==department)
+    if(department&&((!canSuper(actor)&&actor.department_id!==department
+      &&(!communicationGovernanceEnabled()||!await inCommunicationDepartment(db,actor,department)))
       ||!await one(db,"SELECT id FROM units WHERE id=? AND org_id=? AND kind='Department'",department,actor.org_id))) return fail(403,"Choose a department you can manage.");
     if(project&&!await one(db,"SELECT id FROM projects WHERE id=? AND org_id=? AND (?=1 OR owner_id=? OR department_id=?)",project,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id)) return fail(403,"Choose a project within your scope.");
     if(market&&!canSuper(actor)&&actor.country!==market) return fail(403,"Choose your assigned country.");
     const scope={kind,department_id:department,project_id:project,country:market,closes_at:closes};
-    const people=await Promise.all(participants.map(employee=>eligibleParticipant(db,actor,employee,scope)));
+    let crossDepartment = false;
+    let directName: string | undefined;
     if(kind==="Direct"){
       await one(db,"SELECT id FROM organizations WHERE id=? FOR UPDATE",actor.org_id);
-      const exists=await one<{id:string}>(db,`SELECT c.id FROM conversations c JOIN conversation_members a ON a.conversation_id=c.id AND a.employee_id=?
-        JOIN conversation_members b ON b.conversation_id=c.id AND b.employee_id=? WHERE c.org_id=? AND c.kind='Direct'`,actor.id,participants[0],actor.org_id);
-      if(exists) {
-        await run(db,"UPDATE conversation_members SET archived=0 WHERE conversation_id=? AND employee_id=? AND archived=1",exists.id,actor.id);
-        return json({ok:true,id:exists.id,message:"Conversation opened."});
+      const governed = communicationGovernanceEnabled();
+      const peer = governed ? await directPeer(db,actor,participants[0]) : null;
+      directName = peer?.name ?? (await eligibleParticipant(db,actor,participants[0],scope)).name;
+      const existing = await existingDirect(db,actor,participants[0]);
+      if(existing) {
+        await run(db,"UPDATE conversation_members SET archived=0 WHERE conversation_id=? AND employee_id=? AND archived=1",existing.id,actor.id);
+        return json({ok:true,id:existing.id,message:"Conversation opened."});
       }
+      crossDepartment = peer ? mustConfirmCrossDepartment(peer) : false;
+      if(crossDepartment && data.crossDepartmentConfirmed!==true)
+        return fail(409,"Confirm that you want to start a cross-department conversation.");
+    } else {
+      await Promise.all(participants.map(employee=>eligibleParticipant(db,actor,employee,scope)));
     }
-    const target=id(),title=kind==="Direct"?people[0].name:str(data.title,"channel name",100);
+    const target=id(),title=directName??str(data.title,"channel name",100);
     const status = kind!=="Direct" && policy.group_approval && !communicationAdmin(actor) ? "Pending" : "Active";
     await db.batch([
       stmt(db,"INSERT INTO conversations (id,org_id,title,kind,created_by,status,department_id,project_id,country,closes_at) VALUES (?,?,?,?,?,?,?,?,?,?)",target,actor.org_id,title,kind,actor.id,status,department,project,market,closes),
       ...[actor.id,...participants].map((employee)=>stmt(db,"INSERT INTO conversation_members (id,conversation_id,employee_id) VALUES (?,?,?)",id(),target,employee)),
       audit(db,actor,status==="Active"?"Conversation created":"Group requested","conversation",target),
+      ...(crossDepartment ? [audit(db,actor,"Cross-department conversation confirmed","conversation",target)] : []),
       ...[actor.id,...participants].map(employee=>audit(db,actor,"Conversation participant invited","conversation membership",`${target}/${employee}`)),
     ]);
-    if (status==="Active") await notifyConversation(db,actor,target,"You were added to a conversation");
+    if (status==="Active") await notifyConversation(db,actor,target,crossDepartment?"New cross-department conversation":"You were added to a conversation");
     else await run(db,`INSERT INTO notifications (id,employee_id,title,body,href)
       SELECT ? || id,id,'Group request awaiting review','Review the request in Messages.','/staff/messages'
       FROM employees WHERE org_id=? AND role IN ('super_admin','admin') AND status='Active' AND employment_status<>'Ended'

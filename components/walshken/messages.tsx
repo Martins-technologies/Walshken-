@@ -6,6 +6,8 @@ import { Icon } from "./brand";
 import { ActionForm, api, dateText, Empty, initials, options, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 import type { ViewData } from "./workspace-views";
 import type { Viewer } from "./workspace";
+import { CommunicationManagement, communicationManagementDialogClass } from "./communication-management";
+import styles from "./messages-governance.module.css";
 
 type ChatDocument = { id: string; name: string };
 type Thread = {rows:RecordRow[];members:RecordRow[];next:string|null};
@@ -14,14 +16,14 @@ const administrator=(actor:Viewer)=>actor.role==="super_admin"||actor.role==="ad
 const groupName=(kind:unknown)=>kind==="Direct"?"Direct message":kind==="Private"?"Management":kind==="External"?"Guest conversation":String(kind??"Group");
 const field=(name:string,label:string,type="text"):Field=>({name,label,type,required:true});
 
-function ChatDialog({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}) {
+function ChatDialog({title,onClose,children,className}:{title:string;onClose:()=>void;children:ReactNode;className?:string}) {
   const dialog=useRef<HTMLDialogElement>(null);
   useEffect(()=>{
     const node=dialog.current;
     node?.showModal();
     return()=>node?.close();
   },[]);
-  return <dialog ref={dialog} className="chat-dialog" aria-label={title} onCancel={onClose} onClick={event=>{if(event.target===event.currentTarget)onClose();}}>
+  return <dialog ref={dialog} className={className ? `chat-dialog ${className}` : "chat-dialog"} aria-label={title} onCancel={onClose} onClick={event=>{if(event.target===event.currentTarget)onClose();}}>
     <div className="chat-dialog-heading"><h2>{title}</h2><button type="button" className="icon-button" aria-label="Close dialog" onClick={onClose}><Icon name="close"/></button></div>
     {children}
   </dialog>;
@@ -65,7 +67,72 @@ function DocumentPicker({conversation, onSelect, onClose}:{conversation:string;o
   </ChatDialog>;
 }
 
-export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refresh:()=>void}) {
+type Contact = {id:string;name:string;title:string;department:string|null;support:boolean};
+
+function DirectPicker({onOpen}:{onOpen:(id:string)=>void}) {
+  const [query,setQuery]=useState(""),[contacts,setContacts]=useState<Contact[]>([]);
+  const [loading,setLoading]=useState(true),[opening,setOpening]=useState(false),[error,setError]=useState("");
+  const [confirm,setConfirm]=useState<Contact|null>(null);
+  const sequence=useRef(0), openAttempt=useRef(0);
+  const search=useCallback(async (value:string)=>{
+    const active=++sequence.current;
+    setLoading(true);setError("");
+    try {
+      const result=await api("messages/people",{query:value}) as {rows:Contact[]};
+      if(sequence.current===active)setContacts(result.rows);
+    } catch (failure) {
+      if(sequence.current===active)setError(failure instanceof Error ? failure.message : "Unable to search for employees.");
+    } finally {
+      if(sequence.current===active)setLoading(false);
+    }
+  },[]);
+  useEffect(()=>{
+    void search("");
+    return()=>{sequence.current++;openAttempt.current++;};
+  },[search]);
+
+  async function open(contact:Contact,confirmed=false) {
+    const attempt=++openAttempt.current;
+    setOpening(true);setError("");
+    try {
+      if(!confirmed){
+        const check=await api("messages/check-direct",{employee:contact.id});
+        if(attempt!==openAttempt.current)return;
+        if(check.confirmationRequired){setConfirm(contact);return;}
+      }
+      const result=await api("messages/create",{kind:"Direct",members:contact.id,crossDepartmentConfirmed:confirmed});
+      if(attempt===openAttempt.current)onOpen(result.id);
+    } catch (failure) {
+      if(attempt===openAttempt.current)setError(failure instanceof Error ? failure.message : "Unable to start this conversation.");
+    } finally {if(attempt===openAttempt.current)setOpening(false);}
+  }
+
+  return <div className={styles.picker}>
+    {confirm ? <div className={styles.confirmation} aria-labelledby="cross-department-heading">
+      <h3 id="cross-department-heading">Starting a cross-department conversation</h3>
+      <p>{confirm.name} {confirm.department ? `is in ${confirm.department}, outside your department.` : "is not assigned to a department you share."} Continue if you want to start this conversation.</p>
+      <div className={styles.actions}>
+        <button type="button" className="btn btn-outline btn-small" disabled={opening} onClick={()=>{setConfirm(null);setError("");}}>Cancel</button>
+        <button type="button" className="btn btn-blue btn-small" disabled={opening} onClick={()=>void open(confirm,true)}>{opening?"Opening…":"Continue conversation"}</button>
+      </div>
+    </div> : <>
+      <form className="chat-file-search" onSubmit={event=>{event.preventDefault();void search(query);}}>
+        <label className="chat-dialog-field">Find an employee<input value={query} maxLength={100} onChange={event=>setQuery(event.target.value)} /></label>
+        <button type="submit" className="btn btn-outline btn-small" disabled={opening||loading}>Search</button>
+      </form>
+      {loading ? <p role="status">Loading employees…</p> : contacts.length ? <div className={styles.results} aria-label="Available contacts">
+        {contacts.map(contact=><button type="button" disabled={opening} key={contact.id} onClick={()=>void open(contact)}>
+          <span className="chat-avatar person">{initials(contact.name)}</span>
+          <span className={styles.contact}><strong>{contact.name}</strong><small>{contact.department ?? "No department"}{contact.support?" · Support":""}</small></span>
+          <Icon name="right" size={16}/>
+        </button>)}
+      </div> : !error && <p>No eligible employees match this search.</p>}
+    </>}
+    {error&&<p role="alert" className="form-error">{error}</p>}
+  </div>;
+}
+
+export function Messages({data,actor,refresh}:{data:ViewData & {communicationGovernanceEnabled?:boolean;communicationOversight?:boolean};actor:Viewer;refresh:()=>void}) {
   const [target,setTarget]=useState(""),[thread,setThread]=useState<Thread>(emptyThread);
   const [history,setHistory]=useState<string[]>([]),[query,setQuery]=useState(""),[search,setSearch]=useState("");
   const [archived,setArchived]=useState(false),[pinned,setPinned]=useState(false),[body,setBody]=useState("");
@@ -231,9 +298,10 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
           {!query&&!archived&&actor.role!=="guest"&&<button type="button" className="btn btn-outline btn-small" onClick={()=>{setKind("Direct");setDialog("new");}}>New message</button>}
         </div>}
       </nav>
-      {isAdmin&&<div className="chat-admin-bar">
+      {(isAdmin||data.communicationOversight)&&<div className="chat-admin-bar">
+        {data.communicationOversight&&<button type="button" onClick={()=>setDialog("oversight")}><Icon name="users" size={17}/>Communication management</button>}
         {policy&&<button type="button" onClick={()=>setDialog("policy")}><Icon name="settings" size={17}/>Messaging policy</button>}
-        <button type="button" onClick={()=>setDialog("requests")}><Icon name="users" size={17}/>Group requests{pending.length>0&&<b>{pending.length}</b>}</button>
+        {isAdmin&&<button type="button" onClick={()=>setDialog("requests")}><Icon name="users" size={17}/>Group requests{pending.length>0&&<b>{pending.length}</b>}</button>}
       </div>}
     </aside>
     <div className="chat-main">
@@ -324,13 +392,17 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
     </div>
 
     {dialog==="attach"&&current&&<DocumentPicker conversation={target} onClose={()=>setDialog("")} onSelect={document=>{setAttachment(document);setDialog("");editor.current?.focus();}}/>}
+    {dialog==="oversight"&&data.communicationOversight&&<ChatDialog title="Communication management" onClose={()=>setDialog("")} className={communicationManagementDialogClass}>
+      <CommunicationManagement timeZone={actor.timeZone} onVisibilityChange={refresh}/>
+    </ChatDialog>}
     {dialog==="new"&&<ChatDialog title="New conversation" onClose={()=>setDialog("")}><label className="chat-dialog-field">Conversation type<select value={kind} onChange={event=>setKind(event.target.value)}>{["Direct",...(data.groups??[])].map(type=><option key={type}>{type}</option>)}</select></label>
-      {people.length===0?<p>No eligible recipients. Ask your administrator to check department and reporting-manager assignments.</p>:<ActionForm key={kind} path="messages/create" fields={[...(kind==="Direct"?[]:[field("title","Name"),...scope]),
+      {kind==="Direct"&&data.communicationGovernanceEnabled?<DirectPicker onOpen={conversation=>{setArchived(false);select(conversation);refresh();}}/>
+      :people.length===0?<p>No eligible recipients. Ask your administrator to check department and reporting-manager assignments.</p>:<ActionForm key={kind} path="messages/create" fields={[...(kind==="Direct"?[]:[field("title","Name"),...scope]),
         {name:"members",label:kind==="Direct"?"Teammate":"Participants",options:options(people),multiple:kind!=="Direct",required:true},
       ]} extra={{kind}} submit={kind==="Direct"?"Open conversation":"Create group"} refresh={refresh} onDone={result=>{if(result.id){setArchived(false);select(result.id);}else setDialog("requests");}}/>}
     </ChatDialog>}
     {dialog==="members"&&current&&<ChatDialog title="Conversation participants" onClose={()=>setDialog("")}>
-      <div className="chat-member-list">{members.map(member=><div key={value(member,"id")}><span className="chat-avatar person">{initials(value(member,"name"))}</span><span><strong>{member.name}</strong><small>{member.id===current.created_by?"Conversation owner":member.role==="guest"?"Guest":"Participant"}</small></span>
+      <div className="chat-member-list">{members.map(member=><div key={value(member,"id")}><span className="chat-avatar person">{initials(value(member,"name"))}</span><span><strong>{member.name}</strong><small>{member.id===current.created_by?"Conversation owner":member.role==="guest"?"Guest":"Participant"}{member.department?` · ${member.department}`:""}</small></span>
         {canMembers&&current.kind!=="Direct"&&member.id!==current.created_by&&<Quick path="messages/member" data={{conversation:target,operation:"remove",employee:member.id}} refresh={()=>{void load();refresh();}}>Remove</Quick>}</div>)}</div>
       {canMembers&&current.kind!=="Direct"&&<ActionForm path="messages/member" fields={[{name:"employee",label:"Invite participant",options:options((data.staff??[]).filter(row=>!members.some(member=>member.id===row.id)&&(current.kind==="External"||row.role!=="Guest"))),required:true}]}
         extra={{conversation:target,operation:"add"}} submit="Add participant" refresh={()=>{void load();refresh();}}/>}

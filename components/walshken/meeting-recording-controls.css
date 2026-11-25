@@ -1,0 +1,26 @@
+.recording-policy-form fieldset {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.recording-policy-form legend {
+  font-size: 12px;
+  font-weight: 650;
+  padding-inline: 4px;
+}
+
+.recording-policy-form label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.recording-policy-form input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  flex: none;
+}

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GET, POST } from "../app/api/workspace/[...parts]/route.ts";
@@ -7,6 +7,14 @@ import { createHmac, createHash, randomBytes } from "node:crypto";
 
 const sandbox = mkdtempSync(join(tmpdir(), "walshken-route-test-"));
 symlinkSync(join(process.cwd(), "drizzle"), join(sandbox, "drizzle"), "dir");
+const recordingMigration="20261126090100_meeting_recording_policy.sql";
+const migrations=join(sandbox,"supabase","migrations");
+mkdirSync(migrations,{recursive:true});
+copyFileSync(join(process.cwd(),"supabase","migrations",recordingMigration),join(migrations,recordingMigration));
+const invitationMigration="20261126045000_management_meeting_invitations.sql";
+copyFileSync(join(process.cwd(),"supabase","migrations",invitationMigration),join(migrations,invitationMigration));
+const reminderMigration="20261126091500_staff_meeting_internal_reminders.sql";
+copyFileSync(join(process.cwd(),"supabase","migrations",reminderMigration),join(migrations,reminderMigration));
 process.chdir(sandbox);
 process.on("exit", () => rmSync(sandbox, { recursive: true, force: true }));
 process.env.WALSHKEN_ADMIN_EMAIL="admin@walshken.test";
@@ -295,6 +303,10 @@ S3Client.prototype.send=async function(command){assert.ok(command instanceof Del
 const sweep=await maintenance(new Request(origin+'/api/livekit/maintenance',{headers:{authorization:'Bearer '+process.env.CRON_SECRET}}));assert.equal(sweep.status,200);assert.equal(deletions,1);assert.equal((await request('meeting/'+meeting,200,admin)).recordings[0].status,'Deleted');S3Client.prototype.send=actualSend;
 assert.ok((await request('meeting/'+video,200,admin)).meeting.ended_at);
 console.log('PASS opt-in recording, unanimous consent, withdrawal stops recording, private expiring download permissions, retention access expiry, end-for-all and authenticated expiry maintenance');
+const {verifyMeetingRecording}=await import('./verify-meeting-recording.mjs');
+await verifyMeetingRecording({db,request,admin,staff,staffId,adminId,values,participants,emit,egresses});
+const {verifyExternalMeetingInvitations}=await import("./verify-meeting-invitations.mjs");
+await verifyExternalMeetingInvitations({db,request,admin,staff,staffId,adminId,values,participants,emit,settings,TokenVerifier,encryptSettings,origin});
 assert.ok(providerCalls>0);
 process.env.WALSHKEN_INTEGRATION_KEY_V2=randomBytes(32).toString('base64');
 await request('integrations/migrate-encryption',409,admin,{password:admin.password,code:adminMfa.recoveryCodes[0]});
