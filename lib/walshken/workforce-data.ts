@@ -11,7 +11,7 @@ import {applicableHolidays} from './holiday-engine';
 export function workRange(actor:Actor,params:URLSearchParams){const today=localDate(now(),actor.time_zone),from=date(params.get('from')??today.slice(0,7)+'-01','report start')!,to=date(params.get('to')??new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10),'report end')!;if(to<from||Date.parse(to)-Date.parse(from)>93*86400000)return fail(400,'Choose a report range up to 94 days.');return {from,to};}
 export async function workforceReport(db:Db,actor:Actor,params:URLSearchParams,exportReport=false){
  requireWorkforce(actor);
- const {from,to}=workRange(actor,params),team=params.get('team')==='1'&&hasAction(actor,'attendance.read'),period=['day','week','month'].includes(params.get('period')??'')?params.get('period')!:'week';
+ const {from,to}=workRange(actor,params),team=params.get('team')==='1'&&hasAction(actor,'attendance.read'),period=['day','week','month'].includes(params.get('period')??'')?params.get('period')!:'day';
  const read=staffReadinessEnabled()?actionScope(actor,'attendance.read','e',true):team?scope(actor,'e'):{sql:'e.id=?',args:[actor.id]};
  const exportScope=exportReport&&staffReadinessEnabled()?actionScope(actor,'attendance.export','e',true):{sql:'1=1',args:[]};
  const personal=exportReport&&!team?{sql:'e.id=?',args:[actor.id]}:{sql:'1=1',args:[]};
