@@ -2,11 +2,12 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { countryPath, type SiteService } from "@/lib/walshken/public-catalog";
 import { Icon } from "./brand";
+import { CountryFlag } from "./country-flag";
 
 type Crumb = { label: string; href: string };
 
-export function PageHero({ label, title, description, icon, parent, children, visual }: {
-  label: string; title: string; description: string; icon: string; parent?: Crumb; children?: ReactNode; visual?: ReactNode;
+export function PageHero({ label, title, description, icon, parent, children, visual, countryCode }: {
+  label: string; title: string; description: string; icon: string; parent?: Crumb; children?: ReactNode; visual?: ReactNode; countryCode?: string;
 }) {
   return <section className="inner-hero">
     <div className="public-wrap">
@@ -15,13 +16,14 @@ export function PageHero({ label, title, description, icon, parent, children, vi
         {parent && <><Link href={parent.href}>{parent.label}</Link><Icon name="next" size={14}/></>}
         <span aria-current="page">{title}</span>
       </nav>
-      <div className={visual ? "inner-hero-grid has-visual" : "inner-hero-grid"}>
+      <div className={visual ? "inner-hero-grid has-visual" : countryCode ? "inner-hero-grid country-hero" : "inner-hero-grid"}>
         <div className="inner-hero-copy">
           <div className="section-kicker"><span/> {label}</div>
-          <h1>{title}</h1><p>{description}</p>
+          {countryCode ? <h1 className="country-hero-heading"><CountryFlag code={countryCode}/><span>{title}</span></h1> : <h1>{title}</h1>}
+          <p>{description}</p>
           {children && <div className="inner-hero-actions">{children}</div>}
         </div>
-        {visual ?? <div className="inner-hero-mark" aria-hidden="true"><span className="inner-orbit"/><span className="inner-orbit inner-orbit-large"/><Icon name={icon} size={54}/></div>}
+        {visual ?? (!countryCode && <div className="inner-hero-mark" aria-hidden="true"><span className="inner-orbit"/><span className="inner-orbit inner-orbit-large"/><Icon name={icon} size={54}/></div>)}
       </div>
     </div>
   </section>;
@@ -49,7 +51,7 @@ export function CountryLinks({ markets, service }: {
 }) {
   return <div className="country-grid">
     {markets.map((market) => <Link href={countryPath(market.code, service)} key={market.code} className="country-card">
-      <span className="icon-tile"><Icon name="pin" size={21}/></span><span className="country-card-copy"><strong>{market.name}</strong>
+      <span className="icon-tile country-card-flag"><CountryFlag code={market.code}/></span><span className="country-card-copy"><strong>{market.name}</strong>
         <small>{market.enabled ? "Check current availability" : "Coming soon"}</small></span><Icon name="right" size={18}/>
     </Link>)}
   </div>;
