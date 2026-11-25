@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
+import { setTimeout as wait } from "node:timers/promises";
 import { Pool, type PoolClient } from "pg";
 import { attachDatabasePool } from "@vercel/functions";
 import type { PGlite } from "@electric-sql/pglite";
@@ -12,16 +13,42 @@ type Adapter = {
 type Statement = { sql: string; values: unknown[]; first: <T>() => Promise<T | null>; all: <T>() => Promise<{ results: T[] }>; run: () => Promise<Result> };
 const state = globalThis as typeof globalThis & { walshkenPg?: Adapter; walshkenLocal?: Promise<Adapter> };
 
-async function postgresQuery(connection: Pool | PoolClient, statement: string, values: unknown[]): Promise<Result> {
+async function postgresQuery(connection: PoolClient, statement: string, values: unknown[]): Promise<Result> {
   const result = await connection.query(statement, values);
   return { rows: result.rows, count: result.rowCount ?? 0 };
 }
 
+export function databaseAtCapacity(error: unknown) {
+  return error instanceof Error && "code" in error && error.code === "53300";
+}
+
+async function connect(pool: Pool) {
+  for (const delay of [250, 750, 1_500]) {
+    try {
+      return await pool.connect();
+    } catch (error) {
+      if (!databaseAtCapacity(error)) throw error;
+      await wait(delay + Math.floor(Math.random() * 250));
+    }
+  }
+  return pool.connect();
+}
+
 function postgresAdapter(pool: Pool): Adapter {
   return {
-    query: (statement, values) => postgresQuery(pool, statement, values),
+    async query(statement, values) {
+      const client = await connect(pool);
+      try {
+        const result = await postgresQuery(client, statement, values);
+        client.release();
+        return result;
+      } catch (error) {
+        client.release(true);
+        throw error;
+      }
+    },
     async transaction(work) {
-      const client = await pool.connect();
+      const client = await connect(pool);
       const transaction: Adapter = {
         query: (statement, values) => postgresQuery(client, statement, values),
         transaction: (nestedWork) => nestedWork(transaction),
@@ -43,6 +70,7 @@ function postgresAdapter(pool: Pool): Adapter {
 
 function pooledPostgres(url: string) {
   const ca = process.env.WALSHKEN_DATABASE_CA?.trim();
+  const preview = process.env.VERCEL_ENV === "preview";
   const config: import("pg").PoolConfig = { connectionString: url };
   if (ca) {
     const connection = new URL(url);
@@ -55,9 +83,9 @@ function pooledPostgres(url: string) {
   }
   const pool = new Pool({
     ...config,
-    max: 3,
+    max: preview ? 1 : 3,
     connectionTimeoutMillis: 8_000,
-    idleTimeoutMillis: 5_000,
+    idleTimeoutMillis: preview ? 1_500 : 5_000,
     maxLifetimeSeconds: 60,
   });
   pool.on("error", (error) => console.error("Walshken idle database connection failed", error.name));

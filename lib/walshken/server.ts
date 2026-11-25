@@ -1,6 +1,6 @@
 import { staffReadinessEnabled, type StaffPermission } from "./staff-permissions";
 import { cache } from "react";
-import { workspaceDatabase, type Db } from "./database";
+import { databaseAtCapacity, workspaceDatabase, type Db } from "./database";
 export type { Db } from "./database";
 import type { SiteCatalog } from "./public-catalog";
 import { countries, divisions, homepage, type Role } from "./catalog";
@@ -41,6 +41,10 @@ export function json(data: unknown, status = 200, extra: Record<string,string> =
 }
 export function handleError(error: unknown) {
   if (error instanceof AppError) return json({ error: error.message }, error.status);
+  if (databaseAtCapacity(error)) {
+    console.error("Walshken database connection capacity reached", "53300");
+    return json({ error: "The workspace database is busy. Please try again shortly." }, 503, { "Retry-After": "3" });
+  }
   if (error instanceof Error && /unique constraint|constraint failed|check constraint|foreign key constraint/i.test(error.message)) {
     return json({ error: "That record already exists or its state changed. Refresh and try again." }, 409);
   }
