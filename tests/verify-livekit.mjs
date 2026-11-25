@@ -57,21 +57,26 @@ function authenticatorCode(key, offset) {
 }
 
 const RealDate=globalThis.Date;
-let offset=0;
+let offset=0;let fixedTime=null;
 class TestDate extends RealDate {
-  constructor(...args){super(...(args.length?args:[RealDate.now()+offset]));}
-  static now(){return RealDate.now()+offset;}
+  constructor(...args){super(...(args.length?args:[TestDate.now()]));}
+  static now(){return fixedTime??RealDate.now()+offset;}
 }
 globalThis.Date=TestDate;
 async function enroll(account) {
-  const setup=await request("mfa/setup", 200, account, {password:account.password});
-  const first=authenticatorCode(setup.setupKey,-1);
-  const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
-  assert.equal(confirmed.recoveryCodes.length,8);
-  await request("view/profile",401,account);
-  const mfaCode=authenticatorCode(setup.setupKey,0);
-  await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
-  return {...confirmed,mfaCode,setupKey:setup.setupKey};
+  // Password hashing may cross a TOTP window. Pin only this enrollment exchange.
+  const previousTime=fixedTime;
+  fixedTime=Date.now();
+  try {
+    const setup=await request("mfa/setup", 200, account, {password:account.password});
+    const first=authenticatorCode(setup.setupKey,-1);
+    const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
+    assert.equal(confirmed.recoveryCodes.length,8);
+    await request("view/profile",401,account);
+    const mfaCode=authenticatorCode(setup.setupKey,0);
+    await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
+    return {...confirmed,mfaCode,setupKey:setup.setupKey};
+  } finally { fixedTime=previousTime; }
 }
 
 admin.email=process.env.WALSHKEN_ADMIN_EMAIL;
@@ -253,7 +258,20 @@ await request('calls/invite',409,admin,{id:meeting,employee:guestId});
 await request('integrations/save',409,admin,{provider:'recording-storage',...storage,enabled:'1'});
 await request('calls/consent',200,staff,{id:meeting,consent:'0'});
 recording=(await request('meeting/'+meeting,200,admin)).recordings[0];assert.equal(recording.status,'Complete');
+// Retained objects permit a verified key rotation but never a silent location change.
+await request('integrations/save',409,admin,{provider:'recording-storage',...storage,bucket:'different-private-bucket',enabled:'1'});
+const {S3Client:RotationClient,HeadBucketCommand,HeadObjectCommand,PutObjectCommand:RotationPut,DeleteObjectCommand:RotationDelete}=await import('@aws-sdk/client-s3');
+const beforeRotationSend=RotationClient.prototype.send,beforeRotationFetch=globalThis.fetch;
+const rotatedStorage={...storage,accessKey:'qa-rotated-access',secretKey:secret()};let storageChecks=0;
+try{
+ RotationClient.prototype.send=async function(command){assert.equal(command.input.Bucket,storage.bucket);assert.ok(command instanceof HeadBucketCommand||command instanceof HeadObjectCommand||command instanceof RotationPut||command instanceof RotationDelete);storageChecks++;return {};};
+ globalThis.fetch=async input=>{const url=new URL(input instanceof Request?input.url:String(input));assert.ok(url.hostname.endsWith('supabase.co'));assert.ok(url.pathname.includes('/walshken/verification/'));return new Response(null,{status:403});};
+ await request('integrations/save',200,admin,{provider:'recording-storage',...rotatedStorage,enabled:'1'});
+ assert.equal(storageChecks,4);
+}finally{RotationClient.prototype.send=beforeRotationSend;globalThis.fetch=beforeRotationFetch;}
+assert.equal((await integrationSettings(db,'recording-storage')).accessKey,rotatedStorage.accessKey);
 const download=await request('calls/download-recording',200,admin,{id:meeting,recording:recording.id});assert.equal(new URL(download.url).searchParams.get('X-Amz-Expires'),'60');
+assert.match(new URL(download.url).searchParams.get('X-Amz-Credential'),/^qa-rotated-access\//);
 await db.prepare('UPDATE meeting_recordings SET expires_at=? WHERE id=?',[new Date(Date.now()-1000).toISOString(),recording.id]).run();
 await request('calls/download-recording',410,admin,{id:meeting,recording:recording.id});
 await request('calls/record-start',409,admin,{id:meeting});

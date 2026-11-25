@@ -1,3 +1,4 @@
+import {notificationEmailData} from "./notification-email";
 import {enterpriseEnabled} from './payroll-statutory';
 import {privacyData} from './staff-privacy';
 import {actionScope,hasAction} from './staff-authority';
@@ -129,7 +130,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
     return json({tasks,shifts,meetings:events,leave,holidays});
   }
   if(section==="directory") return json({rows:await teamOptions(db,actor)});
-  if(section==="notifications") return json({rows:await notifications(db,actor)});
+  if(section==="notifications") return json({rows:await notifications(db,actor),notificationEmail:await notificationEmailData(db,actor)});
   if(section==="messages") return messageViews(db,actor);
   if(section==="calls") return meetingViews(db,actor);
   if(section==="documents"||section==="document-security"){

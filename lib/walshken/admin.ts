@@ -1,5 +1,6 @@
 import {requireEmployeeAction,requireOrganizationAction} from './staff-authority';
 import {integrationSettings} from "./integration-settings";
+import {verifyStorageRotation} from "./storage-rotation";
 import {employmentTermsOn} from "./employment-engine";
 import {localDate} from "./work";
 import {validateMessageRetention} from "./retention";
@@ -16,7 +17,7 @@ import { verifyStaffMfa } from "./staff-mfa";
 import { randomBytes } from "node:crypto";
 import { inquiryStatuses } from "./customer-status";
 import { divisions, providers, roles } from "./catalog";
-import { communicationAdmin, communicationPolicy, retentionCutoff } from "./collaboration";
+import { communicationPolicy, retentionCutoff } from "./collaboration";
 import { verifyLiveKitConnection, verifyRecordingStorage, validateLiveKit, validateStorage, type LiveKitSettings, type RecordingStorage } from "./livekit";
 import {
   all, audit, canManage, canPayroll, canSuper, country, date, destination, digest, email, decryptSettings, encryptSettings,
@@ -228,7 +229,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     });
   }
   if (area === "communication-policy") {
-    if(!communicationAdmin(actor))return fail(403,"Administrator access is required.");
+    requireSuper(actor);
     if (action === "save") {
       await db.batch([
         stmt(db,`UPDATE organizations SET group_creation=?,group_approval=?,member_management=?,message_forwarding=?,
@@ -382,11 +383,10 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     const integrationId = provider.id==="payroll-calculator-review" ? calculatorIntegrationId() : provider.id;
     if(provider.id==="document-storage-review"){
       if(!documentsEnabled())return fail(404,"Document storage is not enabled on this deployment.");
-      if(action==="save"&&(await one(db,"SELECT v.id FROM doc_versions v JOIN doc_entries d ON d.id=v.document_id WHERE d.deleted_at IS NULL LIMIT 1")||await one(db,"SELECT id FROM doc_object_cleanup LIMIT 1")))return fail(409,"Keep the current bucket while document versions exist. A planned storage migration is required to rotate its connection.");
     }
     if(provider.id==="livekit"&&await one(db,"SELECT id FROM meetings WHERE provider='livekit' AND provider_room IS NOT NULL AND ended_at IS NULL AND cancelled_at IS NULL LIMIT 1"))return fail(409,"End active LiveKit meetings before changing the connection.");
     if(provider.id==="livekit"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Wait for recordings to finish before changing the LiveKit connection.");
-    if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE deleted_at IS NULL LIMIT 1"))return fail(409,"Keep the current storage connection until all retained recordings are deleted. This prevents inaccessible recordings.");
+    if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Stop active recordings before rotating storage credentials.");
     if (action === "disable") {
       if(provider.id==="recording-storage"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Stop active recordings before disabling storage.");
       const saved=await integrationSettings(db,integrationId,false);
@@ -404,7 +404,7 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     if(provider.id==="recording-storage"||provider.id==="document-storage-review") {
       validateStorage(settings as RecordingStorage);
       if(provider.id==="document-storage-review"&&settings.bucket==="walshken-call-recordings")return fail(400,"Use a separate private document bucket.");
-      if(data.enabled==="1") await verifyRecordingStorage(settings as RecordingStorage);
+      await verifyStorageRotation(db,integrationId,settings as RecordingStorage,data.enabled==="1");
     }
     if(provider.id==="payroll-calculator-review"){if(!payrollEnabled())return fail(404,"Payroll is not enabled here.");validateCalculatorSettings(settings as CalculatorSettings);if(data.enabled==="1")await verifyCalculatorConnection(settings as CalculatorSettings);}
     if (provider.id==="resend") validateEmailSettings(settings as {apiKey:string;from:string});

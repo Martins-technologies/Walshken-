@@ -57,21 +57,26 @@ function authenticatorCode(key, offset) {
 }
 
 const RealDate=globalThis.Date;
-let offset=0;
+let offset=0;let fixedTime=null;
 class TestDate extends RealDate {
-  constructor(...args){super(...(args.length?args:[RealDate.now()+offset]));}
-  static now(){return RealDate.now()+offset;}
+  constructor(...args){super(...(args.length?args:[TestDate.now()]));}
+  static now(){return fixedTime??RealDate.now()+offset;}
 }
 globalThis.Date=TestDate;
 async function enroll(account) {
-  const setup=await request("mfa/setup", 200, account, {password:account.password});
-  const first=authenticatorCode(setup.setupKey,-1);
-  const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
-  assert.equal(confirmed.recoveryCodes.length,8);
-  await request("view/profile",401,account);
-  const mfaCode=authenticatorCode(setup.setupKey,0);
-  await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
-  return {...confirmed,mfaCode};
+  // Password hashing may cross a TOTP window. Pin only this enrollment exchange.
+  const previousTime=fixedTime;
+  fixedTime=Date.now();
+  try {
+    const setup=await request("mfa/setup", 200, account, {password:account.password});
+    const first=authenticatorCode(setup.setupKey,-1);
+    const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
+    assert.equal(confirmed.recoveryCodes.length,8);
+    await request("view/profile",401,account);
+    const mfaCode=authenticatorCode(setup.setupKey,0);
+    await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
+    return {...confirmed,mfaCode};
+  } finally { fixedTime=previousTime; }
 }
 
 admin.email=process.env.WALSHKEN_ADMIN_EMAIL;
@@ -196,14 +201,22 @@ assert.equal((await request("conversation/"+direct,200,admin)).rows.at(-1).body,
 await request("messages/send",400,staff,{conversation:direct,body:"Unrelated text",mentions:[adminId]});
 const beforeNotifications=(await request("view/notifications",200,admin)).rows.filter(row=>row.title==="Mentioned in a conversation").length;
 assert.ok(beforeNotifications>=2);
-// A regular administrator can configure communication and review permitted groups.
+// A regular administrator can review permitted groups, but cannot change global policy or purge another department.
 const scopedAdmin={email:"scoped-admin@walshken.test",password:secret(),cookie:""};
 const scopedInvite=await request("employees/add",201,admin,{...employee,name:"Scoped Administrator",email:scopedAdmin.email,employeeNo:"QA-SCOPED-ADMIN",role:"admin"});
 await request("session/activate",200,scopedAdmin,{...scopedAdmin,code:scopedInvite.code});
 await request("session/login",200,scopedAdmin,scopedAdmin);
 await enroll(scopedAdmin);
-await request("communication-policy/save",200,scopedAdmin,policy);
-assert.ok((await request("view/messages",200,scopedAdmin)).communicationPolicy);
+await request("communication-policy/save",403,scopedAdmin,policy);
+assert.equal((await request("view/messages",200,scopedAdmin)).communicationPolicy,undefined);
+await db.prepare("INSERT INTO units(id,org_id,name,kind) VALUES('protected-department','walshken','Protected department','Department')").run();
+await db.prepare("INSERT INTO conversations(id,org_id,title,kind,created_by,department_id) VALUES('protected-conversation','walshken','Protected messages','Department',?,'protected-department')",[adminId]).run();
+await db.prepare("INSERT INTO messages(id,conversation_id,sender_id,body,created_at) VALUES('protected-old-message','protected-conversation',?,'Preserve other department history',?)",[adminId,new Date(Date.now()-60*86400000).toISOString()]).run();
+await request("conversation/protected-conversation",404,scopedAdmin);
+await request("communication-policy/apply-retention",403,scopedAdmin,{confirmation:"ERASE"});
+assert.equal((await db.prepare("SELECT body FROM messages WHERE id='protected-old-message'").first()).body,'Preserve other department history');
+assert.equal((await db.prepare("SELECT message_retention_days FROM organizations WHERE id='walshken'").first()).message_retention_days,0);
+await request("communication-policy/save",200,admin,policy);
 const requestTitle="Scoped team request";
 await request("messages/create",201,staff,{kind:"Group",title:requestTitle,members:[adminId]});
 const approval=(await request("view/messages",200,scopedAdmin)).pendingGroups.find(row=>row.title===requestTitle);
@@ -262,5 +275,5 @@ assert.ok((await request("conversation/"+approval.id,200,staff)).rows.some(row=>
 console.log("PASS group owner removal, Super Admin restoration, retained history and access controls");
 console.log("PASS archived direct conversation reopening and preventing new messages after peer scope changes");
 console.log("PASS company, department, project, country and management group scopes, with immediate revocation when assignments change");
-console.log("PASS earlier-history edits and removal refresh, pinned-only search, inline mentions, regular administrator policy and scoped approvals");
+console.log("PASS earlier-history edits and removal refresh, pinned-only search, inline mentions, Super Admin global policy and retention, scoped administrator approvals without cross-department purge");
 console.log("PASS messaging, scoped groups, membership controls, approvals, logged changes, guest access and revocation, replies, forwarding, mentions, read receipts, reactions, pins, archiving, retention and paginated search");

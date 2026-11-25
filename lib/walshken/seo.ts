@@ -9,7 +9,7 @@ function httpsOrigin(value?: string) {
   return undefined;
 }
 
-export const siteOrigin = httpsOrigin(process.env.WALSHKEN_SITE_URL);
+export const siteOrigin = httpsOrigin(process.env.WALSHKEN_SITE_URL ?? "https://www.walshken.com");
 export const metadataOrigin = siteOrigin ?? httpsOrigin(process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined);
 export const indexingEnabled = Boolean(siteOrigin && process.env.WALSHKEN_INDEX_PUBLIC === "1"
   && (process.env.VERCEL_ENV ? process.env.VERCEL_ENV === "production" : process.env.NODE_ENV === "production"));

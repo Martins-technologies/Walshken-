@@ -37,11 +37,14 @@ Open the corporate homepage at `/`, the service directory at `/services`, countr
 - Membership-scoped direct messages and group conversations backed by PostgreSQL. Start one from **Messages → New message → Direct**. Group-creation policy is independent of direct messaging.
 - Private, versioned documents with server-side access checks and previews. Chat document references require both `WALSHKEN_DOCUMENTS_ENABLED=1` and `WALSHKEN_MESSAGE_DOCUMENTS_ENABLED=1`. Apply the document-reference migration first. A chat reference preserves the document’s existing permissions.
 - Secure LiveKit calls and meetings with participant roles, attendance and optional consent-based recording.
-- Reviewed payroll estimates, effective-dated rates, adjustments and payslips. The built-in statutory deduction engine covers Alberta/CAD for 2026. Payments recorded in the app are processed separately.
+- Reviewed payroll estimates, effective-dated rates, adjustments, payslips and country statutory packages for Canada, India and Pakistan. Employer/workplace applicability, actual employee declarations and effective coverage must be independently reviewed before finalization. Payments recorded in the app are processed separately.
+- Granular sensitive-action permissions, employment-rule evidence, privacy exports and archives, legal holds, and approved original-record disposal.
 
 ## Production readiness
 
-Verify connected provider workflows using authorized test accounts in a separate database. Before staff rollout, verify backup restore, production runtime permissions, session recovery, upload scanning, retention and load capacity. The automated call and document suites substitute provider transport while testing the real routes and permission checks.
+Run `npm run verify:release` with Node.js 22 for TypeScript, isolated regression suites and production compilation. GitHub CI runs the same gate, and every Vercel production build runs the regression suites before provider preflight. The test runner excludes deployment credentials and database connections from fixtures. See [production release instructions](docs/production-release.md) for migration, environment and rollback requirements.
+
+Verify connected provider workflows using authorized test accounts in a separate database. Operational acceptance includes backup restore, runtime permissions, session recovery, retention and capacity. Live malware scanning is explicitly deferred for the current release; set `WALSHKEN_MALWARE_SCANNING_REQUIRED=0` to retain document functionality with existing file validation and private access controls. The automated call and document suites substitute provider transport while testing real routes and permission checks.
 
 ## LiveKit calls and meetings
 

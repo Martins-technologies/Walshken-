@@ -232,7 +232,7 @@ export function Messages({data,actor,refresh}:{data:ViewData;actor:Viewer;refres
         </div>}
       </nav>
       {isAdmin&&<div className="chat-admin-bar">
-        <button type="button" onClick={()=>setDialog("policy")}><Icon name="settings" size={17}/>Messaging policy</button>
+        {policy&&<button type="button" onClick={()=>setDialog("policy")}><Icon name="settings" size={17}/>Messaging policy</button>}
         <button type="button" onClick={()=>setDialog("requests")}><Icon name="users" size={17}/>Group requests{pending.length>0&&<b>{pending.length}</b>}</button>
       </div>}
     </aside>

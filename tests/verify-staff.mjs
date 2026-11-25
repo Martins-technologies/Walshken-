@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, mkdirSync, readdirSync, copyFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GET, POST } from "../app/api/workspace/[...parts]/route.ts";
 import { createHmac, randomBytes } from "node:crypto";
 
 const sandbox = mkdtempSync(join(tmpdir(), "walshken-route-test-"));
-symlinkSync(join(process.cwd(), "drizzle"), join(sandbox, "drizzle"), "dir");
+if (process.env.WALSHKEN_TEST_NOTIFICATIONS === "1") {
+  mkdirSync(join(sandbox, "drizzle"));
+  for (const file of readdirSync("drizzle").filter(name => name.endsWith(".sql"))) copyFileSync(join("drizzle", file), join(sandbox, "drizzle", file));
+  writeFileSync(join(sandbox, "drizzle/0010a_notification_stage.sql"), "ALTER TABLE notifications ADD COLUMN release_stage text NOT NULL DEFAULT 'production';");
+  copyFileSync("supabase/migrations/20261125075353_notification_email_outbox.sql", join(sandbox, "drizzle/0010b_notification_email.sql"));
+} else symlinkSync(join(process.cwd(), "drizzle"), join(sandbox, "drizzle"), "dir");
 process.chdir(sandbox);
 process.on("exit", () => rmSync(sandbox, { recursive: true, force: true }));
 process.env.WALSHKEN_ADMIN_EMAIL="admin@walshken.test";
@@ -57,21 +62,26 @@ function authenticatorCode(key, offset) {
 }
 
 const RealDate=globalThis.Date;
-let offset=0;
+let offset=0;let fixedTime=null;
 class TestDate extends RealDate {
-  constructor(...args){super(...(args.length?args:[RealDate.now()+offset]));}
-  static now(){return RealDate.now()+offset;}
+  constructor(...args){super(...(args.length?args:[TestDate.now()]));}
+  static now(){return fixedTime??RealDate.now()+offset;}
 }
 globalThis.Date=TestDate;
 async function enroll(account) {
-  const setup=await request("mfa/setup", 200, account, {password:account.password});
-  const first=authenticatorCode(setup.setupKey,-1);
-  const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
-  assert.equal(confirmed.recoveryCodes.length,8);
-  await request("view/profile",401,account);
-  const mfaCode=authenticatorCode(setup.setupKey,0);
-  await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
-  return {...confirmed,mfaCode};
+  // Password hashing may cross a TOTP window. Pin only this enrollment exchange.
+  const previousTime=fixedTime;
+  fixedTime=Date.now();
+  try {
+    const setup=await request("mfa/setup", 200, account, {password:account.password});
+    const first=authenticatorCode(setup.setupKey,-1);
+    const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
+    assert.equal(confirmed.recoveryCodes.length,8);
+    await request("view/profile",401,account);
+    const mfaCode=authenticatorCode(setup.setupKey,0);
+    await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
+    return {...confirmed,mfaCode};
+  } finally { fixedTime=previousTime; }
 }
 
 admin.email=process.env.WALSHKEN_ADMIN_EMAIL;
@@ -101,6 +111,13 @@ const {rows}=await request("view/employees",200,admin);
 const staffId=rows.find(row=>row.email===staff.email).id;
 const manager=rows.find(row=>row.email===admin.email).id;
 const access=await enroll(staff);
+if (process.env.WALSHKEN_TEST_NOTIFICATIONS === "1") {
+  globalThis.Date=RealDate;
+  const {workspaceDatabase}=await import("../lib/walshken/database.ts");
+  const {verifyNotificationEmail}=await import("./verify-notification-email.mjs");
+  await verifyNotificationEmail({db:workspaceDatabase(),request,admin,staff,adminId:manager,staffId});
+  process.exit(0);
+}
 await request("session/login",401,staff,{email:staff.email,password:staff.password,mfaCode:access.mfaCode});
 await request("employees/edit",200,admin,{...employee,id:staffId,manager,holidayCalendar:"AB",holidayDays:12,
   workSchedule:"Monday to Friday",leaveDays:18,employmentStatus:"On leave"});
@@ -199,6 +216,7 @@ for(const [role,allowed,denied] of assignedRoles){
   assert.equal((await request("view/profile",200,account)).row.role,role);
   await request(allowed,200,account);
   await request(denied,403,account);
+  if(role==="guest")await request("notifications/read",200,account,{});
   if(role==="employee"){
     const registry=await request("view/employees?q=ROLE-employee",200,admin);
     const id=registry.rows[0].id;
@@ -215,11 +233,13 @@ console.log("PASS all six roles using issued activation codes, MFA, role authori
 const newAuthenticator=await request("mfa/setup",200,admin,{password:admin.password,code:adminMfa.recoveryCodes[0]});
 const existingFactorSession={...admin,cookie:""};
 await request("session/login",200,existingFactorSession,{email:admin.email,password:admin.password,mfaCode:adminMfa.recoveryCodes[1]});
+fixedTime=Date.now();
 const rotated=await request("mfa/confirm",200,admin,{password:admin.password,code:authenticatorCode(newAuthenticator.setupKey,-1)});
 assert.equal(rotated.recoveryCodes.length,8);
 await request("view/profile",401,existingFactorSession);
 await request("session/login",401,admin,{email:admin.email,password:admin.password,mfaCode:adminMfa.recoveryCodes[2]});
 await request("session/login",200,admin,{email:admin.email,password:admin.password,mfaCode:authenticatorCode(newAuthenticator.setupKey,0)});
+fixedTime=null;
 console.log("PASS authenticator replacement keeps the existing factor until confirmation and invalidates previous sessions and codes");
 
 

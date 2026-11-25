@@ -1,3 +1,4 @@
+import {saveNotificationEmailPreference} from "@/lib/walshken/notification-email";
 import {privacyAction,privacyDownload} from "@/lib/walshken/staff-privacy";
 import {governanceAction} from "@/lib/walshken/staff-governance";
 import {workforceEnabled} from '@/lib/walshken/workforce';
@@ -65,6 +66,7 @@ export async function POST(request: Request, context: Context) {
     if(area==="documents"&&action==="upload") return await uploadDocument(db,actor,request);
     if(collaborationRelease()&&area!=="governance"&&area!=="privacy"&&!releasedMutationAreas.has(area))return fail(404,"This feature is not released yet.");
     const data=await payload(request);
+    if(area==="notifications"&&action==="preferences")return await saveNotificationEmailPreference(db,actor,data);
     if(area==="privacy")return await privacyAction(db,actor,action,data);
     if(area==="governance") return await governanceAction(db,actor,action,data);
     if(area==="profile"&&action==="contact") return await updateContactNumber(db,actor,data);

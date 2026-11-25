@@ -1,7 +1,7 @@
 import {integrationSettings} from "./integration-settings";
 import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 import { AccessToken, EgressClient, RoomServiceClient, TrackSource } from "livekit-server-sdk";
-import { S3Client, HeadBucketCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, HeadBucketCommand, HeadObjectCommand, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { fail, type Db } from "./server";
 
@@ -66,6 +66,7 @@ export async function verifyRecordingStorage(settings:RecordingStorage){
   try{
     await client.send(new HeadBucketCommand({Bucket:s.bucket}));
     await client.send(new PutObjectCommand({Bucket:s.bucket,Key:key,Body:"Walshken private recording storage verification",ContentType:"text/plain"}));
+    await client.send(new HeadObjectCommand({Bucket:s.bucket,Key:key}));
     const publicUrl=new URL(`${s.endpoint}/${s.bucket}/${key}`);
     const response=await fetch(publicUrl,{cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000)});
     if(![401,403,404].includes(response.status))return fail(400,"Recording storage must be private. Public access was not denied.");

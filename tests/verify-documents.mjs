@@ -62,21 +62,26 @@ function authenticatorCode(key, offset) {
 }
 
 const RealDate=globalThis.Date;
-let offset=0;
+let offset=0;let fixedTime=null;
 class TestDate extends RealDate {
-  constructor(...args){super(...(args.length?args:[RealDate.now()+offset]));}
-  static now(){return RealDate.now()+offset;}
+  constructor(...args){super(...(args.length?args:[TestDate.now()]));}
+  static now(){return fixedTime??RealDate.now()+offset;}
 }
 globalThis.Date=TestDate;
 async function enroll(account) {
-  const setup=await request("mfa/setup", 200, account, {password:account.password});
-  const first=authenticatorCode(setup.setupKey,-1);
-  const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
-  assert.equal(confirmed.recoveryCodes.length,8);
-  await request("view/profile",401,account);
-  const mfaCode=authenticatorCode(setup.setupKey,0);
-  await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
-  return {...confirmed,mfaCode};
+  // Password hashing may cross a TOTP window. Pin only this enrollment exchange.
+  const previousTime=fixedTime;
+  fixedTime=Date.now();
+  try {
+    const setup=await request("mfa/setup", 200, account, {password:account.password});
+    const first=authenticatorCode(setup.setupKey,-1);
+    const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
+    assert.equal(confirmed.recoveryCodes.length,8);
+    await request("view/profile",401,account);
+    const mfaCode=authenticatorCode(setup.setupKey,0);
+    await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
+    return {...confirmed,mfaCode};
+  } finally { fixedTime=previousTime; }
 }
 
 admin.email=process.env.WALSHKEN_ADMIN_EMAIL;
@@ -157,6 +162,38 @@ await documentRequest('list',401,null);
 await documentRequest('upload',403,staff,file('work.png',png));
 const uploaded=await post('upload',file('work.png',png),201);
 const documentId=uploaded.id;
+// Existing document versions remain accessible after same-bucket credential rotation.
+await request('integrations/save',409,admin,{provider:'document-storage-review',...settings,bucket:'different-private-documents',enabled:'1'});
+const {S3Client:RotationClient,HeadBucketCommand,HeadObjectCommand,PutObjectCommand:RotationPut,DeleteObjectCommand:RotationDelete}=await import('@aws-sdk/client-s3');
+const beforeRotationSend=RotationClient.prototype.send,beforeRotationFetch=globalThis.fetch;
+try{
+ let checks=0;
+ RotationClient.prototype.send=async function(command){assert.equal(command.input.Bucket,settings.bucket);assert.ok(command instanceof HeadBucketCommand||command instanceof HeadObjectCommand||command instanceof RotationPut||command instanceof RotationDelete);checks++;return {};};
+ globalThis.fetch=async input=>{const url=new URL(input instanceof Request?input.url:String(input));assert.ok(url.hostname.endsWith('supabase.co'));assert.ok(url.pathname.includes('/walshken/verification/'));return new Response(null,{status:403});};
+ await request('integrations/save',200,admin,{provider:'document-storage-review',...settings,accessKey:'rotated-document-access',secretKey:secret(),enabled:'1'});
+ assert.equal(checks,4);
+ RotationClient.prototype.send=async function(){throw new Error('Synthetic replacement credential denied');};
+ await request('integrations/save',400,admin,{provider:'document-storage-review',...settings,accessKey:'unusable-document-access',enabled:'1'});
+}finally{RotationClient.prototype.send=beforeRotationSend;globalThis.fetch=beforeRotationFetch;}
+const {integrationSettings}=await import('../lib/walshken/integration-settings.ts');
+assert.equal((await integrationSettings(db,'document-storage-review')).accessKey,'rotated-document-access');
+// The shared S3 account also protects document access when no recording exists yet.
+const savedDocumentSettings=await integrationSettings(db,'document-storage-review');
+const sharedStorage={...settings,bucket:'private-call-recordings'};
+await db.prepare("INSERT INTO integrations(id,configuration,enabled,updated_at) VALUES('recording-storage',?,1,?)",[await encryptSettings('recording-storage',sharedStorage),new Date().toISOString()]).run();
+await db.prepare("DELETE FROM integrations WHERE id='document-storage-review'").run();
+process.env.WALSHKEN_DOCUMENT_BUCKET=settings.bucket;
+await request('integrations/save',409,admin,{provider:'recording-storage',...sharedStorage,endpoint:'https://s3.us-east-1.amazonaws.com',region:'us-east-1',enabled:'1'});
+try{
+ const checkedBuckets=[];
+ RotationClient.prototype.send=async function(command){if(command instanceof HeadBucketCommand)checkedBuckets.push(command.input.Bucket);return {};};
+ globalThis.fetch=async()=>new Response(null,{status:403});
+ await request('integrations/save',200,admin,{provider:'recording-storage',...sharedStorage,accessKey:'rotated-shared-access',secretKey:secret(),enabled:'1'});
+ assert.deepEqual(checkedBuckets,[settings.bucket,sharedStorage.bucket]);
+ // Moving from shared to dedicated credentials keeps the exact same private document location.
+ await request('integrations/save',200,admin,{provider:'document-storage-review',...savedDocumentSettings,enabled:'1'});
+}finally{RotationClient.prototype.send=beforeRotationSend;globalThis.fetch=beforeRotationFetch;delete process.env.WALSHKEN_DOCUMENT_BUCKET;}
+console.log('PASS private storage credential rotation, rejected relocation, failed-key rollback and shared-account document continuity');
 assert.equal((await list(staff)).rows.length,0);
 await post('detail',{id:documentId},403,staff);
 await rule('organization','walshken','employee',staffId,['view']);

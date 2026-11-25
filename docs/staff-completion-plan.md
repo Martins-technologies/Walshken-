@@ -1,5 +1,7 @@
 # Staff completion plan and database impact
 
+**Release update — 25 November 2026:** The owner has now authorized production completion and deployment without another confirmation. The preview-only constraints and approval references below describe the earlier review phase. Follow [production-release.md](production-release.md) for the current release, preserve the explicit malware-scanning deferral, and apply reviewed production schema/grants before enabling the new features.
+
 Production baseline is commit 2e6480cb78fac8e9bc8799fbd64b996e3e240fda. The review branch contains the audited provider identifier fix, standard Alberta reporting pay, policy history, governance and oversight work. Production deployment requires separate approval.
 
 ## Implementation order

@@ -31,6 +31,9 @@ assert.throws(()=>nationalPayroll({...n(india),election:{...election(india),cont
 assert.throws(()=>nationalPayroll({...n(india),payDate:'2027-04-01'},india),/does not cover/);
 assert.throws(()=>nationalAnnualTax(new D(1200000),pakistan,{...election(pakistan),annualOtherIncome:'400000'}),/seventy-five/);
 assert.equal(fiscalYear('IN','2027-02-15').year,2027);assert.equal(fiscalYear('PK','2026-06-30').year,2026);assert.equal(remainingFiscalPeriods('IN','2026-11-30','Monthly'),5);
+assert.equal(remainingFiscalPeriods('CA','2026-12-30','Weekly'),1,'A final weekly payment must not project a payment into the next tax year');
+assert.equal(remainingFiscalPeriods('IN','2027-03-18','Biweekly'),1,'A 14-day payment after 31 March belongs to the next India fiscal year');
+assert.equal(remainingFiscalPeriods('PK','2027-06-16','Biweekly'),2,'A scheduled payment exactly on 30 June remains in the Pakistan fiscal year');
 const profile=defaultPayPolicy({country:'CA',jurisdiction:'CA-AB'}).taxProfile;
 for(const ca of canadaTaxPackages2026()){
  const r=canadianAlbertaTax({payDate:ca.validFrom,currency:'CAD',periods:26,periodIndex:1,taxable:400000,pensionable:400000,insurable:400000,bonus:0,bonusPensionable:0,bonusInsurable:0,pretax:0,bonusPretax:0,lastRegular:0,ytd:zeroBalance(),profile},ca);

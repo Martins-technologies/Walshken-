@@ -70,14 +70,19 @@ class TestDate extends RealDate {
 }
 globalThis.Date=TestDate;
 async function enroll(account) {
-  const setup=await request("mfa/setup", 200, account, {password:account.password});
-  const first=authenticatorCode(setup.setupKey,-1);
-  const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
-  assert.equal(confirmed.recoveryCodes.length,8);
-  await request("view/profile",401,account);
-  const mfaCode=authenticatorCode(setup.setupKey,0);
-  await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
-  return {...confirmed,mfaCode};
+  // Password hashing may cross a TOTP window. Pin only this enrollment exchange.
+  const previousTime=fixedTime;
+  fixedTime=Date.now();
+  try {
+    const setup=await request("mfa/setup", 200, account, {password:account.password});
+    const first=authenticatorCode(setup.setupKey,-1);
+    const confirmed=await request("mfa/confirm", 200, account, {password:account.password,code:first});
+    assert.equal(confirmed.recoveryCodes.length,8);
+    await request("view/profile",401,account);
+    const mfaCode=authenticatorCode(setup.setupKey,0);
+    await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
+    return {...confirmed,mfaCode};
+  } finally { fixedTime=previousTime; }
 }
 
 admin.email=process.env.WALSHKEN_ADMIN_EMAIL;

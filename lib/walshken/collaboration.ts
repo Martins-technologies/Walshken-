@@ -144,7 +144,7 @@ export async function messageViews(db:Db,actor:Actor) {
     departments:canCreateGroups(actor,policy)?await all(db,`SELECT id,name FROM units WHERE org_id=? AND kind='Department' AND (?=1 OR id=?) ORDER BY name`,actor.org_id,canSuper(actor)?1:0,actor.department_id):[],
     projects:canCreateGroups(actor,policy)?await all(db,`SELECT id,name FROM projects WHERE org_id=? AND (?=1 OR owner_id=? OR department_id=?) ORDER BY name`,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id):[],
     canForwardMessages:canForwardMessages(actor,policy),memberManagement:policy.member_management,messageChanges:policy.message_changes,
-    communicationPolicy:communicationAdmin(actor)?policy:undefined,
+    communicationPolicy:canSuper(actor)?policy:undefined,
     pendingGroups:communicationAdmin(actor)?await all(db,`SELECT c.id,c.title,c.kind,e.name,c.created_at FROM conversations c JOIN employees e ON e.id=c.created_by
       WHERE c.org_id=? AND c.status='Pending' AND (c.closes_at IS NULL OR c.closes_at>?)
       AND (?=1 OR e.department_id=? OR e.manager_id=?) ORDER BY c.created_at`,actor.org_id,now(),canSuper(actor)?1:0,actor.department_id,actor.id):[],

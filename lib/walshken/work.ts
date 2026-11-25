@@ -176,6 +176,10 @@ async function visibleTask(db: Db, actor: Actor, target: string) {
 }
 
 export async function workAction(db: Db, actor: Actor, area: string, action: string, data: Record<string,unknown>) {
+  if (area==="notifications" && action==="read") {
+    await run(db,"UPDATE notifications SET read_at=? WHERE employee_id=? AND read_at IS NULL",now(),actor.id);
+    return json({ok:true,message:"Notifications marked as read."});
+  }
   requireStaff(actor);
   if (area==="projects" && action==="add") {
     if (!canManage(actor)) return fail(403,"Project management access is required.");
@@ -221,10 +225,6 @@ export async function workAction(db: Db, actor: Actor, area: string, action: str
       audit(db,actor,`Task moved to ${status}`,"task",target),
     ]);
     return json({ok:true,message:"Task updated."});
-  }
-  if (area==="notifications" && action==="read") {
-    await run(db,"UPDATE notifications SET read_at=? WHERE employee_id=? AND read_at IS NULL",now(),actor.id);
-    return json({ok:true,message:"Notifications marked as read."});
   }
   return fail(404,"That work action is unavailable.");
 }

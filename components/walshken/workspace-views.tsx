@@ -19,6 +19,7 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  notificationEmail?:{enabled:boolean;revision:number;providerConfigured:boolean;deliveries:RecordRow[]}|null;
   privacy?:boolean;events?:RecordRow[];categories?:readonly string[];actorId?:string;canManage?:boolean;canExport?:boolean;canDispose?:boolean;
   retention?:import("./retention-management").RetentionData|null;
   scanRequired?:boolean;
@@ -251,10 +252,14 @@ export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:st
   if(section==="directory")return <Panel title="People in your workspace">
     {rows.length?<div className="people-grid">{rows.map((row)=><div className="person-card" key={value(row,"id")}><span className="avatar">{initials(value(row,"name"))}</span><div><strong>{row.name}</strong><small>{row.title||row.department||"Walshken staff"}</small></div></div>)}</div>:<Empty icon="users" title="No teammates in your scope"/>}
   </Panel>;
-  if(section==="notifications")return <Panel title="Recent notifications" action={rows.some((row)=>!row.read_at)&&<Quick path="notifications/read" refresh={refresh}>Mark all as read</Quick>}>
+  if(section==="notifications")return <>{data.notificationEmail&&<Panel title="Email notifications" note="Email is off by default. Enable it to receive a generic sign-in link for new updates at your work email. Sensitive details remain inside the workspace.">
+    <ActionForm key={data.notificationEmail.revision} path="notifications/preferences" fields={[{name:"enabled",label:"Email me about new workspace updates",type:"checkbox",value:data.notificationEmail.enabled?1:0}]} extra={{revision:data.notificationEmail.revision}} submit="Save email preference" refresh={refresh} reset={false}/>
+    {!data.notificationEmail.providerConfigured&&<p className="form-note">Email delivery is awaiting the administrator’s verified sender configuration. Your in-app notifications remain available.</p>}
+    {data.notificationEmail.deliveries.length>0&&<Disclosure title="Recent email activity"><Table rows={data.notificationEmail.deliveries} columns={[dateColumn("created_at","Created"),statusColumn,column("attempts","Attempts")]} empty="No email activity"/><p className="form-note">Sent means accepted by the email provider. It does not confirm inbox delivery. Failed updates remain available in your in-app notifications.</p></Disclosure>}
+  </Panel>}<Panel title="Recent notifications" action={rows.some((row)=>!row.read_at)&&<Quick path="notifications/read" refresh={refresh}>Mark all as read</Quick>}>
     {rows.length?<div className="notification-list">{rows.map((row)=><a href={value(row,"href")} key={value(row,"id")}><span className="icon-tile"><Icon name="bell" size={16}/></span>
       <div><strong>{row.title}</strong><small>{row.body} · {dateText(row.created_at,true,actor.timeZone)}</small></div>{!row.read_at&&<Status>New</Status>}</a>)}</div>:<Empty icon="bell" title="You’re all caught up"/>}
-  </Panel>;
+  </Panel></>;
   if(section==="salary")return <Panel title="Approved payroll records" note="Your approved payroll records are private to your account and authorized payroll staff.">
     <Table rows={rows} columns={[dateColumn("starts_on","Period start"),dateColumn("ends_on","Period end"),durationColumn("payable_seconds","Payable hours"),
       {key:"gross_cents",title:"Gross",render:(row)=>money(row.gross_cents,value(row,"currency"))},statusColumn]} empty="No approved records"/>
