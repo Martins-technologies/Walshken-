@@ -2,17 +2,18 @@
 
 import { useId, useState, type FormEvent, type KeyboardEvent } from "react";
 import { countries, searchCountries } from "@/lib/walshken/catalog";
+import { matchCountrySearch } from "@/lib/walshken/public-catalog";
 import type { SiteService } from "@/lib/walshken/public-catalog";
 import { Icon } from "./brand";
+import { CountryFlag } from "./country-flag";
 
-const displayFlag = (code: string) => String.fromCodePoint(...[...code].map((letter) => letter.charCodeAt(0) + 127397));
-
-function CountrySearch() {
+function CountrySearch({ initialCountry }: { initialCountry?: string }) {
   const id = useId();
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(initialCountry ?? "");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const choices = open ? searchCountries(query) : [];
+  const selected = matchCountrySearch(query);
   function select(name: string) { setQuery(name); setOpen(false); setActive(0); }
   function key(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Escape") { setOpen(false); return; }
@@ -33,7 +34,7 @@ function CountrySearch() {
     if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false);
   }}>
     <label htmlFor={id}>Country or territory</label>
-    <div className="explorer-field"><Icon name="globe" size={18}/><input id={id} role="combobox" aria-controls={open ? `${id}-list` : undefined} aria-expanded={open}
+    <div className="explorer-field">{selected ? <CountryFlag code={selected.code}/> : <Icon name="globe" size={18}/>}<input id={id} role="combobox" aria-controls={open ? `${id}-list` : undefined} aria-expanded={open}
       aria-autocomplete="list" aria-activedescendant={open && choices[active] ? `${id}-${active}` : undefined}
       name="country" required placeholder="Search countries" autoComplete="off" value={query} onKeyDown={key}
       onFocus={(event) => { setOpen(true); event.target.select(); }} onChange={(event) => { setQuery(event.target.value); setActive(0); setOpen(true); }}/>
@@ -42,7 +43,7 @@ function CountrySearch() {
       {choices.length === 0 && <span className="option-empty">No matching countries</span>}
       {choices.map((c, i) => <button type="button" id={`${id}-${i}`} role="option" aria-selected={i === active} tabIndex={-1}
         className={i === active ? "highlighted" : ""} onMouseDown={(event) => event.preventDefault()} onClick={() => select(c.name)} key={c.code}>
-        <span>{displayFlag(c.code)} &nbsp;{c.name}</span><small>{c.code}</small>
+        <span className="country-option-label"><CountryFlag code={c.code}/>{c.name}</span><small>{c.code}</small>
       </button>)}
     </div>}
   </div>;
@@ -90,8 +91,8 @@ export function InquiryForm({ service, country, services, enabled, notify = fals
   </form>;
 }
 
-export function ServiceExplorer({ services, service = "" }: {
-  services: SiteService[]; service?: string;
+export function ServiceExplorer({ services, service = "", country }: {
+  services: SiteService[]; service?: string; country?: string;
 }) {
   const serviceId = useId();
 
@@ -103,7 +104,7 @@ export function ServiceExplorer({ services, service = "" }: {
         <option value="">All services</option>{services.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
       </select><Icon name="down" size={16}/></div>
     </div>
-    <CountrySearch/>
+    <CountrySearch initialCountry={country}/>
     <button className="btn btn-blue explorer-submit">View availability <Icon name="right" size={18}/></button>
   </form>;
 }
