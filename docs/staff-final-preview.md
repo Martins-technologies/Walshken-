@@ -12,6 +12,10 @@ The registry contains 14 Canadian, 37 Indian and 8 Pakistani jurisdiction entrie
 
 No new vendor API is involved in calendar, attendance, leave, scheduling or the supported internal payroll workflows. Bank disbursement and statutory submissions remain outside the recorded-payment workflow and need an appropriate regulated provider only if direct execution is required. Sender verification and malware scanner provisioning are separate operational dependencies.
 
+Governance → Employment policies → Rule packs shows regional coverage for the selected classification and date. A Super Admin can import up to 60 policy versions in a transaction or generate a dated Canadian statutory calendar draft from the published dates. The import saves the versions and evidence in Supabase and preserves independent review before they take effect. An applicable reviewed package is used by the existing scheduling, attendance, leave and payroll workflows. The engine can represent daily-only or weekly-only overtime thresholds and laws requiring recurring uninterrupted rest. These methods still require the appropriate approved rate, qualifying classification and evidence.
+
+“Validated payroll calculator” is the optional external adapter for a payroll profile explicitly using an external calculation method. Native payroll selects its package by country, tax jurisdiction and pay date. Legacy Alberta profiles can also select the published 2027 withholding package without the adapter. The Preview runs against Supabase. In-memory PostgreSQL is used only by isolated automated tests.
+
 ## Follow-up preview
 
 The public pages use the production source and assets. The QA database received a copy of the published homepage and active service/market catalog. The copy contains only public-facing fields and uses existing QA permissions. Corporate page content was compared with the live homepage, service listing, country listing, About, Contact and both customer account entry pages.

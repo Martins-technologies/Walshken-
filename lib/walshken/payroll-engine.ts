@@ -1,3 +1,4 @@
+import {maintainedCanadaTaxPackages} from "./payroll-canada-packages";
 import {payrollLeaveEntitlement} from "./leave-balances";
 import {employerValidationContext} from './employer-validation';
 import {countryEmploymentContext,type CountryEmploymentContext} from './payroll-country-employment';
@@ -41,8 +42,8 @@ export async function payrollFacts(db:Db,actor:Actor,target:string,p:PayPeriod){
    overtimeDates.push({from:entry.from,through:entry.through,multiplier:D.max(new D(commercialMultiplier),new D(rule.multiplier)).toString()});
   }
   const overtime=overtimeRules[0].settings as OvertimeSettings;
-  policy.dailyHours=policy.dailyHours?Math.min(policy.dailyHours,overtime.dailyHours):overtime.dailyHours;
-  policy.weeklyHours=policy.weeklyHours?Math.min(policy.weeklyHours,overtime.weeklyHours):overtime.weeklyHours;
+  policy.dailyHours=policy.dailyHours&&overtime.dailyHours?Math.min(policy.dailyHours,overtime.dailyHours):policy.dailyHours||overtime.dailyHours;
+  policy.weeklyHours=policy.weeklyHours&&overtime.weeklyHours?Math.min(policy.weeklyHours,overtime.weeklyHours):policy.weeklyHours||overtime.weeklyHours;
   policy.overtimeMultiplier=overtimeDates[0].multiplier;
   policy.workweekStart=overtime.weekStart;
   policy.overtime='Configured rule';
@@ -51,10 +52,15 @@ export async function payrollFacts(db:Db,actor:Actor,target:string,p:PayPeriod){
  const reporting = await reportingReviews(db,actor.org_id,employee.id,dayAdd(p.starts_on,-1),dayAdd(p.ends_on,2));
  const statutory=await statutoryContext(db,actor,employee,p,policy);
  const annualTax=policy.taxEngine==='Canada Alberta 2026'?await applicablePolicy(db,employee,p.pay_date,'Canada Alberta payroll',false):null;
+ const publishedAlbertaPackage=policy.taxEngine==='Canada Alberta 2026'&&!annualTax&&p.pay_date>canada2026.validThrough
+  ? maintainedCanadaTaxPackages().find(pkg=>pkg.region?.code==='AB'&&p.pay_date>=pkg.validFrom&&p.pay_date<=pkg.validThrough)
+  : undefined;
+ const albertaPackage=(annualTax?.settings as CanadaAlbertaParameters|undefined)??publishedAlbertaPackage
+  ?? (policy.taxEngine==='Canada Alberta 2026'&&p.pay_date>=canada2026.validFrom&&p.pay_date<=canada2026.validThrough?canada2026:undefined);
  const employerValidation=await employerValidationContext(db,actor,employee,p,policy);
  const countryWork=work.daily.map(d=>({...d}));assignOvertime(countryWork,policy);
  const countryEmployment=await countryEmploymentContext(db,actor,employee,p,policy,countryWork,rates);
- const raw={employerValidation,countryEmployment,compliance,...(statutory?{statutory}:{}),...(employment?{employment,employmentRules}:{}),...(annualTax?{annualTax}:{}),...(staffReadinessEnabled()?{reporting}:{}),employee:{id:employee.id,name:employee.name,employeeNo:employee.employee_no,employmentType:employee.employment_type,hireDate:employee.hire_date,contractStart:employee.contract_start,employmentEnd:employee.employment_end,country:employee.country,jurisdiction:employee.jurisdiction,timeZone:employee.time_zone},profile:{id:profile.id,policy},rates,period:{id:p.id,frequency:p.frequency,start:p.starts_on,end:p.ends_on,payDate:p.pay_date,periodsPerYear:p.periods_per_year},work,items,historicalDecisions,leaves,holidays,pendingCorrections,salaryLeaveInputs,reconciliations,opening:ytd.opening,previousPayroll:ytd.rows.map(r=>({id:r.id,hash:r.calculation_hash})),employer:settings.settings};return {employerValidation,countryEmployment,statutory,employmentRules,overtimeDates,reporting,employee,profile,policy,digits,rates,work,items,historicalDecisions,leaves,holidays,pendingCorrections,salaryLeaveInputs,reconciliations,ytd,settings,compliance,sourceHash:hash(raw)};
+ const raw={employerValidation,countryEmployment,compliance,...(statutory?{statutory}:{}),...(employment?{employment,employmentRules}:{}),...(annualTax?{annualTax}:{}),...(publishedAlbertaPackage?{publishedAlbertaPackage}:{}),...(staffReadinessEnabled()?{reporting}:{}),employee:{id:employee.id,name:employee.name,employeeNo:employee.employee_no,employmentType:employee.employment_type,hireDate:employee.hire_date,contractStart:employee.contract_start,employmentEnd:employee.employment_end,country:employee.country,jurisdiction:employee.jurisdiction,timeZone:employee.time_zone},profile:{id:profile.id,policy},rates,period:{id:p.id,frequency:p.frequency,start:p.starts_on,end:p.ends_on,payDate:p.pay_date,periodsPerYear:p.periods_per_year},work,items,historicalDecisions,leaves,holidays,pendingCorrections,salaryLeaveInputs,reconciliations,opening:ytd.opening,previousPayroll:ytd.rows.map(r=>({id:r.id,hash:r.calculation_hash})),employer:settings.settings};return {employerValidation,countryEmployment,statutory,annualTax,albertaPackage,publishedAlbertaPackage,employmentRules,overtimeDates,reporting,employee,profile,policy,digits,rates,work,items,historicalDecisions,leaves,holidays,pendingCorrections,salaryLeaveInputs,reconciliations,ytd,settings,compliance,sourceHash:hash(raw)};
 }
 export async function buildPayroll(db:Db,actor:Actor,target:string,p:PayPeriod):Promise<PayCalculation>{
  const facts=await payrollFacts(db,actor,target,p),{employee,profile,policy,digits,rates,work,items,historicalDecisions,leaves,holidays,pendingCorrections,salaryLeaveInputs,reconciliations,ytd,settings,compliance}=facts;
@@ -165,11 +171,15 @@ export async function buildPayroll(db:Db,actor:Actor,target:string,p:PayPeriod):
   tax=nativeStatutoryTax(facts.statutory,taxInput,p,policy,payableLines);
   sources.push({type:'Context',id:facts.statutory.versionId,revision:1,day:p.pay_date,snapshot:JSON.stringify(facts.statutory)});
  }else if(policy.taxEngine==='Canada Alberta 2026'){
-  const version=await applicablePolicy(db,employee,p.pay_date,'Canada Alberta payroll',false);
-  const parameters=version?.settings as CanadaAlbertaParameters|undefined;
-  if(parameters&&parameters.year!==Number(p.pay_date.slice(0,4)))return fail(409,'The effective payroll parameters belong to another tax year.');
-  const employerParameters=facts.employerValidation?.employer.configuration.canada?{...structuredClone(parameters??canada2026),eiEmployerMultiplier:facts.employerValidation.employer.configuration.canada.eiEmployerMultiplier}:parameters;tax=canadianAlbertaTax(taxInput,employerParameters);
-  if(version)sources.push({type:'Context',id:version.row.id,revision:1,day:p.pay_date,snapshot:JSON.stringify(version)});
+  const parameters=facts.albertaPackage;
+  if(!parameters||parameters.year!==Number(p.pay_date.slice(0,4)))
+   return fail(409,'Publish a verified Alberta withholding package covering this pay date.');
+  const employerParameters=facts.employerValidation?.employer.configuration.canada
+   ? {...parameters,eiEmployerMultiplier:facts.employerValidation.employer.configuration.canada.eiEmployerMultiplier}
+   : parameters;
+  tax=canadianAlbertaTax(taxInput,employerParameters);
+  if(facts.annualTax||facts.publishedAlbertaPackage)
+   sources.push({type:'Context',id:facts.annualTax?.row.id??parameters.version,revision:1,day:p.pay_date,snapshot:JSON.stringify(facts.annualTax??parameters)});
  }
  else if(policy.taxEngine==='Contractor gross')tax={engine:'Contractor gross',version:'contract-reviewed-v1',taxYear:Number(p.pay_date.slice(0,4)),source:policy.ruleSource,lines:[],taxable:0,pensionable:0,insurable:0,bonus:0,bonusEnhanced:0,bonusCpp:0,bonusEi:0,annualTaxable:'Not employee payroll',reference:policy.reference};
  else tax=await externalTaxCalculation(db,{...taxInput,minorUnit:digits,jurisdiction:policy.jurisdiction,country:policy.country,classification:policy.classification,earnings:lines,policyReference:policy.reference});

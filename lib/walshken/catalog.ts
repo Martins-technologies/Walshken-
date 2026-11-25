@@ -52,7 +52,7 @@ export const providers = [
   { id: "malware-scanner", name: "Upload malware scanner", category: "Security", description: "A Walshken-compatible ClamAV gateway. New uploads require a verified clean verdict.", fields: [["endpoint","Approved HTTPS scanner endpoint"],["apiKey","Scanner access token"]] },
   { id: "twilio", name: "Twilio", category: "SMS", description: "SMS alerts for workflows that are enabled later.", fields: [["accountSid", "Account SID"], ["authToken", "Auth token"], ["from", "Sender number"]] },
   { id: "resend", name: "Resend", category: "Email", description: "Send staff activation and administrator reset codes by email.", fields: [["apiKey", "API key"], ["from", "Verified sender address"]] },
-  {id:"payroll-calculator-review",name:"Validated payroll calculator",category:"Payroll",description:"A signed payroll-v1 calculator for additional jurisdictions and tax years. Canada / Alberta 2026 works without this connection. The server must allowlist the provider host.",fields:[["providerName","Validated provider name"],["endpoint","HTTPS payroll-v1 endpoint"],["apiKey","API key"],["signingSecret","Response signing secret"]]},
+  {id:"payroll-calculator-review",name:"External payroll calculator (optional)",category:"Payroll",description:"For an existing policy that explicitly uses an external calculation service. Canada, India and Pakistan have native engines for supported rules and pay dates.",fields:[["providerName","Validated provider name"],["endpoint","HTTPS payroll-v1 endpoint"],["apiKey","API key"],["signingSecret","Response signing secret"]]},
 ] as const;
 
 export const staffNav = [

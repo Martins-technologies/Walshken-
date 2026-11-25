@@ -1,6 +1,6 @@
 "use client";
 import {useState} from "react";
-import {employmentCategoryNames} from "@/lib/walshken/employment-catalog";
+import {employmentCategoryNames,workforcePolicyCategories} from "@/lib/walshken/employment-catalog";
 import {ActionForm,Disclosure,Panel,Table,options,type Field,type RecordRow,type ResponseData} from "./ui";
 
 export type EmploymentManagementData={countries:RecordRow[];regions:RecordRow[];terms:RecordRow[];policies:RecordRow[];people:RecordRow[];offices:RecordRow[];leaveAdjustments:RecordRow[]};
@@ -15,6 +15,7 @@ const workFields=[
 export function EmploymentManagement({data,refresh}:{data:EmploymentManagementData;refresh:()=>void}) {
  const [tab,setTab]=useState("Policies"),[country,setCountry]=useState("CA"),[category,setCategory]=useState("Work"),[copyId,setCopyId]=useState("");
  const [coverage,setCoverage]=useState<CoverageResult|null>(null);
+ const [regional,setRegional]=useState<CoverageResult|null>(null);
  const regionRows=data.regions.filter(row=>row.country===country);
  const policyRows=data.policies.filter(row=>row.country===country);
  const copy=data.policies.find(row=>row.id===copyId);
@@ -23,8 +24,8 @@ export function EmploymentManagement({data,refresh}:{data:EmploymentManagementDa
  const workplaceOptions=regionRows.filter(row=>row.kind!=="Federal"&&row.enabled).map(row=>[String(row.code),String(row.name)] as const);
  const jurisdictionOptions=regionRows.map(row=>[String(row.code),String(row.name)] as const);
  return <Panel title="Employment policies" note="Policies follow the employee’s workplace, assessed legal jurisdiction, classification and effective date. Each statutory version requires legal evidence and independent review.">
-  <div className="table-filter"><label>Country<select value={country} onChange={event=>setCountry(event.target.value)}>{data.countries.map(row=><option value={String(row.code)} key={row.code}>{row.name}</option>)}</select></label>
-   <label>Manage<select value={tab} onChange={event=>setTab(event.target.value)}>{["Policies","Countries","Subdivisions","Employee assignments","Leave adjustments","Coverage"].map(name=><option key={name}>{name}</option>)}</select></label></div>
+  <div className="table-filter"><label>Country<select value={country} onChange={event=>{setCountry(event.target.value);setRegional(null);}}>{data.countries.map(row=><option value={String(row.code)} key={row.code}>{row.name}</option>)}</select></label>
+   <label>Manage<select value={tab} onChange={event=>setTab(event.target.value)}>{["Policies","Countries","Subdivisions","Employee assignments","Leave adjustments","Coverage","Rule packs"].map(name=><option key={name}>{name}</option>)}</select></label></div>
   {tab==="Countries"&&data.countries.filter(row=>row.code===country).map(row=><ActionForm key={String(row.code)+row.revision} path="governance/employment-country-save" extra={{country:row.code,revision:row.revision}}
    fields={[field("name","Country name","text",row.name),field("currency","Default payroll currency","text",row.currency),{name:"enabled",label:"Available for new employment assignments",type:"checkbox",value:row.enabled?"1":"0"}]} submit="Save employment country" refresh={refresh}/>)}
   {tab==="Subdivisions"&&<>
@@ -61,6 +62,28 @@ export function EmploymentManagement({data,refresh}:{data:EmploymentManagementDa
      <p>{row.reason}</p><ActionForm path="governance/employment-leave-adjust-review" extra={{id:row.id}} fields={[{name:'decision',label:'Decision',options:['Approved','Rejected'],required:true},field('reason','Independent review evidence','textarea')]} submit="Record decision" refresh={refresh}/>
     </Disclosure>)}
    </>}
+  {tab==="Rule packs"&&<>
+   <Disclosure title="Import a dated jurisdiction rule pack">
+    <p>Paste up to 60 rule versions as a JSON array. Each rule includes jurisdiction, classification, category, version, effectiveFrom, effectiveThrough, source, evidence, mandatory and settings. Add predecessor when replacing an existing version. Every rule is saved as a draft for a separate Super Admin to review.</p>
+    <ActionForm path="governance/employment-policy-import" fields={[field("rules","Jurisdiction rule versions (JSON array)","textarea")]} submit="Validate and save drafts" refresh={refresh}/>
+   </Disclosure>
+   {country==="CA"&&<Disclosure title="Draft a published Canadian statutory holiday calendar">
+    <ActionForm path="governance/employment-canada-calendar-draft" fields={[
+     {name:"jurisdiction",label:"Canadian province, territory or federal jurisdiction",options:jurisdictionOptions,required:true},
+     {name:"year",label:"Published calendar year",options:["2026","2027","2028"],required:true},
+     {name:"easter",label:"Québec Easter observance (required for Québec)",options:["Good Friday","Easter Monday"]},
+     field("classification","Exact covered worker classification"),field("evidence","Applicability evidence and official rule review","textarea")
+    ]} submit="Save statutory dates for review" refresh={refresh}/>
+   </Disclosure>}
+   <ActionForm key={country} path="governance/employment-regional-coverage" extra={{country}} fields={[
+    field("classification","Exact worker classification"),field("day","Policy date","date")
+   ]} submit="Check all jurisdictions in this country" onDone={setRegional} reset={false}/>
+   {!!regional?.coverage?.length&&<Table rows={regional.coverage} columns={[
+    {key:"region",title:"Jurisdiction"},
+    ...workforcePolicyCategories.map(category=>({key:category,title:category})),
+    {key:"withholding",title:"Native withholding"}
+   ]}/>}
+  </>}
   {tab==="Coverage"&&<>
    <ActionForm path="governance/employment-coverage" fields={[{name:"employee",label:"Employee",options:options(data.people),required:true},field("day","Policy application date","date")]} submit="Check verified coverage" onDone={setCoverage} reset={false}/>
    {coverage?.assignment&&<p>Worksite {coverage.assignment.workplace} · {coverage.assignment.jurisdiction} · {coverage.assignment.classification}</p>}
@@ -93,8 +116,11 @@ export function EmploymentManagement({data,refresh}:{data:EmploymentManagementDa
  </Panel>;
 }
 function policyFields(category:string,settings:Record<string,unknown>):Field[] {
- if(category==="Work")return workFields.map(([name,label])=>field(name,label,"number",settings[name] as number|undefined));
- if(category==="Overtime")return [["dailyHours","Daily threshold in hours"],["weeklyHours","Weekly threshold in hours"],["multiplier","Overtime multiplier"],["weekStart","Workweek first day (Sunday 0 to Saturday 6)"]].map(([name,label])=>field(name,label,"number",settings[name] as number|undefined));
+ if(category==="Work")return [
+  ...workFields.map(([name,label])=>field(name,label,"number",settings[name] as number|undefined)),
+  {name:"continuousWorkMinutes",label:"Maximum minutes between uninterrupted qualifying breaks (optional)",type:"number",value:settings.continuousWorkMinutes as number|undefined}
+ ];
+ if(category==="Overtime")return [["dailyHours","Daily threshold in hours (0 if not applicable)"],["weeklyHours","Weekly threshold in hours (0 if not applicable)"],["multiplier","Overtime multiplier"],["weekStart","Workweek first day (Sunday 0 to Saturday 6)"]].map(([name,label])=>field(name,label,"number",settings[name] as number|undefined));
  if(category==='Pay standards')return [
  field('settings','Pay standards JSON: currency, minimumHourly, minimumMonthly, vacationPercent, longServiceYears, longServiceVacationPercent, paymentDeadlineDays, holidayPremiumMultiplier, holidayMethod (Normal day / Average worked day / Percent of earnings), holidayWindowDays, holidayWindowBasis (Before holiday / Complete workweeks), holidayDivisor (0 for actual worked days), holidayPayOnNonWorkday, holidayPercent, minimumServiceDays, minimumWorkedDays, reportingHours, reportingRate (Minimum wage / Ordinary wage)','textarea',Object.keys(settings).length?JSON.stringify(settings,null,2):'')];
  if(['Canada payroll','India payroll','Pakistan payroll'].includes(category))return [field('settings',category+' effective statutory parameter package JSON','textarea',Object.keys(settings).length?JSON.stringify(settings,null,2):'')];

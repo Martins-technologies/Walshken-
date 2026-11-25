@@ -4,7 +4,7 @@ import type {WorkSettings} from "./employment-settings";
 import {staffReadinessEnabled} from './staff-permissions';
 import {employmentRulesOn,holidaysEnabled,validDay} from './holiday-access';
 import {all,audit,canManage,canSuper,date,fail,id,integer,json,now,one,pick,requireStaff,run,scope,str,throttle,type Actor,type Db} from './server';
-import {albertaRules,compliance,dayAdd,defaultPolicy,interval,iso,localInstant,totals,validatePolicy,type WorkBreak,type WorkPolicy} from './attendance-rules';
+import {albertaRules,compliance,dayAdd,defaultPolicy,interval,iso,localInstant,totals,validatePolicy,type WorkBreak,type WorkPolicy,type WorkRules} from './attendance-rules';
 import {localDate} from './work';
 export const workforceEnabled=()=>process.env.WALSHKEN_ATTENDANCE_ENABLED==='1';
 export const workDataset=()=>process.env.WALSHKEN_WORK_DATASET==='preview'?'preview':'production';
@@ -23,7 +23,7 @@ export async function workforcePolicy(db:Db,employee:Actor,effectiveDay=localDat
  const assignment=await employmentTermsOn(db,employee,effectiveDay);
  const configured=assignment?await applicablePolicy(db,employee,effectiveDay,"Work"):null;
  const verified=!configured&&holidaysEnabled()?await employmentRulesOn(db,employee,effectiveDay):null;
- const rules=configured?{...(configured.settings as WorkSettings),jurisdiction:configured.row.jurisdiction,category:configured.row.classification,
+ const rules:WorkRules=configured?{...(configured.settings as WorkSettings),jurisdiction:configured.row.jurisdiction,category:configured.row.classification,
    version:configured.row.version,effectiveFrom:configured.row.effective_from,effectiveThrough:configured.row.effective_through,
    verifiedOn:configured.row.created_at.slice(0,10),sources:[configured.row.source_url],source:configured.row.source_url,recordId:configured.row.id,contentHash:configured.row.settings_hash}
   :verified?{...verified.rules,source:verified.rules.sources[2]??verified.rules.sources[0],recordId:verified.row.id,contentHash:verified.row.content_hash}:albertaRules;
@@ -31,7 +31,16 @@ export async function workforcePolicy(db:Db,employee:Actor,effectiveDay=localDat
    WHERE employee_id=? AND org_id=? AND release_stage=? AND effective_on<=? ORDER BY effective_on DESC,revision DESC LIMIT 1`,
    employee.id,employee.org_id,workDataset(),effectiveDay):null;
  const saved=current??await one<{settings:string;revision:number}>(db,'SELECT settings,revision FROM work_policies WHERE employee_id=? AND org_id=? AND release_stage=?',employee.id,employee.org_id,workDataset());
- return {policy:saved?validatePolicy(JSON.parse(saved.settings),rules):validatePolicy({...defaultPolicy(employee.break_policy==='paid'),breaks:[{key:'lunch',label:'Meal break',minutes:rules.minimumBreakMinutes,paid:employee.break_policy==='paid',afterMinutes:rules.firstBreakAfterMinutes},{key:'rest',label:'Rest break',minutes:rules.minimumBreakMinutes,paid:employee.break_policy==='paid',afterMinutes:rules.secondBreakFromMinutes}],rules},rules),revision:saved?.revision??0};
+ if(saved)return {policy:validatePolicy(JSON.parse(saved.settings),rules),revision:saved.revision};
+ const paid=employee.break_policy==='paid';
+ const continuous=rules.continuousWorkMinutes;
+ const breaks=continuous===undefined
+  ? [{key:'lunch',label:'Meal break',minutes:rules.minimumBreakMinutes,paid,afterMinutes:rules.firstBreakAfterMinutes},
+     {key:'rest',label:'Rest break',minutes:rules.minimumBreakMinutes,paid,afterMinutes:rules.secondBreakFromMinutes}]
+  : Array.from({length:Math.min(10,Math.max(1,Math.ceil((rules.maxShiftMinutes-continuous)/(continuous+rules.minimumBreakMinutes))))},
+     (_,index)=>({key:'rest-'+(index+1),label:'Required rest '+(index+1),minutes:rules.minimumBreakMinutes,paid,
+      afterMinutes:continuous+index*(continuous+rules.minimumBreakMinutes)}));
+ return {policy:validatePolicy({...defaultPolicy(paid),breaks,rules},rules),revision:0};
 }
 export async function workforcePolicyAt(db:Db,employee:Actor,stamp:string){
  const day=localDate(stamp,employee.time_zone);

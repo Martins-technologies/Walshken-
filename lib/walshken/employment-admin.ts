@@ -1,12 +1,13 @@
 import type {LeaveSettings} from "./employment-settings";
 import {all,audit,fail,id,integer,json,now,one,pick,requireSuper,run,str,timeZone,type Actor,type Db} from "./server";
-import {employmentCategoryNames,employmentEngineEnabled,employmentRegions,type EmploymentCategory} from "./employment-catalog";
+import {employmentCategoryNames,employmentEngineEnabled,employmentRegions,workforcePolicyCategories,type EmploymentCategory} from "./employment-catalog";
 import {employmentCountries} from "./jurisdiction-catalog";
 import {applicablePolicy,employmentTermsOn,policyHash,type EmploymentPolicy} from "./employment-engine";
 import {validateEmploymentSettings} from "./employment-settings";
 import {validDay} from "./holiday-access";
 import {maintainedCanadaTaxPackages} from "./payroll-canada-packages";
 import {nationalTaxPackages} from "./payroll-national-packages";
+import {canadianCalendars,holidayDates} from "./canadian-calendars";
 import {closingLeaveCarry} from "./leave-balances";
 import {localDate} from "./work";
 
@@ -38,6 +39,44 @@ export async function employmentData(db:Db,actor:Actor) {
  ]);
  return {countries,regions,terms,policies,people,offices,leaveAdjustments};
 }
+async function saveEmploymentPolicy(tx:Db,actor:Actor,data:Record<string,unknown>){
+   const jurisdiction=str(data.jurisdiction,"jurisdiction",12),category=pick(data.category,employmentCategoryNames.filter(c=>c!=="Evidence"),"policy category");
+   const region=await one<{country:string}>(tx,"SELECT country FROM employment_regions WHERE org_id=? AND code=? AND enabled",actor.org_id,jurisdiction);
+   if(!region)return fail(400,"Select a registered employment jurisdiction.");
+   const from=validDay(data.effectiveFrom,"effective start"),through=validDay(data.effectiveThrough,"effective end");
+   if(from>through)return fail(400,"The last effective day must follow the first.");
+   let raw:unknown=["Work","Overtime"].includes(category)?(data.settings??data):data.settings;
+   if(typeof raw==="string"){try{raw=JSON.parse(raw);}catch{return fail(400,"Enter valid JSON policy settings.");}}
+   if(category==="Canada Alberta payroll"&&jurisdiction!=="CA-AB")return fail(400,"The maintained Alberta tax method is specific to CA-AB.");
+   const settings=validateEmploymentSettings(category,raw),source=str(data.source,"official source",1500);
+   if(category==="Work"&&jurisdiction==="CA-AB"&&settings&&"continuousWorkMinutes" in settings)
+    return fail(400,"Alberta policies must use the Alberta statutory break thresholds.");
+   if(category==="Pay standards"&&settings&&"currency" in settings&&settings.currency!==employmentCountries[region.country as keyof typeof employmentCountries]?.currency)
+    return fail(400,"Use the jurisdiction’s statutory payroll currency in its pay standards.");
+   if(category==="Canada payroll"&&(region.country!=="CA"||!settings||!("region" in settings)||settings.region?.code!==jurisdiction.slice(3)))
+    return fail(400,"The Canadian withholding package must match the tax province or territory.");
+   if(category==="India payroll"||category==="Pakistan payroll"){
+    const country=category==="India payroll"?"IN":"PK";
+    if(region.country!==country||!settings||!("country" in settings)||settings.country!==country)return fail(400,"The national withholding package must match the selected country.");
+   }
+   if(category==="Holiday calendar"&&settings&&"dates" in settings&&settings.dates.some(day=>day.date<from||day.date>through))
+    return fail(400,"Every holiday must fall within the policy’s effective dates.");
+   let url:URL;try{url=new URL(source);}catch{return fail(400,"Enter an HTTPS official source URL.");}
+   if(url.protocol!=="https:"||url.username||url.password||url.port)return fail(400,"Use an HTTPS official source.");
+   const predecessor=str(data.predecessor,"previous version",80,false),classification=str(data.classification,"covered employment classification",120);
+   if(predecessor){
+    const previous=await one<EmploymentPolicy>(tx,"SELECT * FROM staff_jurisdiction_versions WHERE org_id=? AND id=?",actor.org_id,predecessor);
+    if(!previous||previous.jurisdiction!==jurisdiction||previous.category!==category||previous.classification!==classification||from<=previous.effective_from||previous.mandatory&&data.mandatory!==true)return fail(400,"A replacement must retain coverage, begin later and preserve statutory status.");
+   }
+   const version=str(data.version,"unique version",80);
+   if(await one(tx,"SELECT id FROM staff_jurisdiction_versions WHERE org_id=? AND jurisdiction=? AND classification=? AND version=?",actor.org_id,jurisdiction,classification,version))return fail(409,"Use a new version name.");
+   const target=id();
+   await run(tx,`INSERT INTO staff_jurisdiction_versions(id,org_id,country,jurisdiction,classification,version,effective_from,effective_through,source_url,evidence,created_by,created_at,category,settings,settings_hash,mandatory,predecessor_id)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,target,actor.org_id,region.country,jurisdiction,classification,version,from,through,url.href,str(data.evidence,"legal coverage and change reason",12000),actor.id,now(),category,JSON.stringify(settings),policyHash(settings),data.mandatory===true,predecessor||null);
+   await audit(tx,actor,`Employment ${category} policy drafted`,"employment policy",target).run();
+   return target;
+}
+
 export async function employmentAction(db:Db,actor:Actor,action:string,data:Record<string,unknown>) {
  requireSuper(actor);
  if(!employmentEngineEnabled())return fail(404,"Employment policy management is unavailable.");
@@ -89,29 +128,59 @@ export async function employmentAction(db:Db,actor:Actor,action:string,data:Reco
    return json({ok:true,message:"Effective employment assignment recorded. Unverified policies require review before use."},201);
   }
   if(action==="employment-policy-save"){
-   const jurisdiction=str(data.jurisdiction,"jurisdiction",12),category=pick(data.category,employmentCategoryNames.filter(c=>c!=="Evidence"),"policy category");
-   const region=await one<{country:string}>(tx,"SELECT country FROM employment_regions WHERE org_id=? AND code=?",actor.org_id,jurisdiction);
-   if(!region)return fail(400,"Select a registered employment jurisdiction.");
-   const from=validDay(data.effectiveFrom,"effective start"),through=validDay(data.effectiveThrough,"effective end");
-   if(from>through)return fail(400,"The last effective day must follow the first.");
-   let raw:unknown=["Work","Overtime"].includes(category)?(data.settings??data):data.settings;
-   if(typeof raw==="string"){try{raw=JSON.parse(raw);}catch{return fail(400,"Enter valid JSON policy settings.");}}
-   if(category==="Canada Alberta payroll"&&jurisdiction!=="CA-AB")return fail(400,"The maintained Alberta tax method is specific to CA-AB.");
-   const settings=validateEmploymentSettings(category,raw),source=str(data.source,"official source",1500);
-   let url:URL;try{url=new URL(source);}catch{return fail(400,"Enter an HTTPS official source URL.");}
-   if(url.protocol!=="https:"||url.username||url.password||url.port)return fail(400,"Use an HTTPS official source.");
-   const predecessor=str(data.predecessor,"previous version",80,false),classification=str(data.classification,"covered employment classification",120);
-   if(predecessor){
-    const previous=await one<EmploymentPolicy>(tx,"SELECT * FROM staff_jurisdiction_versions WHERE org_id=? AND id=?",actor.org_id,predecessor);
-    if(!previous||previous.jurisdiction!==jurisdiction||previous.category!==category||previous.classification!==classification||from<=previous.effective_from||previous.mandatory&&data.mandatory!==true)return fail(400,"A replacement must retain coverage, begin later and preserve statutory status.");
+   const target=await saveEmploymentPolicy(tx,actor,data);
+   return json({ok:true,id:target,message:"Policy version saved for independent legal review."},201);
+  }
+  if(action==="employment-policy-import"){
+   let raw=data.rules;
+   if(typeof raw==="string"){try{raw=JSON.parse(raw);}catch{return fail(400,"Enter a JSON array of policy versions.");}}
+   if(!Array.isArray(raw)||!raw.length||raw.length>60||raw.some(item=>!item||typeof item!=="object"||Array.isArray(item)))
+    return fail(400,"Provide 1–60 policy version objects.");
+   const targets=[];
+   for(const entry of raw)targets.push(await saveEmploymentPolicy(tx,actor,entry));
+   return json({ok:true,targets,message:`${targets.length} policy versions saved in Supabase for independent review.`},201);
+  }
+  if(action==="employment-canada-calendar-draft"){
+   const jurisdiction=str(data.jurisdiction,"Canadian employment jurisdiction",12),calendar=canadianCalendars.find(item=>item.code===jurisdiction);
+   if(!calendar)return fail(400,"Choose a published Canadian employment calendar.");
+   const year=integer(data.year,"calendar year",2026,2028);
+   const easter=jurisdiction==="CA-QC"?pick(data.easter,["Good Friday","Easter Monday"] as const,"verified Québec Easter observance"):"Good Friday";
+   const effectiveFrom=`${year}-01-01`,effectiveThrough=`${year}-12-31`;
+   if(effectiveFrom<calendar.effectiveFrom||effectiveThrough>calendar.effectiveThrough)return fail(409,"The published calendar does not cover that year.");
+   const settings={dates:holidayDates(calendar,year,easter).filter(day=>day.status==="Statutory").map(day=>({date:day.date,name:day.name,required:true}))};
+   const target=await saveEmploymentPolicy(tx,actor,{...data,category:"Holiday calendar",version:`${calendar.version}-${year}`,
+    jurisdiction,effectiveFrom,effectiveThrough,source:calendar.sources[0],mandatory:true,settings,
+    evidence:`${str(data.evidence,"employee coverage and calendar verification",10000)}. Pay eligibility, transferred observance dates and special-law days require their own assessment.`});
+   return json({ok:true,id:target,message:`${settings.dates.length} Canadian holiday dates saved for independent applicability review.`},201);
+  }
+  if(action==="employment-regional-coverage"){
+   const country=pick(data.country,["CA","IN","PK"] as const,"employment country"),day=validDay(data.day,"policy date");
+   const classification=str(data.classification,"exact worker classification",120);
+   const rows=await all<{code:string;name:string;kind:string;category:string;status:string}>(tx,`SELECT r.code,r.name,r.kind,p.category,
+    COALESCE((SELECT d.decision FROM staff_jurisdiction_decisions d WHERE d.version_id=p.id ORDER BY d.created_at DESC,d.id DESC LIMIT 1),'Draft') AS status
+    FROM employment_regions r LEFT JOIN staff_jurisdiction_versions p ON p.org_id=r.org_id AND p.jurisdiction=r.code
+     AND p.classification=? AND p.effective_from<=? AND p.effective_through>=?
+    WHERE r.org_id=? AND r.country=? AND r.enabled ORDER BY r.name`,classification,day,day,actor.org_id,country);
+   const nativeCanadianRegions=new Set(country==="CA"?maintainedCanadaTaxPackages()
+    .filter(p=>day>=p.validFrom&&day<=p.validThrough).map(p=>"CA-"+p.region?.code):[]);
+   const nativeNationalPackage=country!=="CA"&&nationalTaxPackages().some(p=>p.country===country&&day>=p.validFrom&&day<=p.validThrough);
+   const regions=new Map<string,{id:string;region:string;kind:string;verified:string[];drafts:string[];withholding:string}>();
+   for(const row of rows){
+    const published=nativeCanadianRegions.has(row.code)||nativeNationalPackage;
+    const region=regions.get(row.code)??{id:row.code,region:row.name,kind:row.kind,verified:[],drafts:[],
+     withholding:country==="CA"&&row.kind==="Federal"?"Use the applicable tax province":published?"Published native package":"Package required"};
+    if(row.category&&row.status==="Verified")region.verified.push(row.category);
+    if(row.category&&row.status==="Draft")region.drafts.push(row.category);
+    regions.set(row.code,region);
    }
-   const version=str(data.version,"unique version",80);
-   if(await one(tx,"SELECT id FROM staff_jurisdiction_versions WHERE org_id=? AND jurisdiction=? AND classification=? AND version=?",actor.org_id,jurisdiction,classification,version))return fail(409,"Use a new version name.");
-   const target=id();
-   await run(tx,`INSERT INTO staff_jurisdiction_versions(id,org_id,country,jurisdiction,classification,version,effective_from,effective_through,source_url,evidence,created_by,created_at,category,settings,settings_hash,mandatory,predecessor_id)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,target,actor.org_id,region.country,jurisdiction,classification,version,from,through,url.href,str(data.evidence,"legal coverage and change reason",12000),actor.id,now(),category,JSON.stringify(settings),policyHash(settings),data.mandatory===true,predecessor||null);
-   await audit(tx,actor,`Employment ${category} policy drafted`,"employment policy",target).run();
-   return json({ok:true,message:"Policy version saved as PENDING LEGAL VERIFICATION. A separate administrator must review it."},201);
+   function status(category:string,verified:string[],drafts:string[]){
+    return verified.includes(category)?"Verified":drafts.includes(category)?"Awaiting review":"Missing";
+   }
+   const coverage=[...regions.values()].map(row=>({
+    id:row.id,region:row.region,kind:row.kind,withholding:row.verified.includes(country==="CA"?"Canada payroll":country==="IN"?"India payroll":"Pakistan payroll")?"Verified package":row.withholding,
+    ...Object.fromEntries(workforcePolicyCategories.map(category=>[category,status(category,row.verified,row.drafts)]))
+   }));
+   return json({ok:true,coverage,message:`Coverage for ${classification} on ${day}.`});
   }
   if(action==='employment-leave-carry'){
    const employee=await one<Actor>(tx,"SELECT * FROM employees WHERE org_id=? AND id=? AND role<>'guest'",actor.org_id,str(data.employee,'employee',80));

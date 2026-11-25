@@ -1,4 +1,5 @@
 export const employmentCategoryNames = ["Work", "Overtime", "Holiday calendar", "Leave", "Canada Alberta payroll", "Canada payroll", "India payroll", "Pakistan payroll", "Pay standards", "Evidence"] as const;
+export const workforcePolicyCategories=["Work","Overtime","Holiday calendar","Leave","Pay standards"] as const;
 export type EmploymentCategory = typeof employmentCategoryNames[number];
 export const employmentEngineEnabled = () => process.env.WALSHKEN_EMPLOYMENT_ENGINE_ENABLED === "1";
 export type Region = {country:string;code:string;name:string;kind:string};

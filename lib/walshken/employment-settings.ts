@@ -7,6 +7,7 @@ import type {EmploymentCategory} from "./employment-catalog";
 export type WorkSettings = {
  maxShiftMinutes:number; minRestMinutes:number; changeNoticeMinutes:number; restHoursPerWeek:number;
  firstBreakAfterMinutes:number; secondBreakFromMinutes:number; minimumBreakMinutes:number; minimumSplitMinutes:number;
+ continuousWorkMinutes?:number;
 };
 export type OvertimeSettings = {dailyHours:number;weeklyHours:number;multiplier:string;weekStart:number};
 export type LeaveCategory = {
@@ -38,12 +39,19 @@ export function validateEmploymentSettings(category:EmploymentCategory,input:unk
    minimumSplitMinutes:integer(v.minimumSplitMinutes,"minimum split break minutes",1,120),
   };
   if(settings.secondBreakFromMinutes<settings.firstBreakAfterMinutes||settings.minimumSplitMinutes>settings.minimumBreakMinutes)return fail(400,"Check the ordered break thresholds and split-break duration.");
+  if(v.continuousWorkMinutes!==undefined&&v.continuousWorkMinutes!==null&&v.continuousWorkMinutes!==""){
+   settings.continuousWorkMinutes=integer(v.continuousWorkMinutes,"maximum uninterrupted work minutes",1,1440);
+   if(settings.minimumSplitMinutes!==settings.minimumBreakMinutes)return fail(400,"An uninterrupted-break policy must use the full qualifying break duration.");
+  }
   return settings;
  }
  if(category==="Overtime") {
   const multiplier=str(v.multiplier,"overtime multiplier",20);
   if(!/^\d+(\.\d{1,4})?$/.test(multiplier)||new D(multiplier).lt(1)||new D(multiplier).gt(10))return fail(400,"Enter an overtime multiplier from 1 to 10.");
-  return {dailyHours:integer(v.dailyHours,"daily overtime threshold",1,24),weeklyHours:integer(v.weeklyHours,"weekly overtime threshold",1,168),multiplier,weekStart:integer(v.weekStart,"workweek first day",0,6)};
+  const dailyHours=integer(v.dailyHours,"daily overtime threshold",0,24);
+  const weeklyHours=integer(v.weeklyHours,"weekly overtime threshold",0,168);
+  if(!dailyHours&&!weeklyHours)return fail(400,"An overtime rule requires at least one positive daily or weekly threshold. Use 0 only when that threshold does not apply.");
+  return {dailyHours,weeklyHours,multiplier,weekStart:integer(v.weekStart,"workweek first day",0,6)};
  }
  if(category==="Holiday calendar") {
   if(!Array.isArray(v.dates)||v.dates.length>500)return fail(400,"Provide up to 500 dated holidays.");

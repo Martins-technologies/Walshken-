@@ -1,4 +1,4 @@
-import { readFile, readdir, mkdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { Pool, type PoolClient } from "pg";
 import { attachDatabasePool } from "@vercel/functions";
@@ -80,9 +80,7 @@ function pgliteAdapter(connection: PgliteConnection): Adapter {
 
 async function localAdapter() {
   const { PGlite } = await import("@electric-sql/pglite");
-  const directory = join(process.cwd(), ".walshken-data");
-  await mkdir(directory, { recursive: true });
-  const connection = new PGlite(directory);
+  const connection = new PGlite();
   await connection.exec("CREATE TABLE IF NOT EXISTS walshken_migrations (name text PRIMARY KEY)");
   for (const directory of ["drizzle","supabase/migrations"]) {
   for (const file of (await readdir(/* turbopackIgnore: true */ join(/* turbopackIgnore: true */ process.cwd(), directory)).catch(()=>[])).filter((name) => name.endsWith(".sql")).sort()) {
@@ -126,7 +124,7 @@ export function workspaceDatabase() {
   if (url) {
     return new Db(async () => state.walshkenPg ??= pooledPostgres(url));
   }
-  if (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test") {
+  if (process.env.NODE_ENV === "test") {
     return new Db(() => state.walshkenLocal ??= localAdapter());
   }
   return null;
