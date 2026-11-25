@@ -1,3 +1,5 @@
+import {publicEmployeeCalculation} from './employer-validation';
+import {disposalAction,disposalData} from './source-disposal';
 import {createHash} from 'node:crypto';
 import {enterpriseEnabled} from './payroll-statutory';
 import {actionScope,hasAction,requireEmployeeAction} from './staff-authority';
@@ -22,7 +24,7 @@ export async function privacyData(db:Db,actor:Actor){
  WHERE r.org_id=? AND (r.employee_id=? OR (${s.sql}) OR (${x.sql}) OR (${d.sql})) ORDER BY r.created_at DESC,r.id DESC LIMIT 300`,actor.org_id,actor.id,...s.args,...x.args,...d.args);
  const staff=await all(db,`SELECT e.id,e.name,e.country FROM employees e WHERE e.org_id=? AND e.role<>'guest' AND (e.id=? OR (${s.sql}) OR (${x.sql}) OR (${d.sql})) ORDER BY e.name`,actor.org_id,actor.id,...s.args,...x.args,...d.args);
  const events=await all(db,`SELECT v.*,e.name FROM staff_privacy_request_events v JOIN staff_privacy_requests r ON r.id=v.request_id JOIN employees subject ON subject.id=r.employee_id JOIN employees e ON e.id=v.actor_id WHERE v.org_id=? AND r.id IN (${rows.length?rows.map(()=>'?').join(','):'NULL'}) ORDER BY v.created_at,v.id`,actor.org_id,...rows.map(r=>r.id));
- return json({privacy:true,rows,staff,events,categories:retentionCategories,actorId:actor.id,canManage:hasAction(actor,'privacy.manage'),canExport:hasAction(actor,'privacy.export'),canDispose:hasAction(actor,'privacy.dispose')});
+ return json({...(process.env.WALSHKEN_SOURCE_DISPOSAL_ENABLED==='1'&&hasAction(actor,'privacy.dispose')?await disposalData(db,actor):{}),privacy:true,rows,staff,events,categories:retentionCategories,actorId:actor.id,canManage:hasAction(actor,'privacy.manage'),canExport:hasAction(actor,'privacy.export'),canDispose:hasAction(actor,'privacy.dispose')});
 }
 async function collect(db:Db,actor:Actor,row:RequestRow){
  const target=row.employee_id,stage=payrollDataset(),from=row.from_date,to=row.through_date+'T23:59:59.999Z';
@@ -39,12 +41,12 @@ async function collect(db:Db,actor:Actor,row:RequestRow){
  'Leave records':[{sql:'SELECT * FROM leave_requests WHERE org_id=? AND employee_id=? AND release_stage=? AND starts_on>=? AND ends_on<=? ORDER BY starts_on,id',args:[actor.org_id,target,stage,from,row.through_date]}],
  };
  const categories=row.category==='All'?retentionCategories:[pick(row.category,retentionCategories,'record category')],records:Record<string,unknown>={};
- for(const category of categories){const results=[];for(const q of sqls[category]){const data=await all(db,q.sql+' LIMIT 10001',...q.args);if(data.length>10000)return fail(413,'Narrow the privacy request date range; the export would exceed 10,000 records in one dataset.');results.push(data);}records[category]=results;}
+ for(const category of categories){const results=[];for(const q of sqls[category]){const data=await all(db,q.sql+' LIMIT 10001',...q.args);if(data.length>10000)return fail(413,'Narrow the privacy request date range; the export would exceed 10,000 records in one dataset.');for(const record of data)if(typeof record.calculation==='string')record.calculation=JSON.stringify(publicEmployeeCalculation(JSON.parse(record.calculation)));results.push(data);}records[category]=results;}
  const content=Buffer.from(JSON.stringify({format:'Walshken personal data export v1',request:row.id,employee:target,from,through:row.through_date,generatedAt:now(),scope:'Employee-owned records; finalized payroll; authored messages; document metadata. Passwords, MFA secrets, access tokens, other participants’ messages and original files are excluded.',records}));
  if(content.length>25*1024*1024)return fail(413,'Narrow the date range to keep the private export under 25 MB.');return content;
 }
 export async function privacyAction(db:Db,actor:Actor,action:string,data:Record<string,unknown>){
- enabled(actor);await throttle(db,'privacy:'+actor.id,30,60000);
+ enabled(actor);if(action.startsWith('source-')){if(process.env.WALSHKEN_SOURCE_DISPOSAL_ENABLED!=='1')return fail(404,'Original-record disposal is unavailable.');return disposalAction(db,actor,action.slice(7),data);}await throttle(db,'privacy:'+actor.id,30,60000);
  if(action==='create'){
   const kind=pick(data.kind,['Export','Archive','Restore','Dispose'] as const,'privacy operation'),employee=str(data.employee,'employee',80),category=pick(data.category,['All',...retentionCategories],'record category');
   if(!(kind==='Export'&&employee===actor.id))await requireEmployeeAction(db,actor,capability(kind),employee,false);

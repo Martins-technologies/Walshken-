@@ -1,3 +1,5 @@
+import {assertEmployerAssessment,employerLevyAction} from './employer-levies';
+import {employerValidationAction} from './employer-validation';
 import {statutoryContext,nativeEngines,enterpriseEnabled} from "./payroll-statutory";
 import {fiscalYear} from "./payroll-fiscal";
 import {validateNationalElection} from "./payroll-tax-national";
@@ -20,8 +22,10 @@ async function independentApproval(db: Db, actor: Actor) {
 
 function employeeIds(value:unknown){if(!Array.isArray(value)||!value.length||value.length>100||!value.every(v=>typeof v==='string'))return fail(400,'Choose 1–100 actual employees.');return [...new Set(value)] as string[];}
 async function periodRecord(db:Db,actor:Actor,target:string){const p=await payPeriod(db,actor,target);await fullPeriodScope(db,actor,p);return p;}
-export async function verifiedRecord(db:Db,actor:Actor,row:PayRecord,p:PayPeriod){const calculation=JSON.parse(row.calculation) as PayCalculation;if(row.calculation_hash!==hash({...calculation,calculationHash:''})||calculation.calculationHash!==row.calculation_hash)return fail(409,'Stored payroll calculation verification failed. Recalculate an unfinalized period; finalized discrepancies require an audit.');const facts=await payrollFacts(db,actor,row.employee_id,p);if(facts.sourceHash!==row.source_hash)return fail(409,'Pay rates, YTD balances, work records or other payroll inputs changed. Return the period to draft and recalculate before approval/finalization.');return calculation;}
+export async function verifiedRecord(db:Db,actor:Actor,row:PayRecord,p:PayPeriod){const calculation=JSON.parse(row.calculation) as PayCalculation;if(row.calculation_hash!==hash({...calculation,calculationHash:''})||calculation.calculationHash!==row.calculation_hash)return fail(409,'Stored payroll calculation verification failed. Recalculate an unfinalized period; finalized discrepancies require an audit.');const facts=await payrollFacts(db,actor,row.employee_id,p);if(facts.sourceHash!==row.source_hash)return fail(409,'Pay rates, YTD balances, work records or other payroll inputs changed. Return the period to draft and recalculate before approval/finalization.');await assertEmployerAssessment(db,actor,row,p);return calculation;}
 export async function payrollAction(db:Db,actor:Actor,action:string,input:Record<string,unknown>){
+ if(action.startsWith('employer-levy-'))return employerLevyAction(db,actor,action,input);
+ if(action.startsWith('employer-')||action.startsWith('employee-facts-'))return employerValidationAction(db,actor,action,input);
  const authority: StaffAction = ['opening-review','item-review','statutory-input-review'].includes(action) ? 'payroll.review'
   : action === 'payroll-review' ? input.decision==='Approved'?'payroll.approve':'payroll.review'
   : action === 'period-finalize' ? 'payroll.finalize'

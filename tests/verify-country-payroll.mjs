@@ -17,6 +17,7 @@ assert.equal(nationalAnnualTax(new D(1500000),india,election(india)).tax.toFixed
 assert.equal(nationalAnnualTax(new D(550000),old,election(old)).tax.toFixed(2),'0.00');
 assert.equal(nationalAnnualTax(new D(7200000),pakistan,election(pakistan)).tax.toFixed(2),'1494000.00');
 assert.equal(nationalAnnualTax(new D(1200000),pakistan,election(pakistan)).tax.toFixed(2),'6000.00');
+const missingPan=nationalPayroll({...n(india),panStatus:'Missing'},india);assert.equal(missingPan.lines.find(l=>l.code==='IN_TAX').employee,875000);const below=nationalPayroll({...n(india),panStatus:'Inoperative',gross:2000000,taxable:2000000,regular:2000000},india);assert.equal(below.lines.find(l=>l.code==='IN_TAX').employee,0);
 const result=nationalPayroll(n(india),india),value=code=>result.lines.find(r=>r.code===code);
 assert.equal(value('EPF').employee,300000);assert.equal(value('EPS').employer,208300);assert.equal(value('EPF').employer,91700);assert.equal(value('ESI').employee,37500);assert.equal(value('ESI').employer,162500);
 const first=nationalPayroll({...n(india),gross:2000000,taxable:2000000,regular:2000000,election:{...election(india),basicPay:'12500'}},india);

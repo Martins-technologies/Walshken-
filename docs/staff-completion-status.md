@@ -1,3 +1,5 @@
+> Historical audit snapshot: payroll/privacy follow-up changes are described in [disposal-employer-review.md](disposal-employer-review.md). The module table below predates those follow-ups and is retained as audit history.
+
 # Staff portal review status
 
 25 November 2026, Asia/Karachi

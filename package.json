@@ -24,7 +24,8 @@
     "test:employment": "NODE_ENV=test WALSHKEN_TEST_READINESS=1 WALSHKEN_TEST_EMPLOYMENT=1 node --import tsx tests/verify-holidays.mjs",
     "prebuild": "node --import tsx scripts/verify-deployment-providers.mjs",
     "test:country-payroll": "NODE_ENV=test node --import tsx tests/verify-country-payroll.mjs",
-    "test:enterprise": "NODE_ENV=test WALSHKEN_TEST_READINESS=1 WALSHKEN_TEST_EMPLOYMENT=1 WALSHKEN_TEST_ENTERPRISE=1 WALSHKEN_TEST_ENTERPRISE_ONLY=1 node --import tsx tests/verify-holidays.mjs"
+    "test:enterprise": "NODE_ENV=test WALSHKEN_TEST_READINESS=1 WALSHKEN_TEST_EMPLOYMENT=1 WALSHKEN_TEST_ENTERPRISE=1 WALSHKEN_TEST_ENTERPRISE_ONLY=1 node --import tsx tests/verify-holidays.mjs",
+    "test:completion": "NODE_ENV=test WALSHKEN_TEST_READINESS=1 WALSHKEN_TEST_EMPLOYMENT=1 WALSHKEN_TEST_ENTERPRISE=1 WALSHKEN_TEST_ENTERPRISE_ONLY=1 WALSHKEN_TEST_SOURCE=1 node --import tsx tests/verify-holidays.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "3.1175.0",

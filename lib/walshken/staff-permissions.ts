@@ -25,6 +25,8 @@ export const staffActions = {
   "payroll.read": "View payroll",
   "payroll.salary": "View individual salary and compensation history",
   "payroll.compensation": "Manage compensation",
+  "payroll.employer": "Configure legal employer and statutory coverage",
+  "payroll.employer.review": "Independently review employer statutory coverage",
   "payroll.providers": "Configure payroll providers",
   "payroll.rules": "Configure payroll rules",
   "payroll.periods": "Create and manage payroll periods",
