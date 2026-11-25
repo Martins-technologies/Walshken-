@@ -95,8 +95,8 @@ export async function payrollAction(db:Db,actor:Actor,action:string,input:Record
     detail={...detail,eligible,regularDay,importedHistory:input.importedHistory===true,workedDaysPastYear:integer(input.workdaysPastYear??facts.workedDaysPastYear,'verified workdays in prior year',0,366),history:facts,adjacentAbsenceReviewed:input.adjacentAbsenceReviewed===true};if(eligible&&Number(detail.workedDaysPastYear)<30)return fail(400,'Alberta general-holiday eligibility requires at least thirty actual workdays in the preceding twelve months.');if(!detail.adjacentAbsenceReviewed)return fail(400,'Verify required attendance and any authorized absence around the holiday.');if(await one(tx,"SELECT id FROM payroll_earnings WHERE employee_id=? AND period_id=? AND kind='Holiday decision' AND work_date=? AND status IN('Pending','Approved')",employee.id,p.id,day))return fail(409,'A holiday decision already exists for this employee/date.');
    }
    if(['Paid leave','Unpaid leave'].includes(kind)){
-    const leave=await one<{entitlement_snapshot:string|null}>(tx,"SELECT entitlement_snapshot FROM leave_requests WHERE id=? AND employee_id=? AND release_stage=? AND status='Approved' AND starts_on<=? AND ends_on>=?",related,employee.id,payrollDataset(),day,day);if(!leave)return fail(400,'Choose approved Part F leave covering this date.');
-    const entitlement=payrollLeaveEntitlement(leave.entitlement_snapshot,day);
+    const leave=await one<{entitlement_snapshot?:string|null}>(tx,"SELECT * FROM leave_requests WHERE id=? AND employee_id=? AND release_stage=? AND status='Approved' AND starts_on<=? AND ends_on>=?",related,employee.id,payrollDataset(),day,day);if(!leave)return fail(400,'Choose approved Part F leave covering this date.');
+    const entitlement=payrollLeaveEntitlement(leave.entitlement_snapshot??null,day);
     if(entitlement){
      if(entitlement.paid!==(kind==='Paid leave'))return fail(409,'Use the paid or unpaid classification in the approved leave record.');
      const used=await one<{seconds:number}>(tx,`SELECT COALESCE(SUM(i.seconds),0)::int AS seconds FROM payroll_earnings i JOIN payroll_periods p ON p.id=i.period_id
