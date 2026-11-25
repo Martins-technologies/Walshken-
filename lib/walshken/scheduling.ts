@@ -1,6 +1,6 @@
 import {actionScope,hasAction} from "./staff-authority";
 import {staffReadinessEnabled} from "./staff-permissions";
-import {validateLeaveRequest} from "./leave-balances";
+import {sameLeaveEntitlement,validateLeaveRequest} from "./leave-balances";
 import {ensureNoClosure,holidaysEnabled} from './holiday-access';
 import {all,canManage,date,fail,id,integer,json,now,one,pick,scope,str,type Actor,type Db,run} from './server';
 import {dayAdd,interval,localInstant,localWall,validatePlannedBreaks,validatePolicy,zone} from './attendance-rules';
@@ -82,7 +82,7 @@ export async function scheduleAction(db:Db,actor:Actor,action:string,data:Record
    if(decision==='Approved'&&entry.entitlement_snapshot){
     const employee=await workforceEmployee(tx,actor,entry.employee_id),saved=JSON.parse(entry.entitlement_snapshot);
     const validated=await validateLeaveRequest(tx,employee,entry.starts_on,entry.ends_on,saved.code,entry.id);
-    if(!validated||JSON.parse(validated.snapshot).hash!==saved.hash)return fail(409,'Leave policy changed after submission. Submit a request against the current version.');
+    if(!validated||!sameLeaveEntitlement(saved,JSON.parse(validated.snapshot)))return fail(409,'Leave policy changed after submission. Submit a request against the current version.');
    }
    await run(tx,'UPDATE leave_requests SET status=?,reviewer_id=?,reviewed_at=?,review_note=?,revision=revision+1 WHERE id=?',decision,actor.id,now(),note,entry.id);await workEvent(tx,actor,entry.employee_id,'leave',entry.id,'Leave '+decision.toLowerCase(),note);await workNotify(tx,actor,entry.employee_id,'Leave '+decision.toLowerCase(),note,'leave');return json({ok:true,message:'Leave '+decision.toLowerCase()+'.'});
   }

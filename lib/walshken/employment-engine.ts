@@ -64,14 +64,24 @@ export async function employmentBoundaries(db:Db,employee:Pick<Actor,"id"|"org_i
   .filter(day=>day>=from&&day<=to).sort();
 }
 
-export async function policyForPeriod(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string,category:EmploymentCategory) {
- const resolved=await applicablePolicy(db,employee,from,category);
- for(const day of (await employmentBoundaries(db,employee,from,to,[category])).slice(1)){
-  const current=await applicablePolicy(db,employee,day,category);
-  if(resolved!.row.id!==current!.row.id||resolved!.terms.id!==current!.terms.id)
-   return fail(409,`${category} or the employment assignment changes inside this interval. Split at the effective date.`);
+export async function employmentPolicySegments(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string,category:EmploymentCategory) {
+ const boundaries=await employmentBoundaries(db,employee,from,to,[category]);
+ const segments: {from:string;through:string;policy:NonNullable<Awaited<ReturnType<typeof applicablePolicy>>>}[]=[];
+ for(const [index,start] of boundaries.entries()){
+  const policy=await applicablePolicy(db,employee,start,category);
+  const end=boundaries[index+1];
+  const through=end?new Date(Date.parse(end+"T12:00Z")-86400000).toISOString().slice(0,10):to;
+  const previous=segments.at(-1);
+  if(previous?.policy.row.id===policy!.row.id&&previous.policy.terms.id===policy!.terms.id)previous.through=through;
+  else segments.push({from:start,through,policy:policy!});
  }
- return resolved!;
+ return segments;
+}
+
+export async function policyForPeriod(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string,category:EmploymentCategory) {
+ const segments=await employmentPolicySegments(db,employee,from,to,category);
+ if(segments.length!==1)return fail(409,`${category} or the employment assignment changes inside this interval. Split at the effective date.`);
+ return segments[0].policy;
 }
 
 export async function policyDates(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string) {
@@ -93,12 +103,16 @@ export async function policyDates(db:Db,employee:Pick<Actor,"id"|"org_id">,from:
  return {dates:[...dates.values()].sort((a,b)=>a.day.localeCompare(b.day)),configured:true,pending};
 }
 
-export async function assertEmploymentPeriod(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string) {
+export async function assertEmploymentPeriod(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string,allowDatedVersions=false) {
  const first=await employmentTermsOn(db,employee,from),last=await employmentTermsOn(db,employee,to);
  if(!first&&!last)return null;
  if(!first||first.id!==last?.id)return fail(409,"An employment assignment changes inside this period. Use boundary-aligned pay periods.");
  const categories:EmploymentCategory[]=["Work","Overtime","Holiday calendar","Leave"];
- const applied=[];
- for(const category of categories)applied.push(await policyForPeriod(db,employee,from,to,category));
- return {assignment:first,policies:applied};
+ const policies=[];
+ for(const category of categories){
+  const segments=await employmentPolicySegments(db,employee,from,to,category);
+  if(!allowDatedVersions&&segments.length>1)return fail(409,`${category} changes inside this interval. Split at the effective date.`);
+  for(const segment of segments)policies.push({...segment.policy,from:segment.from,through:segment.through});
+ }
+ return {assignment:first,policies};
 }

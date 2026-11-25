@@ -4,6 +4,19 @@
 
 The candidate is based on production commit `c2fd6247ab79765124c0fc4a0bc5ce159c5f1477`. Its scope is the existing Vercel `walshken` project's `codex/walshken-role-qa` branch and the isolated `walshken_role_qa` schema and runtime role in the existing Supabase project. Production release approval is separate.
 
+## Follow-up preview
+
+The public pages use the production source and assets. The QA database received a copy of the published homepage and active service/market catalog. The copy contains only public-facing fields and uses existing QA permissions. Corporate page content was compared with the live homepage, service listing, country listing, About, Contact and both customer account entry pages.
+
+The staff update adds:
+
+- Per-day reviewed leave allocations across compatible policy transitions, daily accrual using dated rates, and a verified counting method for approved days actually worked. Specialist eligibility days, exceptions or encashment outside the supported method need an independently reviewed correction or a separate verified calculation.
+- Calculated carry-forward proposals for opted-in categories, capped at the new cycle's policy and requiring independent review. Previous-cycle entitlement, cap and rule evidence are rechecked before posting. Setup is in Governance → Employment policies → Leave adjustments.
+- Same-pay-period changes to the applicable overtime multiplier when daily and weekly thresholds and the workweek remain compatible. Each used rule is retained in the payroll snapshot. Changes to the workweek, overtime thresholds, assessed employment assignment or governing pay-standard method still require a reviewed boundary or calculation.
+- Payroll reconciliation of the paid status and minutes in authorized leave allocations, and detection of completed attendance missing a timesheet before payroll calculation.
+- An audited project export with explicit project view/export delegation and overdue milestone counts. Attendance exports enforce their own delegated permission in addition to record visibility.
+- Additive migration `20261125101811_reviewed_leave_carry_forward.sql` stores evidence for calculated carry-forward adjustment proposals in the QA schema.
+
 ## Review paths
 
 | Area | Where to test | What to verify |

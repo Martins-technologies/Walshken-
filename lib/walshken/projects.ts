@@ -2,6 +2,8 @@ import { actionScope, hasAction, requireEmployeeAction } from "./staff-authority
 import { all, audit, canSuper, date, fail, id, integer, json, now, one, pick, requireStaff, run, str, type Actor, type Db } from "./server";
 import { taskDataset } from "./tasks";
 
+import { permissionScope, staffReadinessEnabled } from "./staff-permissions";
+
 export const projectLifecycleEnabled = () => process.env.WALSHKEN_PROJECT_LIFECYCLE_ENABLED === "1";
 const statuses = ["Planned", "Active", "On hold", "In review", "Completed", "Cancelled", "Archived"] as const;
 const mutable = ["Planned", "Active", "On hold"] as const;
@@ -22,15 +24,25 @@ export async function projectsView(db: Db, actor: Actor, params: URLSearchParams
   const query = str(params.get("q"), "search", 100, false);
   const status = str(params.get("status"), "status", 24, false);
   if (status) pick(status, statuses, "project status");
+  const exportReport = params.get("export") === "1";
   const page = integer(params.get("page") ?? 1, "page", 1, 10000);
   const order = pick(params.get("order") ?? "Recent", ["Recent", "Deadline", "Name"], "sort order");
   const sorts = { Recent: "p.created_at DESC", Deadline: "p.due_on ASC NULLS LAST", Name: "lower(p.name)" };
   const manage = actionScope(actor, "projects.manage", "owner", true);
   const review = actionScope(actor, "projects.review", "owner", false);
   const stage = taskDataset();
+  if(exportReport&&!hasAction(actor,"projects.export"))return fail(403,"Project reporting export is outside your authority.");
+  const fallback={sql:`(?=1 OR p.owner_id=? OR p.department_id=? OR (${manage.sql}) OR (${review.sql})
+    OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.release_stage=? AND t.employee_id=?))`,
+    args:[canSuper(actor)?1:0,actor.id,actor.department_id,...manage.args,...review.args,stage,actor.id]};
+  const read=canSuper(actor)||!staffReadinessEnabled()?fallback:permissionScope(actor.permissions??[],"projects.read","owner",fallback);
+  const exportScope=exportReport?actionScope(actor,"projects.export","owner",true):{sql:"1=1",args:[]};
   const rows = await all(db, `
     SELECT p.*, owner.name AS owner, d.name AS department,
       count(*) OVER()::int AS total_rows,
+      (SELECT count(*)::int FROM project_milestones m WHERE m.project_id=p.id) AS milestone_count,
+      (SELECT count(*)::int FROM project_milestones m WHERE m.project_id=p.id AND m.completed_at IS NOT NULL) AS milestones_done,
+      (SELECT count(*)::int FROM project_milestones m WHERE m.project_id=p.id AND m.completed_at IS NULL AND m.due_on<?) AS milestones_overdue,
       CASE WHEN (${manage.sql}) THEN 1 ELSE 0 END AS can_manage,
       CASE WHEN (${review.sql}) AND p.submitted_by<>? AND p.owner_id<>? THEN 1 ELSE 0 END AS can_review,
       (SELECT count(*)::int FROM tasks t WHERE t.project_id=p.id AND t.release_stage=?
@@ -39,15 +51,24 @@ export async function projectsView(db: Db, actor: Actor, params: URLSearchParams
         AND (?=1 OR p.owner_id=? OR t.employee_id=?)) AS tasks_done
     FROM projects p JOIN employees owner ON owner.id=p.owner_id AND owner.org_id=p.org_id
     LEFT JOIN units d ON d.id=p.department_id AND d.org_id=p.org_id
-    WHERE p.org_id=? AND (?=1 OR p.owner_id=? OR p.department_id=? OR (${manage.sql}) OR (${review.sql})
-      OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.release_stage=? AND t.employee_id=?))
+    WHERE p.org_id=? AND (${read.sql}) AND (${exportScope.sql})
       AND (?='' OR p.status=?) AND (?='' OR strpos(lower(concat_ws(' ',p.name,p.description,owner.name)),lower(?))>0)
-    ORDER BY ${sorts[order]},p.id LIMIT 25 OFFSET ?`,
-    ...manage.args, ...review.args, actor.id, actor.id,
+    ORDER BY ${sorts[order]},p.id LIMIT ? OFFSET ?`,
+    now().slice(0,10),...manage.args, ...review.args, actor.id, actor.id,
     stage, canSuper(actor)?1:0, actor.id, actor.id,
     stage, canSuper(actor)?1:0, actor.id, actor.id,
-    actor.org_id, canSuper(actor)?1:0, actor.id, actor.department_id,
-    ...manage.args, ...review.args, stage, actor.id, status, status, query, query, (page-1)*25);
+    actor.org_id,...read.args,...exportScope.args,status,status,query,query,exportReport?1001:25,exportReport?0:(page-1)*25);
+  if(exportReport){
+    if(rows.length>1000)return fail(400,"Filter project status or name to export up to 1,000 records.");
+    const cells=[["Project","Owner","Department","Status","Start","Deadline","Milestones","Completed milestones","Overdue milestones","Visible tasks","Completed visible tasks"],
+      ...rows.map(row=>[row.name,row.owner,row.department,row.status,row.starts_on,row.due_on,row.milestone_count,row.milestones_done,row.milestones_overdue,row.tasks,row.tasks_done])];
+    const quote=(value:unknown)=>'"'+String(value??"").replace(/^\s*[=+@-]|^[\t\r\n]/,"'$&").replaceAll('"','""')+'"';
+    await audit(db,actor,"Project report exported","project report",String(rows.length)).run();
+    return new Response("\uFEFF"+cells.map(row=>row.map(quote).join(",")).join("\r\n"),{headers:{
+      "Content-Type":"text/csv; charset=utf-8","Content-Disposition":'attachment; filename="project-report.csv"',
+      "Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"
+    }});
+  }
   const visible = rows.map(row => row.id);
   const [milestones, owners] = await Promise.all([
     visible.length ? all(db, `SELECT * FROM project_milestones WHERE project_id IN (${visible.map(() => "?").join(",")}) ORDER BY due_on,id`, ...visible) : [],
@@ -55,7 +76,7 @@ export async function projectsView(db: Db, actor: Actor, params: URLSearchParams
       WHERE owner.org_id=? AND owner.role<>'guest' AND owner.status='Active' AND owner.employment_status<>'Ended'
       AND (${manage.sql}) ORDER BY owner.name`, actor.org_id, ...manage.args) : [],
   ]);
-  return json({ managedProjects:true, rows, milestones, owners, canCreate: owners.length > 0, query, status, order, page, total: Number(rows[0]?.total_rows ?? 0) });
+  return json({ managedProjects:true, rows, milestones, owners, canCreate: owners.length > 0, canExport:hasAction(actor,"projects.export"), query, status, order, page, total: Number(rows[0]?.total_rows ?? 0) });
 }
 
 async function ownerFor(db: Db, actor: Actor, target: string) {

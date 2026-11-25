@@ -7,6 +7,7 @@ import {validateEmploymentSettings} from "./employment-settings";
 import {validDay} from "./holiday-access";
 import {maintainedCanadaTaxPackages} from "./payroll-canada-packages";
 import {nationalTaxPackages} from "./payroll-national-packages";
+import {closingLeaveCarry} from "./leave-balances";
 import {localDate} from "./work";
 
 async function initializeEmploymentCatalog(db:Db,actor:Actor){
@@ -112,6 +113,18 @@ export async function employmentAction(db:Db,actor:Actor,action:string,data:Reco
    await audit(tx,actor,`Employment ${category} policy drafted`,"employment policy",target).run();
    return json({ok:true,message:"Policy version saved as PENDING LEGAL VERIFICATION. A separate administrator must review it."},201);
   }
+  if(action==='employment-leave-carry'){
+   const employee=await one<Actor>(tx,"SELECT * FROM employees WHERE org_id=? AND id=? AND role<>'guest'",actor.org_id,str(data.employee,'employee',80));
+   if(!employee)return fail(404,'Employee unavailable.');
+   const day=validDay(data.effectiveOn,'first day of the new leave year'),code=str(data.code,'leave category code',30);
+   if(day>localDate(now(),employee.time_zone))return fail(409,'Carry-forward can be calculated after the prior leave year closes.');
+   const basis=await closingLeaveCarry(tx,employee,day,code),target=id();
+   await run(tx,'INSERT INTO staff_leave_adjustments(id,org_id,employee_id,code,effective_on,minutes,kind,reason,created_by,created_at,carry_basis) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+    target,actor.org_id,employee.id,code,day,basis.minutes,'Carry forward',
+    `Unused balance ${basis.previous} minutes, capped at ${basis.cap} minutes for the new leave year.`,actor.id,now(),JSON.stringify(basis));
+   await audit(tx,actor,'Calculated leave carry-forward proposed','leave adjustment',target).run();
+   return json({ok:true,message:`${basis.minutes} minutes proposed for independent carry-forward review.`},201);
+  }
   if(action==='employment-leave-adjust'){
    const employee=await one<Actor>(tx,"SELECT * FROM employees WHERE org_id=? AND id=? AND role<>'guest'",actor.org_id,str(data.employee,'employee',80));
    if(!employee)return fail(404,'Employee unavailable.');
@@ -125,11 +138,18 @@ export async function employmentAction(db:Db,actor:Actor,action:string,data:Reco
    return json({ok:true,message:'Leave adjustment submitted for independent review.'},201);
   }
   if(action==='employment-leave-adjust-review'){
-   const target=str(data.id,'leave adjustment',80),row=await one<{created_by:string;employee_id:string}>(tx,'SELECT created_by,employee_id FROM staff_leave_adjustments WHERE org_id=? AND id=?',actor.org_id,target);
+   const target=str(data.id,'leave adjustment',80),row=await one<{created_by:string;employee_id:string;code:string;effective_on:string;carry_basis?:string|null}>(tx,'SELECT * FROM staff_leave_adjustments WHERE org_id=? AND id=?',actor.org_id,target);
    if(!row)return fail(404,'Leave adjustment unavailable.');
    if(row.created_by===actor.id||row.employee_id===actor.id)return fail(403,'An independent administrator must review this adjustment.');
    if(await one(tx,'SELECT id FROM staff_leave_adjustment_reviews WHERE adjustment_id=?',target))return fail(409,'This adjustment already has a decision.');
-   await run(tx,'INSERT INTO staff_leave_adjustment_reviews(id,adjustment_id,decision,reason,actor_id,created_at) VALUES(?,?,?,?,?,?)',id(),target,pick(data.decision,['Approved','Rejected'],'decision'),str(data.reason,'review evidence',2000),actor.id,now());
+   const decision=pick(data.decision,['Approved','Rejected'],'decision');
+   if(decision==='Approved'&&row.carry_basis){
+    const employee=await one<Actor>(tx,"SELECT * FROM employees WHERE org_id=? AND id=?",actor.org_id,row.employee_id);
+    if(!employee)return fail(404,'Employee unavailable.');
+    const current=await closingLeaveCarry(tx,employee,row.effective_on,row.code,target);
+    if(JSON.stringify(current)!==row.carry_basis)return fail(409,'The verified closing balance or rule changed. Reject this proposal and calculate it again.');
+   }
+   await run(tx,'INSERT INTO staff_leave_adjustment_reviews(id,adjustment_id,decision,reason,actor_id,created_at) VALUES(?,?,?,?,?,?)',id(),target,decision,str(data.reason,'review evidence',2000),actor.id,now());
    await audit(tx,actor,'Leave adjustment reviewed','leave adjustment',target).run();
    return json({ok:true,message:'Leave adjustment decision recorded.'});
   }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import {defaultPolicy} from "../lib/walshken/attendance-rules.ts";
+import {defaultPolicy,dayAdd} from "../lib/walshken/attendance-rules.ts";
 
-export async function verifyFinalOperations({db,request,admin,staff,hr,adminId,staffId,runId}) {
+export async function verifyFinalOperations({db,request,admin,staff,hr,person,adminId,staffId,runId}) {
  process.env.WALSHKEN_PROJECT_LIFECYCLE_ENABLED="1";
  const name="Verified rollout "+runId;
  const plan={owner:staffId,name,description:"Review rollout deliverables",start:"2026-11-01",due:"2026-11-30"};
@@ -23,6 +23,13 @@ export async function verifyFinalOperations({db,request,admin,staff,hr,adminId,s
  await request("projects/review",200,hr,{id:project,revision:6,decision:"Approve",reason:"All evidence reviewed"});
  await request("projects/archive",200,admin,{id:project,revision:7});
  await request("projects/restore",200,admin,{id:project,revision:8});
+ const csv=await request("view/projects?export=1&q="+runId,200,admin);
+ assert.match(csv.toString(),/Overdue milestones/);
+ assert(csv.toString().includes(name));
+ await request("view/projects?export=1",403,staff);
+ await request("governance/permission-save",200,admin,{principalType:"employee",principal:staffId,scopeType:"employee",
+  scopeId:staffId,capability:"projects.read",effect:"deny"});
+ assert(!(await request("view/projects?q="+runId,200,staff)).rows.some(row=>row.id===project));
  const restored=(await request("view/projects?status=Completed&q="+runId,200,admin)).rows.find(row=>row.id===project);
  assert(restored.completed_at);
  assert.equal(restored.revision,9);
@@ -58,4 +65,69 @@ export async function verifyFinalOperations({db,request,admin,staff,hr,adminId,s
  assert(!coverage.coverage.some(row=>row.category==="India payroll"||row.category==="Pakistan payroll"));
  await request("governance/employment-coverage",403,staff,{employee:staffId,day:"2027-01-01"});
  console.log("PASS authenticated, Super Admin-only employment coverage inspection");
+ await verifyDatedLeave({db,request,admin,person,adminId,runId});
+
+}
+
+async function verifyDatedLeave({db,request,admin,person,adminId,runId}) {
+ const reviewer=await person("admin","Leave legal reviewer","CARRY-REVIEW-"+runId);
+ const worker=await person("employee","Dated leave employee","CARRY-STAFF-"+runId);
+ await db.prepare("UPDATE employees SET role='super_admin' WHERE id=?",[reviewer.id]).run();
+ const year=new Date().getUTCFullYear(),newYear=year+"-01-01",oldYear=(year-1)+"-01-01",yearEnd=year+"-12-31";
+ const category="Regional leave test "+runId;
+ const write=(sql,...values)=>db.prepare(sql,values).run();
+ await write("UPDATE employees SET hire_date=? WHERE id=?",oldYear,worker.id);
+ await write(`INSERT INTO staff_employment_terms(id,org_id,employee_id,effective_on,country,region_code,jurisdiction,classification,city,time_zone,employment_type,category,
+  compensation_type,currency,frequency,expected_hours,schedule,reference,created_by,created_at)
+  VALUES(?,'walshken',?,?,'IN','IN-DL','IN-DL',?,'Delhi','Asia/Kolkata','Full-time','Employee','Hourly','INR','Monthly',40,'Test shift','Synthetic applicability evidence',?,?)`,"carry-terms-"+runId,worker.id,oldYear,category,adminId,new Date().toISOString());
+ async function approve(type,settings,version,from=oldYear,predecessor=""){
+  await request("governance/employment-policy-save",201,admin,{jurisdiction:"IN-DL",classification:category,category:type,version,
+   effectiveFrom:from,effectiveThrough:yearEnd,source:"https://labour.gov.in/",evidence:"Synthetic calculation acceptance fixture",mandatory:true,settings,predecessor});
+  const row=(await request("view/governance",200,admin)).employment.policies.find(row=>row.version===version);
+  await request("governance/jurisdiction-verify",200,reviewer,{id:row.id,reason:"Independent verification of synthetic settings"});
+  return row.id;
+ }
+ const free={code:"VAC",name:"Vacation",paid:true,annualMinutes:4800,carryMinutes:960,accrual:"Annual",minimumServiceDays:0,reviewCarry:true};
+ const worked={code:"WORK",name:"Workday earned",paid:true,annualMinutes:9000,carryMinutes:0,accrual:"Approved workdays",minimumServiceDays:0,daysPerCredit:2,minimumApprovedDays:2};
+ const daily={code:"DAILY",name:"Daily earned",paid:true,annualMinutes:3650,carryMinutes:0,accrual:"Daily earned",minimumServiceDays:0};
+ const policy={workdays:[0,1,2,3,4,5,6],dayMinutes:480,yearStartMonth:1,proration:"None",categories:[free,worked,daily]};
+ await approve("Holiday calendar",{dates:[]},"Carry calendar "+runId);
+ const prior=await approve("Leave",policy,"Leave initial "+runId);
+ const {employeeLeaveBalances,validateLeaveRequest,payrollLeaveEntitlement}=await import("../lib/walshken/leave-balances.ts");
+ const employee=await db.prepare("SELECT * FROM employees WHERE id=?",[worker.id]).first();
+ const carry={employee:worker.id,code:"VAC",effectiveOn:newYear};
+ await request("governance/employment-leave-carry",409,admin,{...carry,effectiveOn:dayAdd(newYear,1)});
+ assert.match((await request("governance/employment-leave-carry",201,admin,carry)).message,/960/);
+ await request("governance/employment-leave-carry",409,admin,carry);
+ const row=(await request("view/governance",200,admin)).employment.leaveAdjustments.find(row=>row.employee_id===worker.id&&row.code==="VAC");
+ const review={id:row.id,decision:"Approved",reason:"Verified previous year balance"};
+ await request("governance/employment-leave-adjust-review",403,admin,review);
+ await request("governance/employment-leave-adjust-review",200,reviewer,review);
+ const next=await employeeLeaveBalances(db,employee,newYear);
+ assert.equal(next.balances.find(item=>item.code==="VAC").available,5760);
+
+ for(const [idx,day] of [year+"-02-02",year+"-02-02",year+"-02-03"].entries()){
+  const id="earned-"+idx+"-"+runId,start=idx===1?"05:00":"04:00",end=idx===1?"05:45":"04:45";
+  await write(`INSERT INTO attendance(id,org_id,employee_id,starts_at,ends_at,time_zone,release_stage,workflow_version)
+   VALUES(?,'walshken',?,?,?,'Asia/Kolkata','preview',1)`,id,worker.id,day+"T"+start+":00.000Z",day+"T"+end+":00.000Z");
+  await write(`INSERT INTO timesheets(id,attendance_id,org_id,employee_id,work_date,gross_seconds,unpaid_seconds,paid_seconds,status,release_stage,workflow_version)
+   VALUES(?,?,'walshken',?,?,2700,0,2700,'Approved','preview',1)`,"sheet-"+id,id,worker.id,day);
+ }
+ const firstBalance=await employeeLeaveBalances(db,employee,year+"-02-02");
+ const secondBalance=await employeeLeaveBalances(db,employee,year+"-02-03");
+ assert.equal(firstBalance.balances.find(item=>item.code==="WORK").available,0,"Two approved intervals on a day are one qualifying day");
+ assert.equal(secondBalance.balances.find(item=>item.code==="WORK").available,480);
+ const cut=year+"-07-01";
+ await approve("Leave",{...policy,categories:[{...free,paid:false},worked,{...daily,annualMinutes:7300}]},"Leave successor "+runId,cut,prior);
+ const reviewed=await validateLeaveRequest(db,employee,dayAdd(cut,-1),cut,"VAC");
+ const slices=JSON.parse(reviewed.snapshot);
+ assert.equal(reviewed.minutes,960);assert.equal(slices.rules.length,2);
+ assert.deepEqual(slices.days.map(row=>row.paid),[true,false]);
+ assert.deepEqual(payrollLeaveEntitlement(reviewed.snapshot,cut),{paid:false,seconds:28800});
+ assert.throws(()=>payrollLeaveEntitlement(reviewed.snapshot,dayAdd(cut,1)),/no payable or unpaid allocation/);
+ const earned=await employeeLeaveBalances(db,employee,cut);
+ const elapsed=(Date.parse(cut)-Date.parse(newYear))/86400000;
+ const daysInYear=1+(Date.parse(yearEnd)-Date.parse(newYear))/86400000;
+ assert.equal(earned.balances.find(item=>item.code==="DAILY").entitlement,Math.floor((elapsed*3650+7300)/daysInYear));
+ console.log("PASS verified leave rollover and independent approval, counted workdays, dated accrual and frozen mixed-rule requests");
 }

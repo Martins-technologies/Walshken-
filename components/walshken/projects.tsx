@@ -7,6 +7,7 @@ export type ProjectsData = {
   milestones: RecordRow[];
   owners: RecordRow[];
   canCreate: boolean;
+  canExport: boolean;
   query: string;
   status: string;
   order: string;
@@ -40,10 +41,12 @@ export function ProjectsWorkspace({ data, refresh, setQuery }: { data: ProjectsD
       </div>
       <button className="btn btn-outline btn-small">Apply filters</button>
     </form>
+    {data.canExport&&<p><a className="btn btn-outline btn-small" href={`/api/workspace/view/projects?${query(1)}&export=1`}>Download project report</a></p>}
     {data.canCreate && <Disclosure title="Create project"><ActionForm path="projects/add" fields={fields()} submit="Create project" refresh={refresh}/></Disclosure>}
     <Table rows={data.rows} empty="No projects match these filters" columns={[
       { key: "name", title: "Project" }, { key: "owner", title: "Owner" },
       { key: "due_on", title: "Deadline", render: row => dateText(row.due_on) },
+      { key: "milestones_overdue",title:"Overdue milestones",render:row=>["Completed","Cancelled","Archived"].includes(String(row.status))?"—":String(row.milestones_overdue) },
       { key: "tasks", title: "Visible tasks", render: row => `${row.tasks_done} of ${row.tasks} completed` },
       { key: "status", title: "Status", render: row => <Status>{row.status}</Status> },
     ]}/>

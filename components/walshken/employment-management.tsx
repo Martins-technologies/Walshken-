@@ -52,6 +52,10 @@ export function EmploymentManagement({data,refresh}:{data:EmploymentManagementDa
      field('effectiveOn','Effective date','date'),{name:'kind',label:'Adjustment type',options:['Opening balance','Correction','Carry forward'],required:true},
      field('minutes','Adjustment in minutes, signed for a correction','number'),field('reason','Source and reason','textarea'),
     ]} submit="Submit leave adjustment" refresh={refresh}/>
+    <Disclosure title="Calculate carry-forward from a closed leave year"><ActionForm path="governance/employment-leave-carry" fields={[
+      {name:"employee",label:"Employee",options:options(data.people),required:true},field("code","Verified leave category code"),
+      field("effectiveOn","First day of the new leave year","date"),
+    ]} submit="Calculate and submit for review" refresh={refresh}/></Disclosure>
     <Table rows={data.leaveAdjustments} columns={[{key:'name',title:'Employee'},{key:'code',title:'Leave category'},{key:'kind',title:'Adjustment'},{key:'minutes',title:'Minutes'},{key:'effective_on',title:'Effective'},{key:'status',title:'Review'}]}/>
     {data.leaveAdjustments.filter(row=>row.status==='Pending').map(row=><Disclosure key={row.id} title={`Review ${row.name} · ${row.code} · ${row.minutes} minutes`}>
      <p>{row.reason}</p><ActionForm path="governance/employment-leave-adjust-review" extra={{id:row.id}} fields={[{name:'decision',label:'Decision',options:['Approved','Rejected'],required:true},field('reason','Independent review evidence','textarea')]} submit="Record decision" refresh={refresh}/>
@@ -94,7 +98,7 @@ function policyFields(category:string,settings:Record<string,unknown>):Field[] {
  if(category==='Pay standards')return [
  field('settings','Pay standards JSON: currency, minimumHourly, minimumMonthly, vacationPercent, longServiceYears, longServiceVacationPercent, paymentDeadlineDays, holidayPremiumMultiplier, holidayMethod (Normal day / Average worked day / Percent of earnings), holidayWindowDays, holidayWindowBasis (Before holiday / Complete workweeks), holidayDivisor (0 for actual worked days), holidayPayOnNonWorkday, holidayPercent, minimumServiceDays, minimumWorkedDays, reportingHours, reportingRate (Minimum wage / Ordinary wage)','textarea',Object.keys(settings).length?JSON.stringify(settings,null,2):'')];
  if(['Canada payroll','India payroll','Pakistan payroll'].includes(category))return [field('settings',category+' effective statutory parameter package JSON','textarea',Object.keys(settings).length?JSON.stringify(settings,null,2):'')];
- return [field("settings",category==="Canada Alberta payroll"?'Annual Canadian Alberta payroll parameters JSON':category==="Holiday calendar"?'Dated holidays JSON, with dates containing date, name and required':'Leave policy JSON, with workdays, dayMinutes, yearStartMonth, proration and categories. Each category has code, name, paid, annualMinutes, carryMinutes, accrual and minimumServiceDays',"textarea",Object.keys(settings).length?JSON.stringify(settings,null,2):"")];
+ return [field("settings",category==="Canada Alberta payroll"?'Annual Canadian Alberta payroll parameters JSON':category==="Holiday calendar"?'Dated holidays JSON, with dates containing date, name and required':'Leave policy JSON, with workdays, dayMinutes, yearStartMonth, proration and categories. Each category has code, name, paid, annualMinutes, carryMinutes, accrual (Annual, Monthly, Daily earned, or Approved workdays) and minimumServiceDays. Approved workdays also requires daysPerCredit and minimumApprovedDays. Set reviewCarry to true to calculate unused carry subject to independent review.',"textarea",Object.keys(settings).length?JSON.stringify(settings,null,2):"")];
 }
 function PolicyComparison({previous,current}:{previous?:RecordRow;current:RecordRow}) {
  const parse=(row?:RecordRow):Record<string,unknown>=>{try{return JSON.parse(String(row?.settings??"{}"));}catch{return {};}};
