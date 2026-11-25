@@ -1,3 +1,4 @@
+import {employmentPersonOn} from "./employment-engine";
 import {all,canManage,canPayroll,canSuper,date,fail,id,json,now,one,requireStaff,run,scope,type Actor,type Db} from './server';
 import {hash,payScope} from './payroll-access';
 import {localDate} from './work';
@@ -15,7 +16,17 @@ export async function holidayRule(db:Db,actor:Pick<Actor,'org_id'>,jurisdiction:
 
 export async function assignmentOn(db:Db,employee:Pick<Actor,'id'|'org_id'|'jurisdiction'>,day:string,required=true){const a=await one<HolidayAssignment>(db,'SELECT * FROM holiday_assignments WHERE org_id=? AND employee_id=? AND release_stage=? AND effective_on<=? ORDER BY effective_on DESC,created_at DESC,id DESC LIMIT 1',employee.org_id,employee.id,holidayDataset(),day);if(!a){if(required)return fail(409,'Assign the employee’s verified location and employment holiday calendar first.');return null;}if(a.jurisdiction!==employee.jurisdiction)return fail(409,'Employment jurisdiction changed after this calendar assignment. Record a verified replacement assignment.');return a;}
 export async function employmentRulesOn(db:Db,employee:Actor,day=localDate(now(),employee.time_zone)){const assignment=await assignmentOn(db,employee,day,false),result=await holidayRule(db,employee,assignment?.jurisdiction??employee.jurisdiction,day,assignment?.rule_id);if(!result.config.employment)return fail(409,'Activate a verified employment-calculation package for this jurisdiction before scheduling or approving pay. The Canadian calendar alone does not authorize Alberta calculations.');return {...result,assignment,rules:result.config.employment};}
-export async function employeeCompanyHolidays(db:Db,employee:Pick<Actor,'id'|'org_id'|'jurisdiction'>,from:string,to:string,includeCancelled=false){const rows=await all<CompanyHoliday>(db,`SELECT * FROM holiday_company_events WHERE org_id=? AND release_stage=? AND jurisdiction=? AND on_date BETWEEN ? AND ? ${includeCancelled?'':'AND cancelled_at IS NULL'} ORDER BY on_date,id`,employee.org_id,holidayDataset(),employee.jurisdiction,from,to);return rows.filter(r=>(JSON.parse(r.targets) as string[]).includes(employee.id));}
+export async function employeeCompanyHolidays(db:Db,employee:Pick<Actor,'id'|'org_id'|'jurisdiction'>,from:string,to:string,includeCancelled=false){
+ const rows=await all<CompanyHoliday>(db,`SELECT * FROM holiday_company_events WHERE org_id=? AND release_stage=?
+   AND on_date BETWEEN ? AND ? AND targets::jsonb @> jsonb_build_array(?::text)
+   ${includeCancelled?'':'AND cancelled_at IS NULL'} ORDER BY on_date,id`,employee.org_id,holidayDataset(),from,to,employee.id);
+ const applicable=[];
+ for(const row of rows){
+  const person=await employmentPersonOn(db,employee,row.on_date);
+  if(person.jurisdiction===row.jurisdiction)applicable.push(row);
+ }
+ return applicable;
+}
 export async function ensureNoClosure(db:Db,employee:Actor,from:string,to:string){if(!holidaysEnabled())return;const closed=(await employeeCompanyHolidays(db,employee,from,to)).find(e=>e.closed);const deferred=await one(db,"SELECT a.id FROM holiday_assessments a WHERE a.employee_id=? AND a.release_stage=? AND a.status='Approved' AND (a.configuration::jsonb)#>>'{facts,method}'<>'Pay now' AND (a.configuration::jsonb)#>>'{facts,payDay}' BETWEEN ? AND ? AND NOT EXISTS(SELECT 1 FROM holiday_assessments newer WHERE newer.employee_id=a.employee_id AND newer.release_stage=a.release_stage AND newer.holiday_date=a.holiday_date AND newer.status='Approved' AND (newer.created_at,newer.id)>(a.created_at,a.id))",employee.id,holidayDataset(),from,to);if(deferred)return fail(409,'This employee has an approved paid substitute holiday during the proposed shift. Correct the paid-day arrangement before scheduling work.');if(closed)return fail(409,'This employee is assigned to the company closure “'+closed.name+'”. Review the closure’s actual employee targets before scheduling work. Statutory pay remains protected.');}
 export const yearRange=(value:unknown)=>{const n=Number(value??new Date().getUTCFullYear());if(!Number.isInteger(n)||n<2026||n>2028)return fail(400,'Choose 2026, 2027 or 2028 from the verified Canadian calendar package.');return n;};
 export function validDay(v:unknown,label='date'){const day=date(v,label);if(!day)return fail(400,'Enter a valid '+label+'.');return day;}

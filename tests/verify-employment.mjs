@@ -9,7 +9,7 @@ export async function verifyEmployment({db,request,admin,staff,hr,person,adminId
  const {zeroBalance}=await import('../lib/walshken/payroll-money.ts');
  const {defaultPayPolicy}=await import('../lib/walshken/payroll-access.ts');
  const {localDate}=await import('../lib/walshken/work.ts');
- const {dayAdd}=await import('../lib/walshken/attendance-rules.ts');
+ const {dayAdd,defaultPolicy,localInstant}=await import('../lib/walshken/attendance-rules.ts');
  const reviewer=await person('admin','Independent policy verifier','POLICY-REV-'+runId);
  await db.prepare("UPDATE employees SET role='super_admin' WHERE id=?",[reviewer.id]).run();
  const call=(action,body,status=200,user=admin)=>request('governance/'+action,status,user,body);
@@ -91,11 +91,60 @@ export async function verifyEmployment({db,request,admin,staff,hr,person,adminId
  const after=await one(db,'SELECT * FROM leave_requests WHERE id=?',requested.id);
  await time('leave-cancel',{id:requested.id,revision:after.revision,note:'Test cancellation releases the reserved balance'});
  assert.equal((await employeeLeaveBalances(db,actor,today)).balances[0].available,5280);
+ const {checkShift}=await import('../lib/walshken/scheduling.ts');
+ const {workforcePolicyAt}=await import('../lib/walshken/workforce.ts');
+ const at=stamp=>localInstant(stamp,'Asia/Kolkata');
+ await assert.rejects(()=>checkShift(db,actor,actor,at(today+'T22:00'),at(tomorrow+'T04:00')),/Split this shift/);
+ assert.equal((await workforcePolicyAt(db,actor,at(tomorrow+'T02:00'))).policy.rules.recordId,future.id);
+ const clockTime=new Date(),clockStop=new Date(clockTime.getTime()+3600000).toISOString();
+ const stale='stale-shift-'+runId;
+ await db.prepare(`INSERT INTO shifts(id,org_id,employee_id,starts_at,ends_at,title,location,created_by,time_zone,release_stage,workflow_version,state,policy_snapshot)
+   VALUES(?,?,?,?,?,'Synthetic policy snapshot check','QA worksite',?,'Asia/Kolkata','preview',1,'Published',?)`,
+   [stale,actor.org_id,actor.id,clockTime.toISOString(),clockStop,adminId,JSON.stringify(defaultPolicy())]).run();
+ const active=await time('clock-in',{shift:stale},201);
+ const recorded=await one(db,'SELECT policy_snapshot,time_zone FROM attendance WHERE id=?',active.id);
+ assert.equal(recorded.time_zone,'Asia/Kolkata');
+ assert.equal(JSON.parse(recorded.policy_snapshot).rules.recordId,localDate(clockTime.toISOString(),'Asia/Kolkata')===today?w.id:future.id);
+
+ const move=dayAdd(today,10),newHoliday=dayAdd(move,2);
+ await call('employment-terms-save',{...assignment,country:'PK',region:'PK-PB',jurisdiction:'PK-PB',currency:'PKR',timeZone:'Asia/Karachi',effectiveOn:move},201);
+ const nextCalendar=await draft('Holiday calendar',{dates:[{date:newHoliday,name:'Synthetic Punjab holiday',required:true}]},
+   {jurisdiction:'PK-PB',version:'Punjab calendar '+runId,effectiveFrom:move,source:'https://punjablaws.gov.pk/'});
+ await call('jurisdiction-verify',{id:nextCalendar.id,reason:'Independent synthetic Punjab calendar verification'},200,reviewer);
+ const closure='dated-company-event-'+runId,closureDay=dayAdd(holiday,2);
+ await db.prepare(`INSERT INTO holiday_company_events(id,org_id,release_stage,name,on_date,jurisdiction,kind,calendar_key,closed,guaranteed_minutes,targets,target_reference,created_by,created_at,updated_at,reference)
+   VALUES(?,?,'preview','Synthetic Gujarat closure',?,'IN-GJ','Closure','',1,0,?,'Synthetic scoped targets',?,?,?,'Synthetic closure evidence')`,
+   [closure,actor.org_id,closureDay,JSON.stringify([actor.id]),adminId,clockTime.toISOString(),clockTime.toISOString()]).run();
+ const {employeeCompanyHolidays}=await import('../lib/walshken/holiday-access.ts');
+ assert.equal((await employeeCompanyHolidays(db,actor,today,newHoliday))[0].id,closure);
+ await assert.rejects(()=>checkShift(db,actor,actor,at(closureDay+'T08:00'),at(closureDay+'T13:00')),/company closure/);
+ const calendarFor=(country,anchor)=>request('view/calendar?'+new URLSearchParams({mode:'admin',from:today,to:newHoliday,anchor,types:'statutory,company',country,employee:actor.id}),200,admin);
+ const gujarat=(await calendarFor('IN',newHoliday)).calendar;
+ assert(gujarat.entries.some(entry=>entry.title==='Synthetic regional test holiday'));
+ assert(gujarat.entries.some(entry=>entry.title==='Synthetic Gujarat closure'));
+ assert(!gujarat.entries.some(entry=>entry.title==='Synthetic Punjab holiday'));
+ const punjab=(await calendarFor('PK',today)).calendar;
+ assert(punjab.entries.some(entry=>entry.title==='Synthetic Punjab holiday'));
+ assert(!punjab.entries.some(entry=>entry.title==='Synthetic Gujarat closure'));
+ const indiaProfile={...defaultPayPolicy({country:'IN',jurisdiction:'IN-GJ'}),frequency:'Monthly',reviewed:true,
+  reference:'Synthetic verified payroll profile',ruleSource:'https://labour.gov.in/',dailyHours:9,weeklyHours:48,overtimeMultiplier:'2'};
+ const pakistanProfile={...defaultPayPolicy({country:'PK',jurisdiction:'PK-PB'}),frequency:'Monthly',reviewed:true,
+  reference:'Synthetic verified successor profile',ruleSource:'https://punjablaws.gov.pk/',dailyHours:9,weeklyHours:48,overtimeMultiplier:'2'};
+ const proposal={employee:actor.id,effectiveOn:today,currentId:'',note:'Dated employment association test'};
+ const saved=await request('payroll/profile-save',201,admin,{...proposal,policy:indiaProfile});
+ await request('payroll/profile-save',409,admin,{...proposal,effectiveOn:move,currentId:saved.id,policy:indiaProfile});
+ await request('payroll/profile-save',201,admin,{...proposal,effectiveOn:move,currentId:saved.id,policy:pakistanProfile});
+ const rate={employee:actor.id,amount:'2400',unit:'Hour',effectiveOn:move,note:'Synthetic reviewed payroll rate'};
+ await request('payroll/rate-add',409,admin,{...rate,currency:'INR'});
+ await request('payroll/rate-add',201,admin,{...rate,currency:'PKR'});
+ console.log('PASS payroll setup follows dated assignments and refuses obsolete jurisdiction and rate currency');
+ console.log('PASS assignment-dated calendar filters and closure checks, fresh clock-in rules, and overnight policy boundary');
  const report=await request('view/attendance?team=1',200,admin);
  assert.equal(report.managedWorkforce,true);
  await call('permission-save',{principalType:'role',principal:'manager',scopeType:'country',scopeId:'IN',capability:'people.read',effect:'allow'});
  await call('permission-save',{principalType:'role',principal:'manager',scopeType:'office',scopeId:'missing-office',capability:'people.read',effect:'allow'},404);
  console.log('PASS verified leave accrual, independent carry adjustments, pending reservations, approval, cancellation and country permissions');
+ await db.prepare('DELETE FROM rate_limits',[]).run();
  const retention={country:'IN',category:'Documents',classification:'Private',minimumDays:30,retainDays:30,effectiveOn:today,source:'https://labour.gov.in/',reason:'Synthetic retention policy fixture'};
  await call('retention-save',{...retention,retainDays:1},400);
  await call('retention-save',retention,201);

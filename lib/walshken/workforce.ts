@@ -4,7 +4,7 @@ import type {WorkSettings} from "./employment-settings";
 import {staffReadinessEnabled} from './staff-permissions';
 import {employmentRulesOn,holidaysEnabled,validDay} from './holiday-access';
 import {all,audit,canManage,canSuper,date,fail,id,integer,json,now,one,pick,requireStaff,run,scope,str,throttle,type Actor,type Db} from './server';
-import {albertaRules,compliance,defaultPolicy,interval,iso,localInstant,totals,validatePolicy,type WorkBreak,type WorkPolicy} from './attendance-rules';
+import {albertaRules,compliance,dayAdd,defaultPolicy,interval,iso,localInstant,totals,validatePolicy,type WorkBreak,type WorkPolicy} from './attendance-rules';
 import {localDate} from './work';
 export const workforceEnabled=()=>process.env.WALSHKEN_ATTENDANCE_ENABLED==='1';
 export const workDataset=()=>process.env.WALSHKEN_WORK_DATASET==='preview'?'preview':'production';
@@ -32,6 +32,17 @@ export async function workforcePolicy(db:Db,employee:Actor,effectiveDay=localDat
    employee.id,employee.org_id,workDataset(),effectiveDay):null;
  const saved=current??await one<{settings:string;revision:number}>(db,'SELECT settings,revision FROM work_policies WHERE employee_id=? AND org_id=? AND release_stage=?',employee.id,employee.org_id,workDataset());
  return {policy:saved?validatePolicy(JSON.parse(saved.settings),rules):validatePolicy({...defaultPolicy(employee.break_policy==='paid'),breaks:[{key:'lunch',label:'Meal break',minutes:rules.minimumBreakMinutes,paid:employee.break_policy==='paid',afterMinutes:rules.firstBreakAfterMinutes},{key:'rest',label:'Rest break',minutes:rules.minimumBreakMinutes,paid:employee.break_policy==='paid',afterMinutes:rules.secondBreakFromMinutes}],rules},rules),revision:saved?.revision??0};
+}
+export async function workforcePolicyAt(db:Db,employee:Actor,stamp:string){
+ const day=localDate(stamp,employee.time_zone);
+ const candidates=[...new Set([day,dayAdd(day,-1),dayAdd(day,1)])].sort().reverse();
+ for(const candidate of candidates){
+  const terms=await employmentTermsOn(db,employee,candidate);
+  if(terms&&localDate(stamp,terms.time_zone)===candidate){
+   return {...await workforcePolicy(db,employee,candidate),day:candidate,timeZone:terms.time_zone,assignment:terms.id};
+  }
+ }
+ return {...await workforcePolicy(db,employee,day),day,timeZone:employee.time_zone,assignment:null};
 }
 export async function workEvent(db:Db,actor:Actor,employee:string,entity:string,target:string,action:string,detail:unknown=''){
  await run(db,'INSERT INTO work_events(id,org_id,release_stage,employee_id,actor_id,entity,target_id,action,detail,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',id(),actor.org_id,workDataset(),employee,actor.id,entity,target,action,(typeof detail==='string'?detail:JSON.stringify(detail)).slice(0,20000),now());
@@ -90,10 +101,10 @@ export async function workforceAction(db:Db,actor:Actor,action:string,data:Recor
    const employee=await workforceEmployee(tx,actor,actor.id);requireActive(employee);const at=receivedAt,active=await one<Attendance>(tx,'SELECT * FROM attendance WHERE employee_id=? AND release_stage=? AND ends_at IS NULL',actor.id,workDataset());
    if(staffReadinessEnabled()&&['clock-in','clock-out','break-start','break-end'].includes(action))await requireEmployeeAction(tx,actor,'attendance.edit',actor.id);
   if(action==='clock-in'){
-    if(active)return fail(409,'You are already clocked in.');const {policy}=await workforcePolicy(tx,employee);
+    if(active)return fail(409,'You are already clocked in.');const {policy,timeZone}=await workforcePolicyAt(tx,employee,at);
     const shiftInput=str(data.shift,'scheduled shift',80,false);let shift:Shift|null=null;
     if(shiftInput){shift=await one<Shift>(tx,"SELECT * FROM shifts WHERE id=? AND employee_id=? AND release_stage=? AND state='Published' AND workflow_version=1",shiftInput,actor.id,workDataset());if(!shift||Date.parse(at)<Date.parse(shift.starts_at)-7200000||Date.parse(at)>=Date.parse(shift.ends_at))return fail(409,'Choose your current published shift (clock-in opens two hours before its start).');if(await one(tx,'SELECT id FROM attendance WHERE shift_id=? AND release_stage=?',shift.id,workDataset()))return fail(409,'This shift already has a work record. Request a correction if needed.');}
-    const target=id();await run(tx,'INSERT INTO attendance(id,org_id,employee_id,starts_at,time_zone,shift_id,source,policy_snapshot,release_stage,workflow_version,created_by,updated_at,note) VALUES(?,?,?,?,?,?,?, ?,?,1,?,?,?)',target,actor.org_id,actor.id,at,employee.time_zone,shift?.id??null,'Clock',JSON.stringify(shift?validatePolicy(JSON.parse(shift.policy_snapshot)):policy),workDataset(),actor.id,at,shift?'':str(data.note,'unscheduled work note',500));await workEvent(tx,actor,actor.id,'attendance',target,'Clocked in',{shift:shift?.id??null,at});return json({ok:true,id:target,message:shift?'Clocked in for your shift.':'Unscheduled work clocked in and recorded.'},201);
+    const target=id();await run(tx,'INSERT INTO attendance(id,org_id,employee_id,starts_at,time_zone,shift_id,source,policy_snapshot,release_stage,workflow_version,created_by,updated_at,note) VALUES(?,?,?,?,?,?,?, ?,?,1,?,?,?)',target,actor.org_id,actor.id,at,timeZone,shift?.id??null,'Clock',JSON.stringify(policy),workDataset(),actor.id,at,shift?'':str(data.note,'unscheduled work note',500));await workEvent(tx,actor,actor.id,'attendance',target,'Clocked in',{shift:shift?.id??null,at});return json({ok:true,id:target,message:shift?'Clocked in for your shift.':'Unscheduled work clocked in and recorded.'},201);
    }
    if(!active)return fail(409,'Clock in before recording a break or clock-out.');if(at<active.starts_at)return fail(409,'A newer clock action was recorded. Refresh and retry.');revision(active,data.revision);const pause=await one<WorkBreak & {id:string}>(tx,'SELECT * FROM breaks WHERE attendance_id=? AND ends_at IS NULL AND voided_at IS NULL',active.id),policy=validatePolicy(JSON.parse(active.policy_snapshot));
    if(action==='break-start'){
@@ -109,10 +120,15 @@ export async function workforceAction(db:Db,actor:Actor,action:string,data:Recor
   if(action==='manual-entry'){
    const employee=await workforceEmployee(tx,actor,str(data.employee??actor.id,'employee',80),canManage(actor));requireActive(employee);
    if(!staffReadinessEnabled()&&!canManage(actor)&&!(await workforcePolicy(tx,employee)).policy.manualAllowed)return fail(403,'Manual time entry has not been authorized for your account.');
-   const start=data.startsAt?iso(data.startsAt,'work start'):localInstant(data.startsLocal,employee.time_zone,String(data.fold??'earlier')),end=data.endsAt?iso(data.endsAt,'work end'):localInstant(data.endsLocal,employee.time_zone,String(data.fold??'earlier'));interval(start,end);const {policy}=await workforcePolicy(tx,employee,localDate(start,employee.time_zone));if(!canManage(actor)&&!policy.manualAllowed)return fail(403,'Manual time entry was not authorized for this employee on that date.');if(end>now())return fail(400,'Manual work must already have taken place.');await noWorkOverlap(tx,employee.id,start,end);
-   const breaks=proposedBreaks(data.breaks??[],start,end,policy,employee.time_zone),target=id(),note=str(data.note,'reason for manual entry',1500);let shift:Shift|null=null;const shiftId=str(data.shift,'shift',80,false);
+   const dateText=String(data.startsLocal??"").slice(0,10);
+   const assigned= /^\d{4}-\d{2}-\d{2}$/.test(dateText)?await employmentTermsOn(tx,employee,dateText):null;
+   const localZone=assigned?.time_zone??employee.time_zone;
+   const start=data.startsAt?iso(data.startsAt,'work start'):localInstant(data.startsLocal,localZone,String(data.fold??'earlier')),
+    end=data.endsAt?iso(data.endsAt,'work end'):localInstant(data.endsLocal,localZone,String(data.fold??'earlier'));
+   interval(start,end);const {policy,timeZone}=await workforcePolicyAt(tx,employee,start);if(!canManage(actor)&&!policy.manualAllowed)return fail(403,'Manual time entry was not authorized for this employee on that date.');if(end>now())return fail(400,'Manual work must already have taken place.');await noWorkOverlap(tx,employee.id,start,end);
+   const breaks=proposedBreaks(data.breaks??[],start,end,policy,timeZone),target=id(),note=str(data.note,'reason for manual entry',1500);let shift:Shift|null=null;const shiftId=str(data.shift,'shift',80,false);
    if(shiftId){shift=await one<Shift>(tx,"SELECT * FROM shifts WHERE id=? AND employee_id=? AND release_stage=? AND state='Published'",shiftId,employee.id,workDataset());if(!shift||end<=shift.starts_at||start>=shift.ends_at)return fail(400,'The selected shift does not match this employee and work interval.');if(await one(tx,'SELECT id FROM attendance WHERE shift_id=?',shift.id))return fail(409,'This shift already has a work record. Request a correction instead.');}
-   await run(tx,'INSERT INTO attendance(id,org_id,employee_id,starts_at,ends_at,time_zone,shift_id,source,policy_snapshot,release_stage,workflow_version,created_by,updated_at,note) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?,?)',target,actor.org_id,employee.id,start,end,employee.time_zone,shift?.id??null,'Manual',JSON.stringify(policy),workDataset(),actor.id,now(),note);
+   await run(tx,'INSERT INTO attendance(id,org_id,employee_id,starts_at,ends_at,time_zone,shift_id,source,policy_snapshot,release_stage,workflow_version,created_by,updated_at,note) VALUES(?,?,?,?,?,?,?,?,?,?,1,?,?,?)',target,actor.org_id,employee.id,start,end,timeZone,shift?.id??null,'Manual',JSON.stringify(policy),workDataset(),actor.id,now(),note);
    await insertBreaks(tx,target,breaks,policy);const entry=await attendanceFor(tx,actor,target);await recalculateSheet(tx,actor,entry,'Submitted');await workEvent(tx,actor,employee.id,'attendance',target,'Manual time submitted',{start,end,breaks,note});await notifyManagers(tx,actor,employee,'Manual work requires review',`${employee.name} submitted a manual work interval.`);return json({ok:true,id:target,message:'Manual entry recorded and submitted for independent approval.'},201);
   }
   if(action==='correction-request'){

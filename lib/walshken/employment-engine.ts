@@ -86,21 +86,22 @@ export async function policyForPeriod(db:Db,employee:Pick<Actor,"id"|"org_id">,f
 
 export async function policyDates(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string) {
  const dates=new Map<string,{day:string;name:string;required:boolean;policyId:string}>();
- if(!employmentEngineEnabled())return {dates:[],configured:false};
+ if(!employmentEngineEnabled())return {dates:[],configured:false,startsOn:null};
  const terms=await employmentTermsOn(db,employee,to);
- if(!terms)return {dates:[],configured:false};
+ if(!terms)return {dates:[],configured:false,startsOn:null};
  const boundaries=await employmentBoundaries(db,employee,from,to,["Holiday calendar"]);
- let pending=false;
+ let pending=false,startsOn:string|null=null;
  for(const [index,boundary] of boundaries.entries()){
   const rule=await applicablePolicy(db,employee,boundary,"Holiday calendar",false);
-  if(!rule){if(await employmentTermsOn(db,employee,boundary))pending=true;continue;}
+  if(!rule){if(await employmentTermsOn(db,employee,boundary)){pending=true;startsOn??=boundary;}continue;}
+  startsOn??=boundary;
   const next=boundaries[index+1];
   for(const holiday of (rule.settings as HolidaySettings).dates){
    if(holiday.date<boundary||holiday.date>to||next&&holiday.date>=next)continue;
    dates.set(holiday.date,{day:holiday.date,name:holiday.name,required:holiday.required,policyId:rule.row.id});
   }
  }
- return {dates:[...dates.values()].sort((a,b)=>a.day.localeCompare(b.day)),configured:true,pending};
+ return {dates:[...dates.values()].sort((a,b)=>a.day.localeCompare(b.day)),configured:true,pending,startsOn};
 }
 
 export async function assertEmploymentPeriod(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string,allowDatedVersions=false) {

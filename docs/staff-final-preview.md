@@ -4,6 +4,14 @@
 
 The candidate is based on production commit `c2fd6247ab79765124c0fc4a0bc5ce159c5f1477`. Its scope is the existing Vercel `walshken` project's `codex/walshken-role-qa` branch and the isolated `walshken_role_qa` schema and runtime role in the existing Supabase project. Production release approval is separate.
 
+## Connected employment workflows
+
+This preview applies the employee's legally assessed assignment on the relevant date through the calendar, shifts, clock-in, breaks and payroll setup. Calendar country, region and jurisdiction filters evaluate event dates, including a transfer inside a single calendar view. Relevant company closures appear for employees on dated policies as well as on the original Canadian calendar. A shift spanning incompatible work policy versions must be split at the boundary. A published shift does not freeze the legal policy for a later clock-in. Work records preserve the rule applied when the employee actually clocked in. Payroll profile and rate changes use the jurisdiction, worker classification, currency and frequency of the applicable employment assignment.
+
+The registry contains 14 Canadian, 37 Indian and 8 Pakistani jurisdiction entries. On November 25, 2026, the separate dated-policy tables had zero currently effective verified Work, Overtime, Holiday calendar, Leave or Pay standards category entries in either environment. The built-in Canadian calendars, standard Alberta policy and supported national/regional tax calculators are separate from this count. The dated rules must be populated and verified with official provisions and actual employer coverage before automated use. The detailed Canadian holiday eligibility and employer exception workflows remain narrower than the geography registry.
+
+No new vendor API is involved in calendar, attendance, leave, scheduling or the supported internal payroll workflows. Bank disbursement and statutory submissions remain outside the recorded-payment workflow and need an appropriate regulated provider only if direct execution is required. Sender verification and malware scanner provisioning are separate operational dependencies.
+
 ## Follow-up preview
 
 The public pages use the production source and assets. The QA database received a copy of the published homepage and active service/market catalog. The copy contains only public-facing fields and uses existing QA permissions. Corporate page content was compared with the live homepage, service listing, country listing, About, Contact and both customer account entry pages.
