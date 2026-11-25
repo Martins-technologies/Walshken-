@@ -127,9 +127,9 @@ export async function verifyEmployment({db,request,admin,staff,hr,person,adminId
  assert(punjab.entries.some(entry=>entry.title==='Synthetic Punjab holiday'));
  assert(!punjab.entries.some(entry=>entry.title==='Synthetic Gujarat closure'));
  const indiaProfile={...defaultPayPolicy({country:'IN',jurisdiction:'IN-GJ'}),frequency:'Monthly',reviewed:true,
-  reference:'Synthetic verified payroll profile',ruleSource:'https://labour.gov.in/',dailyHours:9,weeklyHours:48,overtimeMultiplier:'2'};
+  reference:'Synthetic verified payroll profile',ruleSource:'https://labour.gov.in/',dailyHours:9,weeklyHours:48,overtimeMultiplier:'2',vacationMode:'Salary continuation',vacationPercent:'0'};
  const pakistanProfile={...defaultPayPolicy({country:'PK',jurisdiction:'PK-PB'}),frequency:'Monthly',reviewed:true,
-  reference:'Synthetic verified successor profile',ruleSource:'https://punjablaws.gov.pk/',dailyHours:9,weeklyHours:48,overtimeMultiplier:'2'};
+  reference:'Synthetic verified successor profile',ruleSource:'https://punjablaws.gov.pk/',dailyHours:9,weeklyHours:48,overtimeMultiplier:'2',vacationMode:'Salary continuation',vacationPercent:'0'};
  const proposal={employee:actor.id,effectiveOn:today,currentId:'',note:'Dated employment association test'};
  const saved=await request('payroll/profile-save',201,admin,{...proposal,policy:indiaProfile});
  await request('payroll/profile-save',409,admin,{...proposal,effectiveOn:move,currentId:saved.id,policy:indiaProfile});
