@@ -121,6 +121,9 @@ export async function taskAction(db:Db,actor:Actor,action:string,data:Record<str
    await run(tx,"INSERT INTO task_reviews(id,org_id,task_id,actor_id,decision,note,task_revision,created_at) VALUES(?,?,?,?,?,?,?,?)",id(),actor.org_id,task.id,actor.id,decision,note,task.revision,now());await taskEvent(tx,actor,task.id,decision,note);await taskNotify(tx,actor,task.id,task.employee_id,decision==="Approved"?"Task approved":"Task changes requested",task.title);return json({ok:true,message:decision==="Approved"?"Task approved and completed.":"Task returned for changes."});
   }
   if(action==="cancel"||action==="reopen"){
+   if(action==="reopen"&&process.env.WALSHKEN_PROJECT_LIFECYCLE_ENABLED==="1"&&task.project_id&&
+      !await one(tx,"SELECT id FROM projects WHERE id=? AND org_id=? AND status='Active'",task.project_id,actor.org_id))
+     return fail(409,"Return the project to active work before reopening its task.");
    if(!manager)return fail(403,"An authorized manager must change task closure.");checkRevision(task,data.revision);const note=str(data.note,"reason",1500);
    if(action==="reopen"&&!['Completed','Cancelled'].includes(task.status))return fail(409,"This task is not closed.");if(action==="cancel"&&['Completed','Cancelled'].includes(task.status))return fail(409,"This task is already closed.");
    await stopTaskTimer(tx,actor,task,action==="cancel"?"Task cancelled":"Task reopened");

@@ -45,6 +45,8 @@ export const staffActions = {
   "privacy.dispose": "Approve record disposal",
   "audit.read": "View authorized audit history",
   "audit.export": "Export authorized audit history",
+  "projects.manage": "Manage project plans and milestones",
+  "projects.review": "Independently approve projects",
   "security.scans": "Review and retry upload scans",
 } as const;
 export const legacyPreparationActions = new Set<StaffAction>([

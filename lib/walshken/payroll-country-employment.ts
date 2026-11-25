@@ -1,4 +1,4 @@
-import {applicablePolicy,policyDates} from './employment-engine';
+import {policyForPeriod,policyDates} from './employment-engine';
 import type {PayStandards} from './employment-settings';
 import {D,toMinor} from './payroll-money';
 import {dayAdd} from './attendance-rules';
@@ -10,8 +10,7 @@ import type {PayItem,PayPeriod,PayPolicy,PayRate} from './payroll-types';
 export type CountryEmploymentContext={rules:{id:string;version:string;hash:string;source:string};standards:PayStandards;events:{day:string;name:string;required:boolean}[];decisions:PayItem[];snapshots:{day:string;eligible:boolean;basis:number;days:number;amount:number;policyId:string;hash:string}[]};
 export async function countryEmploymentContext(db:Db,actor:Actor,employee:PayrollEmployee,period:PayPeriod,policy:PayPolicy,work:DayWork[],rates:PayRate[]):Promise<CountryEmploymentContext|null>{
  if(policy.classification==='Contractor'||!nativeEngines.includes(policy.taxEngine as typeof nativeEngines[number])||employee.jurisdiction==='CA-AB')return null;
- const active=await applicablePolicy(db,employee,period.starts_on,'Pay standards');
- const end=await applicablePolicy(db,employee,period.ends_on,'Pay standards');if(active!.row.id!==end!.row.id)return fail(409,'Pay standards change within this period; calculate each effective segment in its corresponding pay period.');
+ const active=await policyForPeriod(db,employee,period.starts_on,period.ends_on,'Pay standards');
  const standards=active!.settings as PayStandards;if(standards.currency!==policy.currency)return fail(409,'Pay standards must use the employment currency.');
  if(period.pay_date>dayAdd(period.ends_on,standards.paymentDeadlineDays)&&!employee.employment_end)return fail(409,'The payment date exceeds the verified jurisdiction payment deadline.');
  const calendar=await policyDates(db,employee,period.starts_on,period.ends_on);if(!calendar.configured||calendar.pending)return fail(409,'Review applicable statutory holiday calendar coverage before payroll.');

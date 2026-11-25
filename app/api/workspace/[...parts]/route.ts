@@ -1,3 +1,4 @@
+import { projectAction, projectLifecycleEnabled } from "@/lib/walshken/projects";
 import {saveNotificationEmailPreference} from "@/lib/walshken/notification-email";
 import {privacyAction,privacyDownload} from "@/lib/walshken/staff-privacy";
 import {governanceAction} from "@/lib/walshken/staff-governance";
@@ -75,6 +76,7 @@ export async function POST(request: Request, context: Context) {
     if(area==="payroll"&&process.env.WALSHKEN_PAYROLL_ENABLED==="1")return fail(404,"Use the reviewed payroll workflow.");
     if(["employees","organization","website","integrations","holidays","communication-policy"].includes(area)) return await adminAction(db,actor,area,action,data);
     if(["attendance","timesheets","shifts","leave","corrections"].includes(area)) return await timeAction(db,actor,area,action,data);
+    if(area==="projects"&&projectLifecycleEnabled())return await projectAction(db,actor,action,data);
     if(["tasks","projects","notifications"].includes(area)) return await workAction(db,actor,area,action,data);
     if(area==="messages") return await messageAction(db,actor,action,data);
     if(area==="documents") return await documentAction(db,actor,action,data);

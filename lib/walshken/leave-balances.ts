@@ -1,5 +1,5 @@
 import {D} from './payroll-money';
-import {applicablePolicy,employmentTermsOn,policyDates} from './employment-engine';
+import {applicablePolicy,employmentTermsOn,policyDates,policyForPeriod} from './employment-engine';
 import type {LeaveSettings} from './employment-settings';
 import {all,fail,type Actor,type Db} from './server';
 import {dayAdd} from './attendance-rules';
@@ -59,9 +59,11 @@ export async function employeeLeaveBalances(db:Db,employee:LeaveEmployee,day:str
 }
 export async function validateLeaveRequest(db:Db,employee:LeaveEmployee,from:string,to:string,code:string,except=''){
  if(to<from||to>dayAdd(from,366))return fail(400,'Choose a leave interval up to one year.');
- if(!await employmentTermsOn(db,employee,from))return null;
- const first=await applicablePolicy(db,employee,from,'Leave'),last=await applicablePolicy(db,employee,to,'Leave');
- if(first!.row.id!==last!.row.id)return fail(409,'Split this leave request at the policy change date.');
+ if(!await employmentTermsOn(db,employee,from)){
+  if(await employmentTermsOn(db,employee,to))return fail(409,'Split this leave request at the employment assignment effective date.');
+  return null;
+ }
+ const first=await policyForPeriod(db,employee,from,to,'Leave');
  const settings=first!.settings as LeaveSettings,category=settings.categories.find(c=>c.code===code);
  if(!category)return fail(400,'Choose a leave category from the employee’s verified policy.');
  const dates=await policyDates(db,employee,from,to);

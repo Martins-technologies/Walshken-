@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {D} from '../lib/walshken/payroll-money.ts';
 import {nationalTaxPackages} from '../lib/walshken/payroll-national-packages.ts';
 import {nationalAnnualTax,nationalPayroll} from '../lib/walshken/payroll-tax-national.ts';
-import {canadaTaxPackages2026} from '../lib/walshken/payroll-canada-packages.ts';
+import {canadaTaxPackages2026,canadaTaxPackages2027,maintainedCanadaTaxPackages} from '../lib/walshken/payroll-canada-packages.ts';
 import {canadianAlbertaTax} from '../lib/walshken/payroll-tax-ca.ts';
 import {defaultPayPolicy} from '../lib/walshken/payroll-access.ts';
 import {zeroBalance} from '../lib/walshken/payroll-money.ts';
@@ -43,3 +43,17 @@ const qc=canadaTaxPackages2026().find(p=>p.region.code==='QC');
 const example=canadianAlbertaTax({payDate:'2026-10-01',currency:'CAD',periods:26,periodIndex:18,taxable:400000,pensionable:400000,insurable:400000,bonus:0,bonusPensionable:0,bonusInsurable:0,pretax:20000,bonusPretax:0,lastRegular:0,ytd:zeroBalance(),profile:{...profile,provincialClaim:'Custom',provincialClaimAmount:'21830',annualProvincialCredit:'975'}},qc);
 assert.equal(example.lines.find(l=>l.code==='QC').employee,44451,'Revenu Québec TP-1015.F-V 2026 Appendix 1 regular provincial withholding');
 console.log('PASS Canada 13 regional packages; India new/old tax and rebate boundaries; Pakistan fiscal slabs; contribution caps, rounding, EPS split, applicability validation and fiscal years');
+
+const january=canadaTaxPackages2027();
+assert.equal(new Set(january.map(p=>p.region.code)).size,12);
+assert(!maintainedCanadaTaxPackages().some(p=>p.region.code==='QC'&&p.validThrough>='2027-01-01'));
+const regular2027={payDate:'2027-01-08',currency:'CAD',periods:26,periodIndex:1,taxable:400000,pensionable:400000,insurable:400000,bonus:0,bonusPensionable:0,bonusInsurable:0,pretax:0,bonusPretax:0,lastRegular:0,ytd:zeroBalance(),profile};
+for(const province of january){
+ const computed=canadianAlbertaTax(regular2027,province);
+ assert.equal(computed.lines.find(row=>row.code==='CPP').employee,22226);
+ assert.equal(computed.lines.find(row=>row.code==='EI').employee,6560);
+ assert(computed.lines.find(row=>row.code===province.region.code).employee>0);
+ assert.throws(()=>canadianAlbertaTax({...regular2027,payDate:'2026-12-31'},province),/Rates are never rolled forward/);
+}
+assert.throws(()=>canadianAlbertaTax({...regular2027,ytd:{...zeroBalance(),qpp:100}},january[0]),/Québec transfer/);
+console.log('PASS January 2027 Canadian packages, exact CPP and EI amounts, expiry and Québec transfer gates');

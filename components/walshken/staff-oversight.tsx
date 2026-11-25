@@ -13,6 +13,7 @@ export type ManagementData = {
   anniversaries: RecordRow[];
   securityEvents: RecordRow[];
   files: RecordRow[];
+  workExceptions?: RecordRow[] | null;
 };
 
 type Metric = [string, string, string];
@@ -49,7 +50,9 @@ export function StaffOversight({data}: {data:ManagementData}) {
         <div><h3>Next work anniversaries</h3><Table rows={data.anniversaries} columns={[{key:"name",title:"Employee"},{key:"hire_date",title:"Hire anniversary",render:row=>String(row.hire_date).slice(5)}]} empty="No upcoming anniversaries"/></div>
       </div>
     </Panel>
-    <Panel title="Attendance and approvals"><Metrics data={data.attendance} items={attendance}/></Panel>
+    <Panel title="Attendance and approvals"><Metrics data={data.attendance} items={attendance}/>
+      {data.workExceptions && <WorkExceptions rows={data.workExceptions} from={data.day.slice(0,7)+"-01"} through={data.day}/>}
+    </Panel>
     <Panel title="Operations"><Metrics data={data.work} items={operations}/></Panel>
     <Panel title="Payroll" note="Draft gross estimates by currency. Final records are in Payroll management." action={<a href="/staff/payroll" className="text-link">Payroll history</a>}>
       <Table rows={data.payroll} columns={[
@@ -68,4 +71,21 @@ export function StaffOversight({data}: {data:ManagementData}) {
       </div>
     </Panel>
   </>;
+}
+
+
+export function WorkExceptions({ rows, from, through, drillDown = true }: {rows:RecordRow[];from:string;through:string;drillDown?:boolean}) {
+  const totals = ["Missing timesheet","Attendance follow-up"].map(issue => [issue, rows.find(row=>row.issue===issue)?.issue_count ?? 0]);
+  const reviewUrl="/staff/approvals?"+new URLSearchParams({from,to:through,team:"1",exceptions:"1"});
+  return <section className="work-exceptions">
+    <h3>Expected time records</h3>
+    <p>Closed attendance without a timesheet is separate from a past shift with no attendance to verify.</p>
+    <p>{dateText(from)} – {dateText(through)} · {totals.map(([label,count])=>`${label}: ${count}`).join(" · ")}</p>
+    <Table rows={rows.slice(0,drillDown?6:150)} columns={[
+      {key:"name",title:"Employee"}, {key:"work_date",title:"Work date",render:row=>dateText(row.work_date)},
+      {key:"issue",title:"Needs follow-up"},
+      {key:"shift_id",title:"Schedule",render:row=>row.shift_id?"Published shift":"Unscheduled work"},
+    ]} empty="No expected time records are missing in this period"/>
+    {drillDown && <a className="text-link" href={reviewUrl}>Review expected time records</a>}
+  </section>;
 }

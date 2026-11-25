@@ -3,8 +3,8 @@ import {canManage,canPayroll,canSuper,fail,one,scope,type Actor,type Db} from '.
 
 type Clause={sql:string;args:unknown[]};
 const ownActions=new Set<StaffAction>(['people.read','attendance.read','attendance.edit','leave.read','leave.manage','shifts.read','timesheets.read','payroll.read','payroll.salary','payroll.payslips','payroll.export','payroll.audit']);
-const personnelAdmin=new Set<StaffAction>(['attendance.corrections','attendance.policy','people.edit','people.employment','people.sensitive','people.documents','people.status','people.compensation']);
-const managers=new Set<StaffAction>(['people.read','attendance.read','attendance.edit','attendance.approve','shifts.read','timesheets.read','leave.read','leave.manage','leave.approve','shifts.manage']);
+const personnelAdmin=new Set<StaffAction>(['projects.review','attendance.corrections','attendance.policy','people.edit','people.employment','people.sensitive','people.documents','people.status','people.compensation']);
+const managers=new Set<StaffAction>(['projects.manage','people.read','attendance.read','attendance.edit','attendance.approve','shifts.read','timesheets.read','leave.read','leave.manage','leave.approve','shifts.manage']);
 const superOnlyDefault=new Set<StaffAction>(['payroll.employer','payroll.employer.review','people.create','people.jurisdiction','payroll.providers','privacy.manage','privacy.export','privacy.dispose','audit.read','audit.export','security.scans']);
 
 export function actionScope(actor:Actor,action:StaffAction,alias='e',includeSelf=true):Clause {

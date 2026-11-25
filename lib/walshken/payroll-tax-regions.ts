@@ -11,7 +11,7 @@ export type CanadaRegionSettings={
 };
 type Decimal=InstanceType<typeof D>;
 const positive=(v:Decimal)=>D.max(0,v);
-export function provincialAnnual(A:Decimal,credits:{cpp:Decimal;ei:Decimal},gross:Decimal,profile:PayPolicy['taxProfile'],basicFederal:Decimal,table:[number,string,number][],settings:CanadaRegionSettings){
+export function provincialAnnual(A:Decimal,credits:{cpp:Decimal;ei:Decimal},gross:Decimal,profile:PayPolicy['taxProfile'],basicFederal:Decimal,table:[number,string,number][],settings:CanadaRegionSettings,constants={cea:1501,abSupplementThreshold:4896,abSupplementRate:".25"}){
  const s=settings,native=profile.native??{};
  let basic=new D(s.basic);
  if(s.phaseFrom!==undefined&&s.phaseTo!==undefined)basic=basic.sub(D.min(basic.sub(s.basicMinimum??0),positive(A.sub(s.phaseFrom)).mul(basic.sub(s.basicMinimum??0)).div(s.phaseTo-s.phaseFrom)));
@@ -20,8 +20,8 @@ export function provincialAnnual(A:Decimal,credits:{cpp:Decimal;ei:Decimal},gros
  const annual=s.code==='QC'?positive(A.sub(D.min(gross.mul(s.workersRate??'.06'),s.workersMaximum??1450)).sub(String(native.quebecAnnualDeduction??'0'))):A;
  const band=[...table].reverse().find(row=>annual.gte(row[0]))!;
  let tax=positive(annual.mul(band[1]).sub(band[2]).sub((s.code==='QC'?claim:claim.add(credits.cpp).add(credits.ei)).mul(table[0][1])).sub(profile.annualProvincialCredit));
- if(s.employmentCredit)tax=positive(tax.sub(D.min(1501,gross).mul(table[0][1])));
- if(s.code==='AB')tax=positive(tax.sub(positive(claim.add(credits.cpp).add(credits.ei).mul(table[0][1]).sub(4896)).mul('.25')));
+ if(s.employmentCredit)tax=positive(tax.sub(D.min(constants.cea,gross).mul(table[0][1])));
+ if(s.code==='AB')tax=positive(tax.sub(positive(claim.add(credits.cpp).add(credits.ei).mul(table[0][1]).sub(constants.abSupplementThreshold)).mul(constants.abSupplementRate)));
  const surtax=(s.surtax??[]).reduce((total,row)=>total.add(positive(tax.sub(row.threshold)).mul(row.rate)),new D(0));
  tax=tax.add(surtax);
  if(s.reduction&&A.lte(s.reduction.through))tax=positive(tax.sub(positive(new D(s.reduction.amount).sub(positive(A.sub(s.reduction.from)).mul(s.reduction.rate)))));

@@ -50,3 +50,57 @@ export function canadaTaxPackages2026():CanadaAlbertaParameters[]{
  }
  return versions;
 }
+
+// CRA T4127, 124th edition, chapter 8. The published guide flags proposed
+// changes. Keep the package versioned so later releases never rewrite 2026.
+export const craJanuary2027 = 'https://www.canada.ca/en/revenue-agency/services/forms-publications/payroll/t4127-payroll-deductions-formulas/t4127-jan/t4127-jan-payroll-deductions-formulas-computer-programs.html';
+const brackets2027: Record<string, [number, string, number][]> = {
+ Federal: [[0,"0.1400",0],[60044,"0.2050",3903],[120088,"0.2600",10508],[186157,"0.2900",16092],[265203,"0.3300",26701]],
+ AB: [[0,"0.0800",0],[62424,"0.1000",1248],[157344,"0.1200",4395],[188813,"0.1300",6283],[251750,"0.1400",8801],[377625,"0.1500",12577]],
+ BC: [[0,"0.0560",0],[50363,"0.0770",1058],[100728,"0.1050",3878],[115648,"0.1229",5948],[140430,"0.1470",9332],[190405,"0.1680",13331],[265545,"0.2050",23156]],
+ MB: [[0,"0.1080",0],[47000,"0.1275",917],[100000,"0.1740",5567]],
+ NB: [[0,"0.0940",0],[53693,"0.1400",2470],[107388,"0.1600",4618],[198902,"0.1950",11579]],
+ NL: [[0,"0.0870",0],[46152,"0.1450",2677],[92303,"0.1580",3877],[164792,"0.1780",7173],[230710,"0.1980",11787],[294734,"0.2080",14734],[589469,"0.2130",17681],[1178938,"0.2180",23576]],
+ NS: [[0,"0.0879",0],[32080,"0.1495",1976],[64160,"0.1667",3080],[100827,"0.1750",3917],[162624,"0.2100",9608]],
+ NT: [[0,"0.0590",0],[54381,"0.0860",1468],[108765,"0.1220",5384],[176827,"0.1405",8655]],
+ NU: [[0,"0.0400",0],[57252,"0.0700",1718],[114503,"0.0900",4008],[186156,"0.1150",8662]],
+ ON: [[0,"0.0505",0],[55023,"0.0915",2256],[110049,"0.1116",4468],[150000,"0.1216",5968],[220000,"0.1316",8168]],
+ PE: [[0,"0.0950",0],[33928,"0.1347",1347],[65820,"0.1660",3407],[106890,"0.1762",4497],[142520,"0.1900",6464],[200000,"0.2000",8464]],
+ SK: [[0,"0.1050",0],[55950,"0.1250",1119],[159856,"0.1450",4316]],
+ YT: [[0,"0.0640",0],[60044,"0.0900",1561],[120088,"0.1090",3843],[186157,"0.1280",7380],[500000,"0.1500",18380]],
+};
+const basic2027: Record<string, number> = {
+ AB:23225, BC:13216, MB:15780, NB:14019, NL:15495, NS:12350,
+ NT:18672, NU:20170, ON:13261, PE:15000, SK:21411, YT:16879,
+};
+
+export function canadaTaxPackages2027(): CanadaAlbertaParameters[] {
+ // Revenu Québec's 2027 provincial withholding formula was still pending
+ // when this package was verified. CRA values alone cannot supply it.
+ return regions.filter(region => region.code !== 'QC').map(region => {
+  const regional = structuredClone(region);
+  regional.basic = basic2027[region.code];
+  if (region.code === 'BC') regional.reduction = {amount:690,from:25570,through:44952,rate:'.0356'};
+  if (region.code === 'ON') {
+   regional.surtax = [{threshold:5940,rate:'.20'},{threshold:7603,rate:'.36'}];
+   regional.dependantReduction = {basic:306,perDependant:566};
+  }
+  if (region.code === 'YT') {
+   regional.basicMinimum=15214;
+   regional.phaseFrom=186157;
+   regional.phaseTo=265203;
+  }
+  return {
+   ...structuredClone(canada2026), version:`CRA-T4127-2027-${region.code}-JAN-v1`,
+   source:craJanuary2027, year:2027, validFrom:'2027-01-01', validThrough:'2027-12-31',
+   ympe:76700, yampe:87400, cppRate:'.0575', cppBaseRate:'.0475', cppMax:'4209.00', cpp2Max:428,
+   eiRate:'.0164', eiMax:'1161.12', bpaMax:16879, bpaMin:15214, cea:1540,
+   bpaPhaseStart:186157, bpaPhaseEnd:265203, abSupplementThreshold:4993.92,
+   abClaim:regional.basic, federalBrackets:brackets2027.Federal, provincialBrackets:brackets2027[region.code], region:regional,
+  };
+ });
+}
+
+export function maintainedCanadaTaxPackages() {
+ return [...canadaTaxPackages2026(), ...canadaTaxPackages2027()];
+}

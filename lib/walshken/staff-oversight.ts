@@ -1,3 +1,4 @@
+import { expectedTimesheets, expectedTimesheetsEnabled } from "./expected-timesheets";
 import {actionScope,hasAction} from './staff-authority';
 import { all, one, run, id, now, digest, orgId, audit, date, integer, str, fail, json, requireSuper, type Actor, type Db } from "./server";
 import { localDate } from "./work";
@@ -119,5 +120,6 @@ export async function managementOverview(db: Db, actor: Actor) {
   ]);
   const files = documentsEnabled() ? await all(db,`SELECT d.id,e.name,d.action,d.created_at FROM doc_events d JOIN employees e ON e.id=d.actor_id
     WHERE d.org_id=? ORDER BY d.created_at DESC LIMIT 8`,actor.org_id) : [];
-  return {day,people,attendance,work,security,payroll,nextPay,joiners,anniversaries,securityEvents,files};
+  const workExceptions = workforceEnabled() && expectedTimesheetsEnabled() ? await expectedTimesheets(db,actor,start,day) : null;
+  return {day,people,attendance,work,security,payroll,nextPay,joiners,anniversaries,securityEvents,files,workExceptions};
 }

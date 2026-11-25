@@ -1,4 +1,5 @@
 "use client";
+import {ProjectsWorkspace,type ProjectsData} from "./projects";
 import {StaffPrivacy,type PrivacyData} from "./staff-privacy";
 import {StaffCalendar} from "./staff-calendar";
 import type {StaffCalendarData} from "@/lib/walshken/staff-calendar-types";
@@ -19,6 +20,7 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  managedProjects?:boolean;
   notificationEmail?:{enabled:boolean;revision:number;providerConfigured:boolean;deliveries:RecordRow[]}|null;
   privacy?:boolean;events?:RecordRow[];categories?:readonly string[];actorId?:string;canManage?:boolean;canExport?:boolean;canDispose?:boolean;
   retention?:import("./retention-management").RetentionData|null;
@@ -246,6 +248,7 @@ export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:st
   if(section==="calendar")return <Calendar actor={actor} data={data}/>;
   if(section==="messages")return <Messages actor={actor} data={data} refresh={refresh}/>;
   if(section==="documents")return <DocumentView actor={actor} data={data} refresh={refresh}/>;
+  if(section==="projects"&&data.managedProjects)return <ProjectsWorkspace data={data as unknown as ProjectsData} refresh={refresh} setQuery={setQuery}/>;
   if(section==="projects")return <Panel title="Projects">{manages(actor)&&<Disclosure title="Create project"><ActionForm path="projects/add" fields={[field("name","Project name"),field("description","Description","textarea",false)]} submit="Create project" refresh={refresh}/></Disclosure>}
     <Table rows={rows} columns={[column("name","Project"),column("description","Description"),column("tasks","Tasks"),statusColumn]} empty="No projects assigned"/></Panel>;
   if(section==="calls")return <Calls actor={actor} data={data} refresh={refresh}/>;

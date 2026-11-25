@@ -1,0 +1,58 @@
+# Walshken staff acceptance preview
+
+25 November 2026
+
+The candidate is based on production commit `c2fd6247ab79765124c0fc4a0bc5ce159c5f1477`. Its scope is the existing Vercel `walshken` project's `codex/walshken-role-qa` branch and the isolated `walshken_role_qa` schema and runtime role in the existing Supabase project. Production release approval is separate.
+
+## Review paths
+
+| Area | Where to test | What to verify |
+| --- | --- | --- |
+| Projects | Staff → Projects | Create a dated project, assign an owner, add and complete milestones, close related tasks, submit, return/approve with an independent account, archive and restore. Search and filter by name, status and deadline. |
+| Time follow-up | Overview → Expected time records → Review exceptions | Past published shifts and completed attendance are reconciled separately. An absence follow-up does not create paid time. Approved whole-shift leave and explicit excuses are excluded. |
+| Employment assignment | Governance → Employment policies → Employee assignments | Enter actual worksite, assessed employment jurisdiction, worker category, schedule and evidence. An actual workplace needs a geographic subdivision. Federal jurisdiction is a distinct legal selection. |
+| Policy coverage | Governance → Employment policies → Coverage | Check an effective date and see applicable version, expiry and official source. Published tax packages still require verified employee and employer inputs. A missing qualification or date blocks the relevant processing. |
+| Payroll | Salary & payroll → Employer validation, statutory inputs and payroll periods | Independently approve actual employer registrations, verified scheme applicability, facts and balances. Run the draft, reconcile it to official results, then use an independent approver and finalizer. |
+| MFA recovery | Governance, using a separate Super Admin | Verify identity outside the portal. Record an opaque case reference. Authenticate with current password and fresh MFA. Recovery revokes earlier sessions, factors and credentials, and gives a single-use code for fresh enrollment. The audit records the reference fingerprint. |
+| Email delivery | Settings → Integrations and personal notification preferences | In-app notices remain available. See [sender DNS and activation](notification-email-setup.md). Opt-in creates recipient-specific outbox state when a sender is configured. |
+| File security | Settings → Integrations, Documents and Privacy | Authorized access to existing objects remains available. New uploads require a clean scan and fail closed when the scanner is unconfigured or unhealthy. |
+
+## Module and verification scope
+
+| Staff area | Available workflows | Remaining acceptance or dependency |
+| --- | --- | --- |
+| Access and people | Passwords, MFA, activation and recovery codes, sessions, employment end and suspension, scoped employee and compensation profiles | Optional SSO configuration and live verified activation/recovery email |
+| Messaging and calls | Direct/group/project/department channels, scoped permissions, retention, document references, LiveKit meeting controls, admission, consent and recording access | Two-device media, preview webhook delivery, real recording and expiry run |
+| Documents and privacy | Private permissions, previews, key rotation, archive/export/hold, exact reviewed disposal and audit receipts | Provision and validate a persistent ClamAV gateway. External copies and backups follow their own legal retention. |
+| Tasks and projects | Task timers, reviews, document links, deadlines and new project approval workflow | Project reporting is scoped to projects, milestones and visible task totals |
+| Attendance, leave, holidays and calendar | Clocks, work/break policies, shifts, swaps, corrections, approved hours, leave accrual and reviewed adjustments, rule dates, reports | Local law and employee category coverage, automatic specialist accrual/carry, mixed-rule intervals and special schedules |
+| Payroll | Compensation history, period calculation, country methods, native and configurable additional levy assessments, approval/snapshots, payslips, recorded payments | Employer facts, supported regional laws and reconciliation. Bank movement and statutory filings use separate integrations. |
+| Administration and reporting | Scoped staff authority, payroll/privacy rules, overview exceptions, independent approvals, audit search and export | Additional statutory algorithms, cross-module grant/report coverage, complete accessibility and realistic load acceptance |
+| Reliability | Provider preflight, isolated application tests and the recovery drill below | Hosted backup/restore drill, operational recovery policy and signed-off browser/device testing |
+
+## Statutory scope
+
+| Country | Geography | Implemented methods | Approval or missing coverage |
+| --- | --- | --- | --- |
+| Canada | Ten provinces, three territories and federal employment | Fourteen holiday calendars, standard Alberta employment examples and 2026 withholding across 13 regions. January 2027 CRA package for the 12 non-Québec regions. | Québec 2027 payroll requires a reviewed Revenu Québec package. Validate tax province separately from employment jurisdiction. Review occupation exemptions, collective arrangements and special calculations, including cross-province pension adjustments. |
+| India | 28 states, eight union territories and central employment | FY 2026–27 new/old salary withholding, EPF/EPS, ESI and reviewed professional tax or extra levy configuration | Review each worksite, covered class, thresholds, wage basis, exemptions and state-specific employment and levies. Some specialist statutory calculation methods require code or a validated adapter. |
+| Pakistan | Punjab, Sindh, Khyber Pakhtunkhwa, Balochistan, Islamabad Capital Territory, Gilgit-Baltistan, Azad Jammu and Kashmir, and federal employment | Tax year 2027 salary withholding, EOBI and reviewed local scheme/levy configuration | Validate employer registrations, EOBI wage basis and provincial social-security/occupation coverage for each site. Add reviewed successor packages by fiscal year. |
+
+Country packages use payment dates. Work rules use the applicable date and preserve approved historical snapshots. Split intervals at policy or assignment boundaries where the calculation cannot safely combine rules. Super Admin can maintain supported jurisdiction, employer, classification, policy, payroll, permissions and retention configuration. Published mandatory coverage and finalized payroll have independent review and history guards. Prior-year rates are never treated as the new year's rules.
+
+Before real payroll, collect the legal employer entity and registration IDs, worksite/sector and worker categories, official applicability evidence and scheme exemptions, compensation and schedule, employee declarations, verified year-to-date opening balances, prior employer records as applicable, and signed reconciliation with an independent reviewer. The sample Canada, India and Pakistan tests exercise synthetic employers and employee inputs.
+
+## Preview database and recovery
+
+The application changes are in the workspace API, project and workforce views, employment policy resolver, country payroll packages and staff authority. Added SQL `20261125093948_project_lifecycle_and_workforce_reporting.sql` extends project records, adds private milestone rows and indexes time follow-up queries. Existing SQL `20261125075353_notification_email_outbox.sql` is installed in this preview for notification delivery and preferences. The preview rollout selects only the isolated schema, checks reciprocal production isolation and grants the new tables only to the QA runtime under row-level policies.
+
+Supabase database backups contain Storage metadata. Protect the private document, recording and export bytes with separate backups.
+
+1. Establish approved recovery objectives, custodians and encrypted destinations for the project. Capture a consistent logical database export with the supported Supabase or PostgreSQL tool. Capture private objects separately with a manifest of keys, versions, sizes and content hashes. Store the two artifacts and metadata under a common checkpoint ID.
+2. Verify the deployment build and exact migration versions alongside the backup. Keep DB role provisioning and integration encryption keys in the authorized secret store. Exclude secrets from logs, screenshots and ordinary backup documentation.
+3. Restore first into a disposable database schema and private bucket with fresh test credentials. Replay the schema/data in dependency order, apply the intended grants and row policies, restore the private objects, and test authorization and content hashes.
+4. Verify payroll snapshot totals, one representative file and version from each protected bucket, a disposable meeting recording, login/MFA and role boundaries. Compare the manifests and record restore time, missing data and corrective steps.
+5. Preserve documented legal holds and approved disposal receipts during restoration. Use an authorized process to reconcile objects/data created or disposed of after the backup before exposing any recovered service.
+6. Delete disposable drill assets only after recording acceptance. A production restore or production promotion requires separate owner approval.
+
+[Database backup and restore reference](https://supabase.com/docs/guides/platform/backups) · [Private storage object export reference](https://supabase.com/docs/guides/storage/management/download-objects)

@@ -123,7 +123,8 @@ export async function governanceAction(db: Db, actor: Actor, action: string, dat
     await run(tx,"DELETE FROM staff_recovery_codes WHERE employee_id=?",target);
     await run(tx,"DELETE FROM staff_mfa WHERE employee_id=?",target);
     await run(tx,"INSERT INTO invitations(id,employee_id,code_hash,expires_at) VALUES(?,?,?,?)",id(),target,await digest(code),new Date(Date.now()+30*60_000).toISOString());
-    await audit(tx,actor,"MFA recovery authorized; prior sessions and credentials revoked","employee",target).run();
+    const evidenceHash = await digest(reference);
+    await audit(tx,actor,`MFA recovery authorized · identity reference SHA-256 ${evidenceHash}`,"employee",target).run();
     return json({ok:true,code,message:"Recovery code created. It expires in 30 minutes. The employee will enroll a fresh authenticator."});
   });
 }

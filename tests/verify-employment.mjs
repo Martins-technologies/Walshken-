@@ -55,13 +55,14 @@ export async function verifyEmployment({db,request,admin,staff,hr,person,adminId
  await call('jurisdiction-verify',{id:calendar.id,reason:'Independent synthetic date fixture review'},200,reviewer);
  const dates=await policyDates(db,actor,today,dayAdd(today,7));
  assert.equal(dates.dates.filter(row=>row.day===holiday).length,1);
+ assert.equal((await policyDates(db,actor,today,dayAdd(today,63))).pending,true,'Expired mandatory calendar coverage is surfaced');
  const result=await request('view/calendar?'+new URLSearchParams({mode:'admin',from:today,to:dayAdd(today,7),types:'statutory',country:'IN',employee:indian.id}),200,admin);
  assert.equal(result.calendar.entries.filter(row=>row.title==='Synthetic regional test holiday').length,1);
  const overtime=await draft('Overtime',{dailyHours:9,weeklyHours:48,multiplier:'2',weekStart:1});
  await call('jurisdiction-verify',{id:overtime.id,reason:'Independent synthetic overtime fixture review'},200,reviewer);
  assert.equal((await applicablePolicy(db,actor,today,'Overtime')).settings.multiplier,'2');
  const settings=(await call('employment-coverage',{employee:indian.id,day:today})).coverage;
- assert.equal(settings.find(row=>row.category==='Leave').status,'PENDING LEGAL VERIFICATION');
+ assert.equal(settings.find(row=>row.category==='Leave').status,'Pending legal verification');
  await assert.rejects(()=>db.prepare("UPDATE staff_employment_terms SET country='CA' WHERE employee_id=?",[indian.id]).run(),/immutable/i);
  await assert.rejects(()=>db.prepare("UPDATE staff_jurisdiction_versions SET settings='{}' WHERE id=?",[w.id]).run(),/immutable/i);
  const leave=await draft('Leave',{workdays:[1,2,3,4,5],dayMinutes:480,yearStartMonth:1,proration:'None',categories:[{code:'ANNUAL',name:'Vacation',paid:true,annualMinutes:4800,carryMinutes:960,accrual:'Annual',minimumServiceDays:0}]});

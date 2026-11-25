@@ -16,7 +16,7 @@ const suites = {
   employment: ["tests/verify-holidays.mjs", readiness],
   "country-payroll": ["tests/verify-country-payroll.mjs"],
   enterprise: ["tests/verify-holidays.mjs", enterprise],
-  completion: ["tests/verify-holidays.mjs", { ...enterprise, WALSHKEN_TEST_SOURCE: "1" }],
+  completion: ["tests/verify-holidays.mjs", { ...enterprise, WALSHKEN_TEST_SOURCE: "1", WALSHKEN_TEST_FINAL_OPS: "1" }],
 };
 
 const requested = process.argv.slice(2);

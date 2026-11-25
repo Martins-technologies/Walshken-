@@ -1,3 +1,4 @@
+import { projectLifecycleEnabled, projectsView } from "./projects";
 import {notificationEmailData} from "./notification-email";
 import {enterpriseEnabled} from './payroll-statutory';
 import {privacyData} from './staff-privacy';
@@ -109,7 +110,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
   }
   if(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section)){const query=new URLSearchParams(params);if(!query.has("team")&&["scheduling","approvals","reports","holidays"].includes(section))query.set("team","1");return workforceData(db,actor,query);}
   if(section==="tasks") return tasksEnabled()?taskDashboard(db,actor,params):json({rows:await taskRows(db,actor),staff:canManage(actor)?await staffChoices(db,actor):[],projects:await projectRows(db,actor)});
-  if(section==="projects") return json({rows:await projectRows(db,actor)});
+  if(section==="projects") return projectLifecycleEnabled()?projectsView(db,actor,params):json({rows:await projectRows(db,actor)});
   if(["attendance","shifts","scheduling","timesheets","approvals","leave"].includes(section)){
     const rows=await timeRows(db,actor,section);
     const scoped=scope(actor,"e",false);

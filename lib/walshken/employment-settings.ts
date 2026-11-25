@@ -69,7 +69,10 @@ export function validateCanadaTaxParameters(v:Record<string,unknown>,regional=fa
  const year=integer(v.year,"Canadian tax year",2026,2100);
  if(!regional&&(v.validFrom!==year+"-01-01"||v.validThrough!==year+"-12-31")||regional&&(!(String(v.validFrom)>=year+"-01-01"&&String(v.validThrough)<=year+"-12-31"&&String(v.validFrom)<=String(v.validThrough))))return fail(400,"An annual tax version must explicitly cover its calendar year.");
  const result={...v,year,version:str(v.version,"tax parameter version",100),source:str(v.source,"tax source",1500),validFrom:String(v.validFrom),validThrough:String(v.validThrough)} as CanadaAlbertaParameters;
- for(const key of ["ympe","yampe","cpp2Max","bpaMax","bpaMin","abClaim","cea","cppExemption","bpaPhaseStart","bpaPhaseEnd","abSupplementThreshold","bonusFlatThreshold"] as const)result[key]=integer(v[key],key,0,10_000_000);
+ for(const key of ["ympe","yampe","cpp2Max","bpaMax","bpaMin","abClaim","cea","cppExemption","bpaPhaseStart","bpaPhaseEnd","bonusFlatThreshold"] as const)result[key]=integer(v[key],key,0,10_000_000);
+ const threshold=String(v.abSupplementThreshold);
+ if(!/^\d+(?:\.\d{1,2})?$/.test(threshold)||Number(threshold)>10000000)return fail(400,"Invalid Alberta supplemental credit threshold.");
+ result.abSupplementThreshold=Number(threshold);
  for(const key of ["cppRate","cppBaseRate","eiRate","cppMax","eiMax","cpp2Rate","eiEmployerMultiplier","abSupplementRate","bonusFlatRate"] as const){
   const raw=str(v[key],key,30);
   if(!/^(?:\d+|\d*\.\d{1,8})$/.test(raw)||new D(raw).lt(0)||new D(raw).gt(key.endsWith('Rate')?1:key==='eiEmployerMultiplier'?5:10000000))return fail(400,"Invalid tax rate or annual maximum.");

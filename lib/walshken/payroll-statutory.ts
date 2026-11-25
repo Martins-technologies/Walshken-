@@ -1,7 +1,7 @@
 import {employerValidationContext,validateNationalApplicability} from './employer-validation';
 import {all,fail,one,type Actor,type Db} from './server';
 import {applicablePolicy,employmentTermsOn} from './employment-engine';
-import {canadaTaxPackages2026} from './payroll-canada-packages';
+import {maintainedCanadaTaxPackages} from './payroll-canada-packages';
 import {nationalTaxPackages} from './payroll-national-packages';
 import {nationalPayroll,validateNationalElection,type NationalElection,type NationalTaxPackage} from './payroll-tax-national';
 import {canadianAlbertaTax,type CanadaAlbertaParameters,type CanadaTaxInput} from './payroll-tax-ca';
@@ -19,7 +19,7 @@ export async function statutoryContext(db:Db,actor:Actor,employee:PayrollEmploye
  const category=country==='CA'?'Canada payroll':country==='IN'?'India payroll':'Pakistan payroll';
  const active=await applicablePolicy(db,employee,p.pay_date,category,false,country==='CA'?'CA-'+region:undefined);
  if(country==='CA'){
-  const parameters=(active?.settings??canadaTaxPackages2026().find(r=>r.region?.code===region&&p.pay_date>=r.validFrom&&p.pay_date<=r.validThrough)) as CanadaAlbertaParameters|undefined;
+  const parameters=(active?.settings??maintainedCanadaTaxPackages().find(r=>r.region?.code===region&&p.pay_date>=r.validFrom&&p.pay_date<=r.validThrough)) as CanadaAlbertaParameters|undefined;
   if(!parameters||parameters.region?.code!==region)return fail(409,'Choose the actual tax province and activate its verified payment-date rule package.');
   return {employer,country,parameters,versionId:active?.row.id??parameters.version,election:null,input:null,ledger:[],fiscal:fiscalYear(country,p.pay_date)};
  }
