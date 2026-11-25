@@ -7,21 +7,21 @@ export type CanadaRegionSettings={
  surtax?:{threshold:number;rate:string}[];
  health?:{from:number;base:number;rate:string;cap:number}[];
  dependantReduction?:{basic:number;perDependant:number};employmentCredit?:boolean;
- qpRate?:string;qpEmployerRate?:string;qpMax?:string;workersRate?:string;workersMaximum?:number;
+ federalTaxMultiplier?:string;bonusLowRate?:string;qpRate?:string;qpEmployerRate?:string;qpMax?:string;qpInsurableMax?:string;workersRate?:string;workersMaximum?:number;
 };
 type Decimal=InstanceType<typeof D>;
 const positive=(v:Decimal)=>D.max(0,v);
-export function provincialAnnual(A:Decimal,credits:{cpp:Decimal;ei:Decimal},gross:Decimal,profile:PayPolicy['taxProfile'],basicFederal:Decimal,table:[number,string,number][],settings:CanadaRegionSettings){
+export function provincialAnnual(A:Decimal,credits:{cpp:Decimal;ei:Decimal},gross:Decimal,profile:PayPolicy['taxProfile'],basicFederal:Decimal,table:[number,string,number][],settings:CanadaRegionSettings,parameters?:{companyConfigured?:true;cea:number;abSupplementThreshold:number;abSupplementRate:string}){
  const s=settings,native=profile.native??{};
  let basic=new D(s.basic);
- if(s.phaseFrom!==undefined&&s.phaseTo!==undefined)basic=basic.sub(D.min(basic.sub(s.basicMinimum??0),positive(A.sub(s.phaseFrom)).mul(basic.sub(s.basicMinimum??0)).div(s.phaseTo-s.phaseFrom)));
- if(s.code==='YT')basic=basicFederal;
+ if(s.phaseFrom!==undefined&&s.phaseTo!==undefined)basic=basic.sub(D.min(basic.sub(s.basicMinimum??0),s.phaseFrom===s.phaseTo?(A.gt(s.phaseFrom)?basic.sub(s.basicMinimum??0):new D(0)):positive(A.sub(s.phaseFrom)).mul(basic.sub(s.basicMinimum??0)).div(s.phaseTo-s.phaseFrom)));
+ if(s.code==='YT'&&!parameters?.companyConfigured)basic=basicFederal;
  const claim=profile.provincialClaim==='None'?new D(0):profile.provincialClaim==='Custom'?new D(profile.provincialClaimAmount):basic;
  const annual=s.code==='QC'?positive(A.sub(D.min(gross.mul(s.workersRate??'.06'),s.workersMaximum??1450)).sub(String(native.quebecAnnualDeduction??'0'))):A;
  const band=[...table].reverse().find(row=>annual.gte(row[0]))!;
  let tax=positive(annual.mul(band[1]).sub(band[2]).sub((s.code==='QC'?claim:claim.add(credits.cpp).add(credits.ei)).mul(table[0][1])).sub(profile.annualProvincialCredit));
- if(s.employmentCredit)tax=positive(tax.sub(D.min(1501,gross).mul(table[0][1])));
- if(s.code==='AB')tax=positive(tax.sub(positive(claim.add(credits.cpp).add(credits.ei).mul(table[0][1]).sub(4896)).mul('.25')));
+ if(s.employmentCredit)tax=positive(tax.sub(D.min(parameters?.cea??1501,gross).mul(table[0][1])));
+ if(s.code==='AB')tax=positive(tax.sub(positive(claim.add(credits.cpp).add(credits.ei).mul(table[0][1]).sub(parameters?.abSupplementThreshold??4896)).mul(parameters?.abSupplementRate??'.25')));
  const surtax=(s.surtax??[]).reduce((total,row)=>total.add(positive(tax.sub(row.threshold)).mul(row.rate)),new D(0));
  tax=tax.add(surtax);
  if(s.reduction&&A.lte(s.reduction.through))tax=positive(tax.sub(positive(new D(s.reduction.amount).sub(positive(A.sub(s.reduction.from)).mul(s.reduction.rate)))));

@@ -38,6 +38,7 @@ Open the corporate homepage at `/`, the service directory at `/services`, countr
 - Private, versioned documents with server-side access checks and previews. Chat document references require both `WALSHKEN_DOCUMENTS_ENABLED=1` and `WALSHKEN_MESSAGE_DOCUMENTS_ENABLED=1`. Apply the document-reference migration first. A chat reference preserves the document’s existing permissions.
 - Secure LiveKit calls and meetings with participant roles, attendance and optional consent-based recording.
 - Reviewed payroll estimates, effective-dated rates, adjustments, payslips and country statutory packages for Canada, India and Pakistan. Employer/workplace applicability, actual employee declarations and effective coverage must be independently reviewed before finalization. Payments recorded in the app are processed separately.
+- Admin-editable finance and payroll policies with separate government references, explicit employee overrides or jurisdiction inheritance, zero-value support, and historical calculation snapshots. See [finance and payroll policy controls](docs/finance-payroll-policy-controls.md).
 - Granular sensitive-action permissions, employment-rule evidence, privacy exports and archives, legal holds, and approved original-record disposal.
 
 ## Production readiness

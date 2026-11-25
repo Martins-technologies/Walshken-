@@ -10,11 +10,15 @@ export type WorkSettings = {
 };
 export type OvertimeSettings = {dailyHours:number;weeklyHours:number;multiplier:string;weekStart:number};
 export type LeaveSettings = {workdays:number[];dayMinutes:number;yearStartMonth:number;proration:"None"|"Daily";categories:{code:string;name:string;paid:boolean;annualMinutes:number;carryMinutes:number;accrual:"Annual"|"Monthly";minimumServiceDays:number}[]};
-export type PayStandards={currency:string;minimumHourly:string;minimumMonthly:string;vacationPercent:string;longServiceYears:number;longServiceVacationPercent:string;paymentDeadlineDays:number;holidayPremiumMultiplier:string;holidayMethod:'Normal day'|'Average worked day'|'Percent of earnings';holidayWindowDays:number;holidayWindowBasis:'Before holiday'|'Complete workweeks';holidayDivisor:number;holidayPayOnNonWorkday:boolean;holidayPercent:string;minimumServiceDays:number;minimumWorkedDays:number;reportingHours:number;reportingRate:'Minimum wage'|'Ordinary wage'};
+export type PayStandards={companyConfigured?:true;currency:string;minimumHourly:string;minimumMonthly:string;vacationPercent:string;longServiceYears:number;longServiceVacationPercent:string;paymentDeadlineDays:number;holidayPremiumMultiplier:string;holidayMethod:'Normal day'|'Average worked day'|'Percent of earnings';holidayWindowDays:number;holidayWindowBasis:'Before holiday'|'Complete workweeks';holidayDivisor:number;holidayPayOnNonWorkday:boolean;holidayPercent:string;minimumServiceDays:number;minimumWorkedDays:number;eligibilityLookbackMonths?:number;regularDayLookbackWeeks?:number;regularDayMinimumOccurrences?:number;reportingHours:number;reportingRate:'Minimum wage'|'Ordinary wage'};
 export type HolidaySettings = {dates:{date:string;name:string;required:boolean}[]};
-export type PolicySettings = WorkSettings|OvertimeSettings|LeaveSettings|HolidaySettings|CanadaAlbertaParameters|NationalTaxPackage|PayStandards;
+export type PolicySettings = (WorkSettings|OvertimeSettings|LeaveSettings|HolidaySettings|CanadaAlbertaParameters|NationalTaxPackage|PayStandards)&{companyConfigured?:true};
 
 export function validateEmploymentSettings(category:EmploymentCategory,input:unknown):PolicySettings|null {
+ const settings=validatePolicySettings(category,input);
+ return settings&&input&&typeof input==='object'&&(input as {companyConfigured?:unknown}).companyConfigured===true?{...settings,companyConfigured:true}:settings;
+}
+function validatePolicySettings(category:EmploymentCategory,input:unknown):PolicySettings|null {
  if(category==="Evidence")return null;
  if(typeof input!=="object"||input===null||Array.isArray(input))return fail(400,"Provide a complete policy configuration.");
  const v=input as Record<string,unknown>;
@@ -38,8 +42,8 @@ export function validateEmploymentSettings(category:EmploymentCategory,input:unk
  }
  if(category==="Overtime") {
   const multiplier=str(v.multiplier,"overtime multiplier",20);
-  if(!/^\d+(\.\d{1,4})?$/.test(multiplier)||new D(multiplier).lt(1)||new D(multiplier).gt(10))return fail(400,"Enter an overtime multiplier from 1 to 10.");
-  return {dailyHours:integer(v.dailyHours,"daily overtime threshold",1,24),weeklyHours:integer(v.weeklyHours,"weekly overtime threshold",1,168),multiplier,weekStart:integer(v.weekStart,"workweek first day",0,6)};
+  if(!/^\d+(\.\d{1,4})?$/.test(multiplier)||new D(multiplier).lt(0)||new D(multiplier).gt(10))return fail(400,"Enter an overtime multiplier from 0 to 10.");
+  return {dailyHours:integer(v.dailyHours,"daily overtime threshold",0,24),weeklyHours:integer(v.weeklyHours,"weekly overtime threshold",0,168),multiplier,weekStart:integer(v.weekStart,"workweek first day",0,6)};
  }
  if(category==="Holiday calendar") {
   if(!Array.isArray(v.dates)||v.dates.length>500)return fail(400,"Provide up to 500 dated holidays.");
@@ -75,7 +79,7 @@ export function validateCanadaTaxParameters(v:Record<string,unknown>,regional=fa
   if(!/^(?:\d+|\d*\.\d{1,8})$/.test(raw)||new D(raw).lt(0)||new D(raw).gt(key.endsWith('Rate')?1:key==='eiEmployerMultiplier'?5:10000000))return fail(400,"Invalid tax rate or annual maximum.");
   result[key]=raw;
  }
- if(result.ympe<=result.cppExemption||result.bpaPhaseEnd<=result.bpaPhaseStart||result.yampe<result.ympe||new D(result.cppRate).lte(0)||new D(result.cppBaseRate).gt(result.cppRate)||result.bpaMin>result.bpaMax)return fail(400,"Canadian tax-year limits are inconsistent.");
+ if(result.ympe<result.cppExemption||result.bpaPhaseEnd<result.bpaPhaseStart||result.yampe<result.ympe||new D(result.cppBaseRate).gt(result.cppRate)||result.bpaMin>result.bpaMax)return fail(400,"Canadian tax-year limits are inconsistent.");
  if(!result.source.startsWith('https://www.canada.ca/')&&!(regional&&result.source.startsWith('https://www.revenuquebec.ca/')))return fail(400,"Canadian native tax parameters require an official CRA source.");
  for(const key of ["federalBrackets","provincialBrackets"] as const){
   const input=v[key];
@@ -93,13 +97,17 @@ export function validateCanadaTaxParameters(v:Record<string,unknown>,regional=fa
   const r=v.region as import('./payroll-tax-regions').CanadaRegionSettings;
   if(!r||!['AB','BC','MB','NB','NL','NS','NT','NU','ON','PE','QC','SK','YT'].includes(r.code)||!r.name)return fail(400,'Select the actual Canadian payroll tax province or territory.');
   for(const n of ['basic','basicMinimum','phaseFrom','phaseTo','workersMaximum'] as const)if(r[n]!==undefined)integer(r[n],n,0,10000000);
-  if((r.phaseFrom!==undefined||r.phaseTo!==undefined)&&!(r.phaseTo!>r.phaseFrom!))return fail(400,'Basic-amount phase-out dates are invalid.');
+  if((r.phaseFrom!==undefined||r.phaseTo!==undefined)&&!(r.phaseTo!==undefined&&r.phaseFrom!==undefined&&r.phaseTo>=r.phaseFrom))return fail(400,'Basic-amount phase-out dates are invalid.');
   const rate=(x:unknown)=>{if(!/^\d*\.?\d+$/.test(String(x))||new D(String(x)).lt(0)||new D(String(x)).gt(1))return fail(400,'Invalid Canadian regional tax rate.');};
   if(r.reduction){rate(r.reduction.rate);for(const n of ['amount','from','through'] as const)integer(r.reduction[n],n,0,10000000);}
   for(const band of r.surtax??[]){rate(band.rate);integer(band.threshold,'surtax threshold',0,10000000);}
   for(const band of r.health??[]){rate(band.rate);for(const n of ['from','base','cap'] as const)integer(band[n],n,0,10000000);}
   if(r.dependantReduction)for(const n of ['basic','perDependant'] as const)integer(r.dependantReduction[n],n,0,10000000);
-  if(r.code==='QC'){for(const n of ['qpRate','qpEmployerRate','workersRate'] as const)rate(r[n]);if(!r.qpMax||r.workersMaximum===undefined)return fail(400,'The Quebec QPIP limit and worker deduction must be supplied for this year.');}
+  if(r.code==='QC'){for(const n of ['qpRate','qpEmployerRate','workersRate'] as const)rate(r[n]);if(r.qpMax===undefined||r.workersMaximum===undefined)return fail(400,'The Quebec QPIP limit and worker deduction must be supplied for this year.');}
+  for(const key of ['federalTaxMultiplier','bonusLowRate'] as const)if(r[key]!==undefined)rate(r[key]);
+  if(r.qpMax!==undefined&&(!/^\d+(?:\.\d{1,8})?$/.test(String(r.qpMax))||new D(r.qpMax).gt(100000000)))return fail(400,'Invalid QPIP annual employee contribution maximum.');
+  if(r.qpInsurableMax!==undefined){const cap=String(r.qpInsurableMax);if(!/^\d+(?:\.\d{1,4})?$/.test(cap)||new D(cap).gt(100000000))return fail(400,'Invalid QPIP insurable earnings ceiling.');}
+  if(r.code==='QC'&&new D(r.qpRate!).eq(0)&&new D(r.qpEmployerRate!).gt(0)&&r.qpInsurableMax===undefined)return fail(400,'Set the QPIP insurable earnings ceiling when the employee rate is zero and an employer rate is used.');
   result.region=r;
  }
  return result;
@@ -109,5 +117,8 @@ function validatePayStandards(v:Record<string,unknown>):PayStandards{
  const amount=(key:string)=>{const raw=str(v[key],key,30);if(!/^\d+(?:\.\d{1,4})?$/.test(raw)||new D(raw).gt(100000000))return fail(400,'Invalid statutory earnings value.');return raw;};
  if(!['CAD','INR','PKR'].includes(String(v.currency))||!['Normal day','Average worked day','Percent of earnings'].includes(String(v.holidayMethod))||!['Minimum wage','Ordinary wage'].includes(String(v.reportingRate)))return fail(400,'Complete currency, holiday method and reporting-pay basis.');
  if(!['Before holiday','Complete workweeks'].includes(String(v.holidayWindowBasis))||typeof v.holidayPayOnNonWorkday!=='boolean')return fail(400,'Configure holiday reference-window boundaries and non-working-day entitlement.');
- return {holidayWindowBasis:v.holidayWindowBasis as PayStandards['holidayWindowBasis'],holidayDivisor:integer(v.holidayDivisor,'fixed holiday divisor, or zero for actual worked days',0,366),holidayPayOnNonWorkday:v.holidayPayOnNonWorkday,currency:String(v.currency),minimumHourly:amount('minimumHourly'),minimumMonthly:amount('minimumMonthly'),vacationPercent:amount('vacationPercent'),longServiceYears:integer(v.longServiceYears,'long service years',0,80),longServiceVacationPercent:amount('longServiceVacationPercent'),paymentDeadlineDays:integer(v.paymentDeadlineDays,'payment deadline days',0,365),holidayPremiumMultiplier:amount('holidayPremiumMultiplier'),holidayMethod:v.holidayMethod as PayStandards['holidayMethod'],holidayWindowDays:integer(v.holidayWindowDays,'holiday reference days',1,366),holidayPercent:amount('holidayPercent'),minimumServiceDays:integer(v.minimumServiceDays,'holiday service days',0,3650),minimumWorkedDays:integer(v.minimumWorkedDays,'holiday qualifying workdays',0,366),reportingHours:integer(v.reportingHours,'minimum reporting hours',0,24),reportingRate:v.reportingRate as PayStandards['reportingRate']};
+ const optional:Partial<PayStandards>={};
+ for(const [key,max] of [['eligibilityLookbackMonths',12],['regularDayLookbackWeeks',52],['regularDayMinimumOccurrences',52]] as const)if(v[key]!==undefined)optional[key]=integer(v[key],key,0,max);
+ if((optional.regularDayLookbackWeeks===undefined)!==(optional.regularDayMinimumOccurrences===undefined))return fail(400,'Supply both regular-day lookback weeks and qualifying occurrences.');
+ return {...optional,holidayWindowBasis:v.holidayWindowBasis as PayStandards['holidayWindowBasis'],holidayDivisor:integer(v.holidayDivisor,'fixed holiday divisor, or zero for actual worked days',0,366),holidayPayOnNonWorkday:v.holidayPayOnNonWorkday,currency:String(v.currency),minimumHourly:amount('minimumHourly'),minimumMonthly:amount('minimumMonthly'),vacationPercent:amount('vacationPercent'),longServiceYears:integer(v.longServiceYears,'long service years',0,80),longServiceVacationPercent:amount('longServiceVacationPercent'),paymentDeadlineDays:integer(v.paymentDeadlineDays,'payment deadline days',0,365),holidayPremiumMultiplier:amount('holidayPremiumMultiplier'),holidayMethod:v.holidayMethod as PayStandards['holidayMethod'],holidayWindowDays:integer(v.holidayWindowDays,'holiday reference days',1,366),holidayPercent:amount('holidayPercent'),minimumServiceDays:integer(v.minimumServiceDays,'holiday service days',0,3650),minimumWorkedDays:integer(v.minimumWorkedDays,'holiday qualifying workdays',0,366),reportingHours:integer(v.reportingHours,'minimum reporting hours',0,24),reportingRate:v.reportingRate as PayStandards['reportingRate']};
 }

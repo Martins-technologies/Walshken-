@@ -35,6 +35,8 @@ export async function governanceAction(db: Db, actor: Actor, action: string, dat
     await run(db,"INSERT INTO staff_privacy_acknowledgements(notice_id,employee_id,created_at) VALUES(?,?,?) ON CONFLICT DO NOTHING",notice.id,actor.id,now());
     return json({ok:true,message:"Acknowledgement saved."});
   }
+  if(action==="employment-policy-save")return employmentAction(db,actor,action,data);
+  if(["jurisdiction-verify","jurisdiction-withdraw"].includes(action))return jurisdictionAction(db,actor,action,data);
   requireSuper(actor);
   if(action.startsWith('retention-')||action.startsWith('hold-'))return retentionAction(db,actor,action,data);
   if(action.startsWith("employment-"))return employmentAction(db,actor,action,data);

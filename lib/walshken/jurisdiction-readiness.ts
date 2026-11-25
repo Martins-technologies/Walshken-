@@ -1,5 +1,6 @@
+import {requireFinancePolicyCountry,financePolicyCategories} from './finance-policies';
 import {employmentEngineEnabled} from "./employment-catalog";
-import { all, audit, fail, id, json, now, one, pick, requireSuper, run, str, type Actor, type Db } from "./server";
+import { all, audit, canSuper, fail, id, json, now, one, pick, requireSuper, run, str, type Actor, type Db } from "./server";
 import { validDay } from "./holiday-access";
 
 import { employmentCountries } from "./jurisdiction-catalog";
@@ -22,7 +23,7 @@ export function jurisdictionVersions(db: Db, actor: Actor) {
 }
 
 export async function jurisdictionAction(db: Db, actor: Actor, action: string, data: Record<string, unknown>) {
-  requireSuper(actor);
+  if(action==="jurisdiction-save")requireSuper(actor);
   return db.transaction(async tx => {
     await one(tx,"SELECT id FROM organizations WHERE id=? FOR UPDATE",actor.org_id);
     if (action === "jurisdiction-save") {
@@ -46,13 +47,15 @@ export async function jurisdictionAction(db: Db, actor: Actor, action: string, d
       return json({ok:true,message:"Draft jurisdiction evidence saved."},201);
     }
     const target=str(data.id,"jurisdiction version",80);
-    const row=await one<{created_by:string;status:string;category?:string;mandatory?:boolean;effective_from?:string}>(tx,`SELECT v.*,COALESCE((SELECT decision FROM staff_jurisdiction_decisions
+    const row=await one<{created_by:string;status:string;country:string;settings:string;category?:string;mandatory?:boolean;effective_from?:string}>(tx,`SELECT v.*,COALESCE((SELECT decision FROM staff_jurisdiction_decisions
       WHERE version_id=v.id ORDER BY created_at DESC,id DESC LIMIT 1),'Draft') AS status
       FROM staff_jurisdiction_versions v WHERE v.id=? AND v.org_id=?`,target,actor.org_id);
     if (!row) return fail(404,"Jurisdiction version unavailable.");
+    if(!canSuper(actor))await requireFinancePolicyCountry(tx,actor,row.country,row.category??'Evidence');
+    const companyPolicy=financePolicyCategories.includes(row.category as import('./employment-catalog').EmploymentCategory)&&JSON.parse(row.settings??'null')?.companyConfigured===true;
     const verify=action === "jurisdiction-verify";
     if(employmentEngineEnabled()&&row.category!=="Evidence"){
-      if(!verify&&row.mandatory&&row.status==="Verified")return fail(409,"A verified statutory policy must be superseded by a legally reviewed version. It cannot be withdrawn.");
+      if(!verify&&!companyPolicy&&row.mandatory&&row.status==="Verified")return fail(409,"A verified statutory policy must be superseded by a legally reviewed version. It cannot be withdrawn.");
       if(verify){
         const policy=await one<{jurisdiction:string;category:string;classification:string;effective_from:string;effective_through:string;predecessor_id:string|null}>(tx,"SELECT * FROM staff_jurisdiction_versions WHERE id=?",target);
         const overlap=await one(tx,`WITH RECURSIVE ancestors AS (
@@ -65,10 +68,10 @@ export async function jurisdictionAction(db: Db, actor: Actor, action: string, d
         if(overlap)return fail(409,"Overlapping approved policy versions require ordered effective dates and an explicit predecessor.");
       }
     }
-    if (verify && row.created_by===actor.id) return fail(403,"A separate Super Admin must verify the evidence.");
+    if (verify && row.created_by===actor.id) return fail(403,"A separate authorized policy administrator must review this version.");
     if (verify ? row.status!=="Draft" : row.status==="Withdrawn") return fail(409,"The version already has a decision.");
     await run(tx,"INSERT INTO staff_jurisdiction_decisions(id,version_id,decision,reason,actor_id,created_at) VALUES(?,?,?,?,?,?)",id(),target,verify?"Verified":"Withdrawn",str(data.reason,"decision evidence",2000),actor.id,now());
     await audit(tx,actor,verify?"Jurisdiction evidence verified":"Jurisdiction evidence withdrawn","jurisdiction",target).run();
-    return json({ok:true,message:verify?"Evidence verified and recorded. Payroll requires a supported calculation engine.":"Version withdrawn. Prior decisions remain in the audit history."});
+    return json({ok:true,message:verify?(companyPolicy?"Company policy reviewed and activated. Its selected values are used without government-rate clamping.":"Evidence verified and recorded. Payroll requires a supported calculation engine."):"Version withdrawn. Prior decisions remain in the audit history."});
   });
 }

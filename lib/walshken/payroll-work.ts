@@ -1,3 +1,5 @@
+import type {OvertimeSettings} from './employment-settings';
+import type {EmploymentRules} from './holiday-types';
 import {all,fail,type Actor,type Db} from './server';
 import {dailySegments,dayAdd,type WorkBreak} from './attendance-rules';
 import {D} from './payroll-money';
@@ -16,9 +18,27 @@ export async function workSources(db:Db,actor:Actor,employee:PayrollEmployee,p:P
  return {sheets,breaks,daily};
 }
 export function eligibleDate(e:PayrollEmployee,day:string){return day>=e.hire_date&&(!e.contract_start||day>=e.contract_start)&&(!e.employment_end||day<=e.employment_end);}
-export function hourlyMinor(rate:PayRate,policy:PayPolicy){return rate.rate_unit==='Hour'?new D(rate.amount_cents):rate.rate_unit==='Year'?new D(rate.amount_cents).div(52*policy.regularWeekHours):fail(409,'A fixed contract-period rate cannot be used as an hourly employee rate.');}
+export function hourlyMinor(rate:PayRate,policy:PayPolicy){if(['CAD','INR','PKR'].includes(rate.currency)&&rate.minor_unit!==2)return fail(409,'This historical pay rate uses a different currency precision. Record a reviewed replacement rate before using it in a new native payroll calculation.');return rate.rate_unit==='Hour'?new D(rate.amount_cents):rate.rate_unit==='Year'?new D(rate.amount_cents).div(52*policy.regularWeekHours):fail(409,'A fixed contract-period rate cannot be used as an hourly employee rate.');}
 export function wages(rate:PayRate,seconds:number,policy:PayPolicy,multiplier='1'){return hourlyMinor(rate,policy).mul(seconds).div(3600).mul(multiplier).toDecimalPlaces(0).toNumber();}
 export function assignOvertime(days:DayWork[],policy:PayPolicy){
  const grouped=new Map<string,DayWork[]>();for(const row of days.filter(r=>r.sheet.status==='Approved')){const values=grouped.get(row.day)??[];values.push(row);grouped.set(row.day,values);}
  const weeks=new Map<string,{worked:number;dailyOt:number;entitled:number}>();for(const [day,rows] of [...grouped.entries()].sort(([a],[b])=>a.localeCompare(b))){const eligible=rows.filter(r=>!r.holiday),paid=sum(eligible.map(r=>r.paid));if(policy.overtime==='Verified exemption'){continue;}const key=week(day,policy.workweekStart),previous=weeks.get(key)??{worked:0,dailyOt:0,entitled:0},daily=policy.dailyHours?Math.max(0,paid-policy.dailyHours*3600):0,next={worked:previous.worked+paid,dailyOt:previous.dailyOt+daily,entitled:0};next.entitled=Math.max(next.dailyOt,policy.weeklyHours?Math.max(0,next.worked-policy.weeklyHours*3600):0);let overtime=next.entitled-previous.entitled;for(const r of [...eligible].reverse()){r.ot=Math.min(r.paid,overtime);r.regular=r.paid-r.ot;overtime-=r.ot;}weeks.set(key,next);}
+}
+
+// Employee values are explicit only on newly configured override profiles. Shared
+// company versions then take priority over reference defaults; unmarked history
+// retains the former minimum-benefit merge.
+export function applyPayrollOvertime(policy:PayPolicy,overtime?:OvertimeSettings&{companyConfigured?:true},legacy?:EmploymentRules){
+ if(policy.companyConfigured&&policy.policyValueSource!=='Jurisdiction policy')return;
+ if(overtime?.companyConfigured){
+  policy.dailyHours=overtime.dailyHours;policy.weeklyHours=overtime.weeklyHours;policy.overtimeMultiplier=overtime.multiplier;policy.workweekStart=overtime.weekStart;
+ }else if(legacy?.companyConfigured){
+  policy.dailyHours=legacy.dailyOvertimeHours;policy.weeklyHours=legacy.weeklyOvertimeHours;policy.overtimeMultiplier=legacy.overtimeMultiplier;
+ }else if(overtime&&policy.policyValueSource==='Jurisdiction policy'){
+  policy.dailyHours=overtime.dailyHours;policy.weeklyHours=overtime.weeklyHours;policy.overtimeMultiplier=overtime.multiplier;policy.workweekStart=overtime.weekStart;
+ }else if(overtime){
+  policy.dailyHours=policy.dailyHours?Math.min(policy.dailyHours,overtime.dailyHours):overtime.dailyHours;
+  policy.weeklyHours=policy.weeklyHours?Math.min(policy.weeklyHours,overtime.weeklyHours):overtime.weeklyHours;
+  policy.overtimeMultiplier=D.max(new D(policy.overtimeMultiplier),new D(overtime.multiplier)).toString();policy.workweekStart=overtime.weekStart;
+ }
 }

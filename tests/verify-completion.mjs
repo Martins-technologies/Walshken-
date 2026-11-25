@@ -37,31 +37,82 @@ export async function verifyCompletion({db,request,admin,staff,hr,person,adminId
  await db.prepare("UPDATE employees SET status='Suspended',employment_status='Ended',employment_end='2001-01-01' WHERE id=?",[record.id]).run();await dispose('Employee records');assert.equal((await db.prepare('SELECT email FROM employees WHERE id=?',[record.id]).first()).email,'erased-'+record.id+'@invalid.example');assert.equal(await db.prepare('SELECT employee_id FROM credentials WHERE employee_id=?',[record.id]).first(),null);
  console.log('PASS original attendance/timesheet and legally matured finalized-payroll deletion, private document/version cycles, durable S3 failure/retry/completion, leave removal and ended-account identity/credential destruction');
  await verifyEmployerWorkflows({db,request,admin,hr,person,runId,staff});
+ await verifyEmployerWorkflows({db,request,admin,hr,person,runId,staff,companyRates:true});
 }
 
 async function verifyEmployerWorkflows(context){
- const {db,request,admin,hr,staff}=context,{employerSchemeCodes,nativeEmployerCodes}=await import('../lib/walshken/employer-catalog.ts'),{cumulativeLevy,quebecHsfRate}=await import('../lib/walshken/employer-levies.ts'),{verifyCountryWorkflows}=await import('./verify-enterprise.mjs');
+ const {db,request,admin,hr,staff,companyRates=false}=context,{employerSchemeCodes,nativeEmployerCodes}=await import('../lib/walshken/employer-catalog.ts'),{cumulativeLevy,quebecHsfRate}=await import('../lib/walshken/employer-levies.ts'),{verifyCountryWorkflows}=await import('./verify-enterprise.mjs');
  const grant=capability=>request('governance/permission-save',200,admin,{principalType:'employee',principal:hr.id,scopeType:'organization',scopeId:'',capability,effect:'allow'});await grant('payroll.employer.review');await grant('payroll.employer');
+ if(companyRates)await grant('payroll.rules');
  process.env.WALSHKEN_EMPLOYER_VALIDATION_ENABLED='1';await request('payroll/employer-save',403,staff,{configuration:{}});await request('payroll/employer-save',400,admin,{configuration:{}});
  const profiles=new Map();
- await verifyCountryWorkflows({...context,runId:context.runId+'-employer',beforeCalculate:async({pa,employee,period,country,jurisdiction})=>{
+ await verifyCountryWorkflows({...context,runId:context.runId+(companyRates?'-emp0':'-employer'),beforeCalculate:async({pa,employee,period,country,jurisdiction})=>{
   await pa('calculate',{period:period.id,employee:employee.id},409);
   const source=country==='CA'?'https://www.canada.ca/':country==='IN'?'https://labour.gov.in/':'https://ophrd.gov.pk/';
   const config={country,legalName:'SYNTHETIC QA '+country+' employer',registration:'SYNTHETIC-'+country,address:'Synthetic isolated test address',entityType:'Company',sector:'Synthetic standard employee fixture',jurisdictions:[jurisdiction],headcount:100,maximumHeadcount:100,coverageThreshold:country==='PK'?10:20,establishmentPreviouslyCovered:true,payrollAccount:'SYNTHETIC-PAYROLL',reference:'Synthetic employer verification fixture only',schemes:employerSchemeCodes(country,[jurisdiction]).map(code=>({code,label:code,status:['WCB','LABOUR_WELFARE','PROVINCIAL_SOCIAL_SECURITY'].includes(code)?'Covered':nativeEmployerCodes[country].includes(code)&&code!=='PROFESSIONAL_TAX'?'Covered':'Not applicable',method:nativeEmployerCodes[country].includes(code)?'Native payroll':'Additional levy',registration:'SYNTHETIC-'+code,source,reference:'Synthetic coverage evidence only',...(['WCB','LABOUR_WELFARE','PROVINCIAL_SOCIAL_SECURITY'].includes(code)?{levy:{basis:'Gross',employeeRate:'0',employerRate:'.01',annualEmployeeCeiling:'0',annualEmployerExemption:'0',exemptionScope:'Employee',annualEmployerCeiling:'0',openingBasis:'0',openingEmployee:'0',openingEmployer:'0',openingAsOf:country==='CA'?'2025-12-31':country==='IN'?'2026-03-31':'2026-06-30',annualReconciliation:false,employeeAnnualExemption:'0',employeeAnnualThreshold:'0',source}}:{})})),...(country==='CA'?{canada:{eiEmployerMultiplier:'1.4',reducedEiAuthority:'',quebecAccount:'',worldwideAnnualPayroll:'1000000',hsfSector:'General',hsfExemptionAuthority:''}}:country==='IN'?{india:{pan:'AAAAA0000A',tan:'AAAA00000A',epfContributionRate:'0.12',reducedEpfAuthority:'',esiNotifiedEstablishment:true,esiHeadcountThreshold:10}}:{pakistan:{ntn:'SYNTHETIC-NTN',eobiWageBase:'37000',eobiWageSource:source}})};
+  if(companyRates){
+   config.registration+='-COMPANY';
+   for(const scheme of config.schemes)if(scheme.levy){scheme.levy.employeeRate='0';scheme.levy.employerRate='0';}
+   if(config.canada)config.canada.eiEmployerMultiplier='0';
+   if(config.india)config.india.epfContributionRate='0';
+   if(config.pakistan)config.pakistan.eobiWageBase='0';
+   const {validateEmployerConfiguration}=await import('../lib/walshken/employer-validation.ts');
+   assert.throws(()=>validateEmployerConfiguration(config),/nonzero contribution rate/,'Untouched legacy covered-levy validation stays intact');
+   await saveCompanyZeroPackage({db,request,admin,hr,employee,country,jurisdiction,runId:context.runId});
+  }
   const duplicate=structuredClone(config);duplicate.schemes.find(s=>s.status==='Covered'&&s.method==='Native payroll').method='Additional levy';await pa('employer-save',{configuration:duplicate,from:'2026-01-01',through:'2027-12-31',version:'Synthetic invalid duplicate deduction'},400);const omitted=structuredClone(config);omitted.schemes.pop();await pa('employer-save',{configuration:omitted,from:'2026-01-01',through:'2027-12-31',version:'Synthetic invalid omission'},400);
   await pa('employer-save',{configuration:config,from:'2026-01-01',through:'2027-12-31',version:'Unauthorized '+country},403,staff);
-  const employer=await pa('employer-save',{configuration:config,from:'2026-01-01',through:'2027-12-31',version:'Synthetic verified '+country},201);
+  const employer=await pa('employer-save',{configuration:config,from:'2026-01-01',through:'2027-12-31',version:(companyRates?'Synthetic company zero ':'Synthetic verified ')+country},201);
+  if(companyRates){const stored=await db.prepare('SELECT configuration FROM staff_employer_versions WHERE id=?',[employer.id]).first();assert.equal(JSON.parse(stored.configuration).companyConfigured,true);assert(JSON.parse(stored.configuration).schemes.filter(s=>s.levy).every(s=>s.levy.employerRate==='0'));}
   await pa('employer-review',{id:employer.id,decision:'Approved',reason:'Self review forbidden'},403);
   await pa('employer-review',{id:employer.id,decision:'Approved',reason:'Independent synthetic employer coverage verification'},200,hr);
   const facts={employerVersion:employer.id,country,jurisdiction,workerCategory:'Employee',identityVerified:true,coverageExemption:'',reference:'Synthetic employee-specific verification',levyOpenings:config.schemes.filter(s=>s.levy).map(s=>({code:s.code,asOf:s.levy.openingAsOf,basis:'0',employee:'0',employer:'0',reference:'Verified synthetic zero opening'})),...(country==='CA'?{canada:{td1Verified:true,sinVerified:true,cppExempt:false,eiExempt:false,contributoryMonths:12,exemptionReference:''}}:country==='IN'?{india:{panStatus:'Valid',pfMember:true,epsMember:true,internationalWorker:false,esiInsured:true,esiPeriodFrom:'2026-10-01',esiPeriodThrough:'2027-03-31',minimumBasicPercent:'50',wageDefinitionReference:'Synthetic wage assessment'}}:{pakistan:{eobiInsured:true,socialSecurityAssessed:true}})};
+  if(companyRates){
+   if(facts.india){facts.india.minimumBasicPercent='0';facts.india.panStatus='Missing';}
+   await pa('employee-facts-save',{employee:employee.id,configuration:{...facts,identityVerified:false},from:'2026-01-01',through:'2027-12-31'},400);
+   if(country!=='CA'){
+    const prior=await db.prepare('SELECT configuration FROM staff_statutory_inputs WHERE employee_id=? AND period_id=? ORDER BY created_at DESC,id DESC LIMIT 1',[employee.id,period.id]).first();
+    const selected={...JSON.parse(prior.configuration),basicPay:'0',basicPercent:'0',averageDailyWage:'0',statutoryMinimum:'0'};
+    const zeroInputs=await pa('statutory-input-add',{employee:employee.id,period:period.id,configuration:selected,reference:'Explicit company zero wage bases in isolated test'},201);
+    await pa('statutory-input-review',{id:zeroInputs.id,decision:'Approved',reason:'Independent review of selected company contribution bases'},200,hr);
+    const saved=await db.prepare('SELECT configuration FROM staff_statutory_inputs WHERE id=?',[zeroInputs.id]).first();assert.equal(JSON.parse(saved.configuration).companyConfigured,true);
+   }
+  }
   const record=await pa('employee-facts-save',{employee:employee.id,configuration:facts,from:'2026-01-01',through:'2027-12-31'},201);await pa('employee-facts-review',{employee:employee.id,id:record.id,decision:'Approved',reason:'Self review blocked'},403);await pa('employee-facts-review',{employee:employee.id,id:record.id,decision:'Approved',reason:'Independent employee declaration assessment'},200,hr);profiles.set(country,employer.id);
  },afterCalculate:async({pa,employee,period,country})=>{
   let d=await request('view/payroll?period='+period.id,200,admin);await pa('period-submit',{id:period.id,revision:d.selected.revision},409);
   const assessment=await pa('employer-levy-assess',{period:period.id,country,employerVersion:profiles.get(country)},201);await pa('employer-levy-review',{period:period.id,id:assessment.id,decision:'Approved',reason:'Self assessment forbidden'},403);await pa('employer-levy-review',{period:period.id,id:assessment.id,decision:'Approved',reason:'Independent source, opening and contribution reconciliation'},200,hr);
-  d=await request('view/payroll?period='+period.id,200,admin);assert(d.rows[0].calculation.tax.lines.some(l=>l.code.startsWith('LEVY_')&&l.employer>0));
+  d=await request('view/payroll?period='+period.id,200,admin);
+  const calculation=d.rows[0].calculation;
+  if(companyRates){
+   assert(calculation.employerValidation,'The production employer-validation path must be active');
+   assert(calculation.tax.lines.some(line=>line.code.startsWith('LEVY_')),'The covered zero levy still participates in the reviewed assessment');
+   assert(calculation.tax.lines.every(line=>line.employee===0&&line.employer===0),country+' selected zero rates must reach actual employee and employer calculations');
+   assert.equal(calculation.net,calculation.gross);assert.equal(calculation.employerCost,0);
+  }else assert(calculation.tax.lines.some(l=>l.code.startsWith('LEVY_')&&l.employer>0));
   const personal=await request('view/salary?period='+period.id,200,employee);assert.equal(personal.employerVersions,undefined);assert.equal(personal.employerAssessments,undefined);assert.equal(personal.rows[0]?.calculation?.employerValidation,undefined);
  },afterFinalize:async({employee,period})=>{const personal=await request('view/salary?period='+period.id,200,employee);assert(personal.rows.length);assert.equal(personal.rows[0].calculation.employerValidation,undefined);assert.equal(personal.employerVersions,undefined);assert(!JSON.stringify(personal).includes('worldwideAnnualPayroll'));}});
  const rule={employeeRate:'.01',employerRate:'.02',employeeAnnualThreshold:'0',employeeAnnualExemption:'0',annualEmployeeCeiling:'100',annualEmployerExemption:'50',annualEmployerCeiling:'100',exemptionScope:'Employer',annualReconciliation:false};
  assert.deepEqual(cumulativeLevy(10000,{basis:5000,employee:50,employer:0},rule,4000,0),{basis:10000,employee:50,employer:180});assert.equal(quebecHsfRate('1000000','General'),'.0165');assert.equal(quebecHsfRate('7800000','General'),'.0426');
- console.log('PASS CA/IN/PK actual employer/facts review lifecycle, missing-scheme and unauthorized-role denials, native coverage reconciliation, employee privacy masking, levy opening balances/caps/exemptions and independently approved payroll finalization');
+ console.log(companyRates?'PASS company zero tax, employer contribution, additional levy and wage-base settings through production employer validation, independent review and finalized CA/IN/PK payroll':'PASS CA/IN/PK actual employer/facts review lifecycle, missing-scheme and unauthorized-role denials, native coverage reconciliation, employee privacy masking, levy opening balances/caps/exemptions and independently approved payroll finalization');
+}
+
+async function saveCompanyZeroPackage({db,request,admin,hr,employee,country,jurisdiction,runId}){
+ const {canadaTaxPackages2026}=await import('../lib/walshken/payroll-canada-packages.ts'),{nationalTaxPackages}=await import('../lib/walshken/payroll-national-packages.ts');
+ const category=country==='CA'?'Canada payroll':country==='IN'?'India payroll':'Pakistan payroll';
+ const settings=structuredClone(country==='CA'?canadaTaxPackages2026().find(p=>p.region.code===jurisdiction.slice(3)):nationalTaxPackages().find(p=>p.country===country&&p.regime!=='Old'&&p.validFrom<='2026-10-01'&&p.validThrough>='2026-10-31'));
+ if(country==='CA'){
+  Object.assign(settings,{cppRate:'0',cppBaseRate:'0',cpp2Rate:'0',eiRate:'0',eiEmployerMultiplier:'0',bonusFlatRate:'0'});
+  settings.federalBrackets=settings.federalBrackets.map(([from])=>[from,'0',0]);settings.provincialBrackets=settings.provincialBrackets.map(([from])=>[from,'0',0]);
+  settings.region={...settings.region,qpRate:'0',qpEmployerRate:'0',workersRate:'0',workersMaximum:0,health:settings.region.health?.map(row=>({...row,base:0,rate:'0',cap:0})),surtax:settings.region.surtax?.map(row=>({...row,rate:'0'}))};
+ }else{
+  Object.assign(settings,{missingPanRate:'0',standardDeduction:'0',cess:'0',rebate:{threshold:'0',maximum:'0',marginalRelief:false}});
+  settings.slabs=settings.slabs.map(row=>({...row,rate:'0',fixed:'0'}));settings.surcharge=settings.surcharge.map(row=>({...row,rate:'0'}));
+  settings.contributions=settings.contributions.map(row=>({...row,employeeRate:'0',employerRate:'0',...(row.employerTotalRate!==undefined?{employerTotalRate:'0'}:{})}));
+ }
+ const terms=await db.prepare('SELECT classification FROM staff_employment_terms WHERE employee_id=? ORDER BY effective_on DESC LIMIT 1',[employee.id]).first();
+ const version='Synthetic company tax zero '+country+' '+runId;
+ await request('governance/employment-policy-save',201,hr,{jurisdiction,classification:terms.classification,category,version,effectiveFrom:'2026-10-01',effectiveThrough:settings.validThrough,source:settings.source,evidence:'Selected company rates, including zero, in isolated production-path regression',mandatory:true,predecessor:'',settings});
+ const row=await db.prepare('SELECT id,settings FROM staff_jurisdiction_versions WHERE version=?',[version]).first();assert.equal(JSON.parse(row.settings).companyConfigured,true);
+ await request('governance/jurisdiction-verify',200,admin,{id:row.id,reason:'Independent review of configured company tax and contribution amounts'});
 }

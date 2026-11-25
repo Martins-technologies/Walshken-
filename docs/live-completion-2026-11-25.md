@@ -1,5 +1,7 @@
 # Walshken production completion — 25 November 2026
 
+**Later owner-directed policy update:** New finance and payroll company settings can override the displayed jurisdiction references, including zero rates. The [finance and payroll policy controls guide](finance-payroll-policy-controls.md) describes the current admin controls, employee override/inheritance choice, and historical-version behavior. This release report records the earlier completion scope.
+
 ## Scope and release decision
 
 The owner authorized completing the remaining work and releasing it on the existing Vercel project without another permission request. This release carries the reviewed staff, jurisdiction, payroll, permissions, audit and privacy work from `codex/walshken-role-qa` into the existing production application. The starting production commit was `2e6480cb78fac8e9bc8799fbd64b996e3e240fda`; the latest reviewed feature baseline was `7475f55bd4448f00ec24c7eb2ebb8fa196bbe198`.

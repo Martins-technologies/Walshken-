@@ -1,9 +1,10 @@
 "use client";
 import {useState} from "react";
+import {PayrollPolicyEditor,type PolicySuggestion} from "./payroll-policy-editor";
 import {employmentCategoryNames} from "@/lib/walshken/employment-catalog";
 import {ActionForm,Disclosure,Panel,Table,options,type Field,type RecordRow} from "./ui";
 
-export type EmploymentManagementData={countries:RecordRow[];regions:RecordRow[];terms:RecordRow[];policies:RecordRow[];people:RecordRow[];offices:RecordRow[];leaveAdjustments:RecordRow[]};
+export type EmploymentManagementData={suggestions?:PolicySuggestion[];countries:RecordRow[];regions:RecordRow[];terms:RecordRow[];policies:RecordRow[];people:RecordRow[];offices:RecordRow[];leaveAdjustments:RecordRow[]};
 const field=(name:string,label:string,type="text",value?:string|number|null):Field=>({name,label,type,value,required:true});
 const workFields=[
  ["maxShiftMinutes","Maximum shift length in minutes"],["minRestMinutes","Minimum minutes between shifts"],
@@ -11,17 +12,20 @@ const workFields=[
  ["firstBreakAfterMinutes","Work minutes before first break"],["secondBreakFromMinutes","Second break required from minute"],
  ["minimumBreakMinutes","Minimum break duration in minutes"],["minimumSplitMinutes","Minimum split break duration in minutes"],
 ];
-export function EmploymentManagement({data,refresh}:{data:EmploymentManagementData;refresh:()=>void}) {
- const [tab,setTab]=useState("Policies"),[country,setCountry]=useState("CA"),[category,setCategory]=useState("Work"),[copyId,setCopyId]=useState("");
+const financeCategories=["Pay standards","Overtime","Leave","Canada Alberta payroll","Canada payroll","India payroll","Pakistan payroll"];
+function companyPolicy(row:RecordRow){try{return JSON.parse(String(row.settings??"{}"))?.companyConfigured===true;}catch{return false;}}
+export function EmploymentManagement({data,refresh,financeOnly=false}:{data:EmploymentManagementData;refresh:()=>void;financeOnly?:boolean}) {
+ const [tab,setTab]=useState("Policies"),[country,setCountry]=useState(String(data.countries[0]?.code??"CA")),[category,setCategory]=useState(financeOnly?"Pay standards":"Work"),[copyId,setCopyId]=useState("");
  const regionRows=data.regions.filter(row=>row.country===country);
- const policyRows=data.policies.filter(row=>row.country===country);
+ const policyRows=data.policies.filter(row=>row.country===country&&(!financeOnly||financeCategories.includes(String(row.category))));
+ const categoryChoices=employmentCategoryNames.filter(name=>name!=="Evidence"&&(!financeOnly||financeCategories.includes(name))&&(!name.includes("payroll")||name.startsWith(country==="CA"?"Canada":country==="IN"?"India":"Pakistan")));
  const copy=data.policies.find(row=>row.id===copyId);
  let settings:Record<string,unknown>={};
  if(copy?.settings){try{settings=JSON.parse(String(copy.settings));}catch{/* The server reports any corrupt configuration when applied. */}}
  const jurisdictionOptions=regionRows.map(row=>[String(row.code),String(row.name)] as const);
- return <Panel title="Employment policies" note="Policies follow the employee’s workplace, assessed legal jurisdiction, classification and effective date. Each statutory version requires legal evidence and independent review.">
-  <div className="table-filter"><label>Country<select value={country} onChange={event=>setCountry(event.target.value)}>{data.countries.map(row=><option value={String(row.code)} key={row.code}>{row.name}</option>)}</select></label>
-   <label>Manage<select value={tab} onChange={event=>setTab(event.target.value)}>{["Policies","Countries","Subdivisions","Employee assignments","Leave adjustments","Coverage"].map(name=><option key={name}>{name}</option>)}</select></label></div>
+ return <Panel title={financeOnly?"Finance & payroll policies":"Employment policies"} note="Choose government reference values as a starting point, then save your company’s settings for the applicable jurisdiction, employee classification and dates. Company policy review does not certify a custom value as a government rule.">
+  <div className="table-filter"><label>Country<select value={country} onChange={event=>{setCountry(event.target.value);setCopyId("");setCategory(financeOnly?"Pay standards":"Work");}}>{data.countries.map(row=><option value={String(row.code)} key={row.code}>{row.name}</option>)}</select></label>
+   {!financeOnly&&<label>Manage<select value={tab} onChange={event=>setTab(event.target.value)}>{["Policies","Countries","Subdivisions","Employee assignments","Leave adjustments","Coverage"].map(name=><option key={name}>{name}</option>)}</select></label>}</div>
   {tab==="Countries"&&data.countries.filter(row=>row.code===country).map(row=><ActionForm key={String(row.code)+row.revision} path="governance/employment-country-save" extra={{country:row.code,revision:row.revision}}
    fields={[field("name","Country name","text",row.name),field("currency","Default payroll currency","text",row.currency),{name:"enabled",label:"Available for new employment assignments",type:"checkbox",value:row.enabled?"1":"0"}]} submit="Save employment country" refresh={refresh}/>)}
   {tab==="Subdivisions"&&<>
@@ -56,23 +60,23 @@ export function EmploymentManagement({data,refresh}:{data:EmploymentManagementDa
    </>}
   {tab==="Coverage"&&<ActionForm path="governance/employment-coverage" fields={[{name:"employee",label:"Employee",options:options(data.people),required:true},field("day","Policy application date","date")]} submit="Check verified coverage" refresh={()=>{}}/>}
   {tab==="Policies"&&<>
-   <Table rows={policyRows} columns={[{key:"jurisdiction",title:"Jurisdiction"},{key:"classification",title:"Covered classification"},{key:"category",title:"Policy"},{key:"version",title:"Version"},{key:"effective_from",title:"Starts"},{key:"effective_through",title:"Ends"},{key:"status",title:"Review status",render:row=>row.status==="Draft"?"PENDING LEGAL VERIFICATION":String(row.status)}]}/>
-   <div className="table-filter"><label>Policy category<select value={category} onChange={event=>{setCategory(event.target.value);setCopyId("");}}>{employmentCategoryNames.filter(name=>name!=="Evidence").map(name=><option key={name}>{name}</option>)}</select></label>
+   <Table rows={policyRows} columns={[{key:"jurisdiction",title:"Jurisdiction"},{key:"classification",title:"Covered classification"},{key:"category",title:"Policy"},{key:"version",title:"Version"},{key:"effective_from",title:"Starts"},{key:"effective_through",title:"Ends"},{key:"status",title:"Review status",render:row=>row.status==="Draft"?(companyPolicy(row)?"Pending company policy review":"Pending reference review"):row.status==="Verified"&&companyPolicy(row)?"Approved company policy":String(row.status)}]}/>
+   <div className="table-filter"><label>Policy category<select value={category} onChange={event=>{setCategory(event.target.value);setCopyId("");}}>{categoryChoices.map(name=><option key={name}>{name}</option>)}</select></label>
     <label>Copy or replace a previous version<select value={copyId} onChange={event=>{setCopyId(event.target.value);const previous=data.policies.find(row=>row.id===event.target.value);if(previous)setCategory(String(previous.category));}}><option value="">Create new coverage</option>{policyRows.filter(row=>row.category===category).map(row=><option value={String(row.id)} key={row.id}>{row.jurisdiction} · {row.classification} · {row.version}</option>)}</select></label></div>
    <Disclosure title={copy?`Create a new version from ${copy.version}`:"Create a policy version"}>
-    <ActionForm key={country+category+copyId} path="governance/employment-policy-save" extra={{category,predecessor:copy?.id??""}} fields={[
+    {financeCategories.includes(category)?<PayrollPolicyEditor key={country+category+copyId} country={country} category={category} copy={copy} suggestions={data.suggestions??[]} jurisdictions={jurisdictionOptions} refresh={refresh}/>:<ActionForm key={country+category+copyId} path="governance/employment-policy-save" extra={{category,predecessor:copy?.id??""}} fields={[
      {name:"jurisdiction",label:"Employment jurisdiction",options:jurisdictionOptions,value:copy?.jurisdiction,required:true},
      field("classification","Exact covered classification","text",copy?.classification),field("version","Unique version name"),
      field("effectiveFrom","Effective from","date"),field("effectiveThrough","Effective through","date"),
      {name:"mandatory",label:"Statutory requirement",type:"checkbox",value:copy?.mandatory?"1":"0"},
      ...policyFields(category,settings),field("source","Official legal source","url",copy?.source_url),field("evidence","Legal applicability and reason for this change","textarea"),
-    ]} submit="Save for independent legal review" refresh={refresh}/>
+     ]} submit="Save for independent review" refresh={refresh}/>}
    </Disclosure>
    {policyRows.map(row=><Disclosure key={row.id} title={`${row.jurisdiction} · ${row.category} · ${row.version}`}>
-    <p>{row.evidence}</p><p><a href={String(row.source_url)} rel="noreferrer" target="_blank">Official source</a></p>
+    <p>{row.evidence}</p>{companyPolicy(row)&&<p><strong>Company configuration</strong> · Selected values apply to employees who inherit this jurisdiction policy. Employee-specific overrides take precedence.</p>}<p><a href={String(row.source_url)} rel="noreferrer" target="_blank">Government reference</a></p>
     <PolicyComparison previous={data.policies.find(previous=>previous.id===row.predecessor_id)} current={row}/>
-    {row.status==="Draft"&&<ActionForm path="governance/jurisdiction-verify" extra={{id:row.id}} fields={[field("reason","Independent legal review evidence","textarea")]} submit="Verify and activate dated version" refresh={refresh}/>}
-    {row.status!=="Withdrawn"&&!(row.mandatory&&row.status==="Verified")&&<ActionForm path="governance/jurisdiction-withdraw" extra={{id:row.id}} fields={[field("reason","Withdrawal reason","textarea")]} submit="Withdraw version" refresh={refresh}/>}
+    {row.status==="Draft"&&<ActionForm path="governance/jurisdiction-verify" extra={{id:row.id}} fields={[field("reason",companyPolicy(row)?"Independent company policy review":"Independent reference review","textarea")]} submit={companyPolicy(row)?"Approve dated company policy":"Verify and activate dated version"} refresh={refresh}/>}
+    {row.status!=="Withdrawn"&&(companyPolicy(row)||!(row.mandatory&&row.status==="Verified"))&&<ActionForm path="governance/jurisdiction-withdraw" extra={{id:row.id}} fields={[field("reason","Withdrawal reason","textarea")]} submit="Withdraw version" refresh={refresh}/>}
    </Disclosure>)}
   </>}
  </Panel>;
@@ -87,6 +91,6 @@ function policyFields(category:string,settings:Record<string,unknown>):Field[] {
 }
 function PolicyComparison({previous,current}:{previous?:RecordRow;current:RecordRow}) {
  const parse=(row?:RecordRow):Record<string,unknown>=>{try{return JSON.parse(String(row?.settings??"{}"));}catch{return {};}};
- const old=parse(previous),next=parse(current),keys=[...new Set([...Object.keys(old),...Object.keys(next)])];
+ const old=parse(previous),next=parse(current),keys=[...new Set([...Object.keys(old),...Object.keys(next)])].filter(key=>key!=="companyConfigured");
  return <Table rows={keys.map(key=>({id:key,setting:key,previous:JSON.stringify(old[key])??"",current:JSON.stringify(next[key])??""}))} columns={[{key:"setting",title:"Setting"},{key:"previous",title:previous?`Previous · ${previous.version}`:"Previous"},{key:"current",title:`Current · ${current.version}`}]}/>;
 }

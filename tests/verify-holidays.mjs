@@ -80,8 +80,9 @@ class TestDate extends RealDate {
 globalThis.Date=TestDate;
 async function enroll(account) {
   // Password hashing may cross a TOTP window. Pin only this enrollment exchange.
-  const previousTime=fixedTime;
+  const previousTime=fixedTime,previousDate=globalThis.Date;
   fixedTime=Date.now();
+  globalThis.Date=TestDate;
   try {
     const setup=await request("mfa/setup", 200, account, {password:account.password});
     const first=authenticatorCode(setup.setupKey,-1);
@@ -91,7 +92,7 @@ async function enroll(account) {
     const mfaCode=authenticatorCode(setup.setupKey,0);
     await request("session/login",200,account,{email:account.email,password:account.password,mfaCode});
     return {...confirmed,mfaCode};
-  } finally { fixedTime=previousTime; }
+  } finally { fixedTime=previousTime;globalThis.Date=previousDate; }
 }
 
 admin.email=process.env.WALSHKEN_ADMIN_EMAIL;
@@ -202,9 +203,16 @@ await h('exception-submit',{employee:vacationer.id,day:'2026-07-01',kind:'Unauth
 const absentShift='local-absence-'+runId,absentId='local-no-show-'+runId;await db.prepare("INSERT INTO shifts(id,org_id,employee_id,starts_at,ends_at,title,location,created_by,published,release_stage,workflow_version,state,time_zone,policy_snapshot) VALUES(?,?,?,?,?,?,?,?,1,'preview',1,'Published','America/Edmonton',?)",[absentShift,'walshken',staffId,localInstant('2026-06-30T09:00','America/Edmonton'),localInstant('2026-06-30T17:00','America/Edmonton'),'Historical scheduled work','Actual verified workplace',adminId,JSON.stringify(defaultPolicy())]).run();await db.prepare("INSERT INTO attendance_absences(id,org_id,release_stage,shift_id,employee_id,status,recorded_at,updated_at) VALUES(?,'walshken','preview',?,?,'No show',?,?)",[absentId,absentShift,staffId,new Date().toISOString(),new Date().toISOString()]).run();assert.ok((await facts('2026-07-01')).issues.some(v=>v.includes('Review the recorded absence')));const adverse=await h('exception-submit',{employee:staffId,day:'2026-07-01',kind:'Unauthorized adjacent absence',shiftId:absentShift,authority:'https://www.alberta.ca/alberta-general-holidays',reference:'Verified actual required adjacent shift without employer consent'},201);await h('exception-review',{id:adverse.id,revision:1,decision:'Approved',note:'Independently checked actual unexcused absence'},200,hr);assert.equal((await facts('2026-07-01')).eligible,false);await w('absence-excuse',{id:absentId,note:'Verified employer consent and corrected absence evidence'});assert.ok((await facts('2026-07-01')).issues.some(v=>v.includes('no longer matches')));const wd=await h('exception-submit',{employee:staffId,day:'2026-07-01',kind:'Withdraw exception',withdrawsId:adverse.id,authority:'https://www.alberta.ca/alberta-general-holidays',reference:'Original absence was confirmed excused; restore statutory eligibility'},201);await h('exception-review',{id:wd.id,revision:1,decision:'Approved',note:'Independently verified restored eligibility'},200,hr);assert.equal((await facts('2026-07-01')).eligible,true);
 for(const table of ['holiday_rules','holiday_assignments','holiday_histories','holiday_assessments','holiday_private_records','holiday_audit'])assert.equal((await db.prepare('SELECT has_table_privilege(\'walshken_production_app\',?,\'SELECT\') AS ok',[table]).first()).ok,false,table);
 console.log('PASS actual no-show evidence, consented-absence restoration, independently approved exception withdrawal and default-deny production access');
-// New employment-rule versions cannot weaken statutory or already-promised floors.
-const version={jurisdiction:'CA-AB',version:'CA-AB-company-2026-12-v2',effectiveFrom:'2026-12-01',effectiveThrough:'2028-12-31',reference:'Verified approved stronger company work standards',reviewed:true};await h('rule-version-create',{...version,weeklyOvertimeHours:45},400);await h('rule-version-create',{...version,minimumBreakMinutes:29},400);await h('rule-version-create',{...version,vacationInitialPercent:'3'},400);const ver=await h('rule-version-create',{...version,weeklyOvertimeHours:40,vacationInitialPercent:'5'},201);const {employmentRulesOn}=await import('../lib/walshken/holiday-access.ts'),{one}=await import('../lib/walshken/server.ts');const staffActor=await one(db,'SELECT * FROM employees WHERE id=?',staffId);assert.equal((await employmentRulesOn(db,staffActor,'2026-07-01')).rules.weeklyOvertimeHours,44);assert.equal((await employmentRulesOn(db,staffActor,'2026-12-10')).rules.weeklyOvertimeHours,40);assert.equal((await employmentRulesOn(db,staffActor,'2026-12-10')).row.id,ver.id);assert.equal((await paylist(per)).rows[0].calculation.compliance.rules.version,'CA-AB-employment-2026-v1');await assert.rejects(()=>db.prepare("UPDATE holiday_rules SET version='silent' WHERE id=?",[ver.id]).run(),/immutable/i);
-console.log('PASS effective rule versions, mandatory floors, preserved historical rule snapshots and no old-assignment bypass');
+// Authorized financial rules retain selected values; work-break protections and
+// already-finalized financial evidence remain independently enforced.
+const version={jurisdiction:'CA-AB',version:'CA-AB-company-2026-12-v2',effectiveFrom:'2026-12-01',effectiveThrough:'2028-12-31',reference:'Reviewed selected company work and financial standards',reviewed:true};
+await h('rule-version-create',{...version,minimumBreakMinutes:29},400);
+const zeroVersion={...version,version:'CA-AB-company-2026-11-zero',effectiveFrom:'2026-11-30',weeklyOvertimeHours:45,overtimeMultiplier:'0',vacationInitialPercent:'0',vacationLongServicePercent:'0',holidayPremiumMultiplier:'0',minimumHourlyMinor:0,paymentDeadlineDays:0};
+await h('rule-version-create',zeroVersion,403,staff);const selected=await h('rule-version-create',zeroVersion,201);
+const {employmentRulesOn}=await import('../lib/walshken/holiday-access.ts'),{one}=await import('../lib/walshken/server.ts');const staffActor=await one(db,'SELECT * FROM employees WHERE id=?',staffId);
+const selectedRules=await employmentRulesOn(db,staffActor,'2026-11-30');assert.equal(selectedRules.row.id,selected.id);assert.equal(selectedRules.rules.companyConfigured,true);assert.equal(selectedRules.rules.weeklyOvertimeHours,45);for(const field of ['overtimeMultiplier','vacationInitialPercent','vacationLongServicePercent','holidayPremiumMultiplier'])assert.equal(selectedRules.rules[field],'0');assert.equal(selectedRules.rules.minimumHourlyMinor,0);assert.equal(selectedRules.rules.paymentDeadlineDays,0);
+const ver=await h('rule-version-create',{...version,weeklyOvertimeHours:40,vacationInitialPercent:'5'},201);assert.equal((await employmentRulesOn(db,staffActor,'2026-07-01')).rules.weeklyOvertimeHours,44);assert.equal((await employmentRulesOn(db,staffActor,'2026-12-10')).rules.weeklyOvertimeHours,40);assert.equal((await employmentRulesOn(db,staffActor,'2026-12-10')).row.id,ver.id);assert.equal((await paylist(per)).rows[0].calculation.compliance.rules.version,'CA-AB-employment-2026-v1');await assert.rejects(()=>db.prepare("UPDATE holiday_rules SET version='silent' WHERE id=?",[ver.id]).run(),/immutable/i);
+console.log('PASS effective company zero/higher financial rules, protected work breaks, denied employee edits, preserved historical rule snapshots and no old-assignment bypass');
 writeFileSync('/tmp/walshken-holiday-ui-data.json',JSON.stringify({actor:{id:adminId,name:'Holiday administrator',role:'super_admin',timeZone:'America/Edmonton'},data:await listing(admin,'?employee='+staffId)}));
 const { verifyCalendar } = await import('./verify-calendar.mjs');
 const calendar = await verifyCalendar({ request, db, admin, staff, outsider: outside, staffId, adminId, department, person, runId, defaultPolicy, localInstant });
