@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { BarChart3, CalendarDays, ChevronLeft, ChevronRight, Clock3, Download, Filter, Medal, Search, Trophy, Users } from "lucide-react";
 import {
   arrivalStatuses, performanceFactors, type ArrivalStatus, type CompletionMetrics,
-  type PerformanceFactor, type PerformancePage, type RankedEmployee,
+  type PerformanceFactor, type PerformancePage, type PerformanceTrend, type RankedEmployee,
 } from "@/lib/walshken/staff-performance-types";
 import "./staff-performance.css";
 
@@ -29,35 +30,37 @@ async function call(query: string, signal?: AbortSignal, body?: Record<string,un
     signal,cache:"no-store",
     ...(body ? { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) } : {}),
   });
-  const result = await response.json();
+  const result = await response.json().catch(() => ({error:"The report service did not return a usable response."}));
   if (!response.ok) throw new Error(result.error || "The report could not be loaded.");
   return result;
 }
 
 function Table({headings,children,label}:{headings:string[];children:ReactNode;label:string}) {
-  return <div className="perf-scroll"><table aria-label={label}><thead><tr>{headings.map(text=><th key={text} scope="col">{text}</th>)}</tr></thead><tbody>{children}</tbody></table></div>;
+  return <div className="perf-scroll" tabIndex={0} role="region" aria-label={label}><table><caption className="sr-only">{label}</caption><thead><tr>{headings.map(text=><th key={text} scope="col">{text}</th>)}</tr></thead><tbody>{children}</tbody></table></div>;
 }
 
 function Pagination({kind,report,change}:{kind:PageKind;report:PerformancePage;change:(value:number)=>void}) {
   const page=report.pages[kind], max=Math.max(1,Math.ceil(report.totals[kind]/report.pageSize));
   if (max === 1) return null;
   return <div className="perf-pagination" aria-label="Report pages">
-    <button type="button" className="btn btn-outline btn-small" onClick={()=>change(page-1)} disabled={page===1}>Previous</button>
+    <button type="button" className="btn btn-outline btn-small" onClick={()=>change(page-1)} disabled={page===1}><ChevronLeft size={14}/> Previous</button>
     <span>Page {page} of {max}</span>
-    <button type="button" className="btn btn-outline btn-small" onClick={()=>change(page+1)} disabled={page===max}>Next</button>
+    <button type="button" className="btn btn-outline btn-small" onClick={()=>change(page+1)} disabled={page===max}>Next <ChevronRight size={14}/></button>
   </div>;
 }
 
 function PersonCard({person}: {person: RankedEmployee}) {
   const [photoFailed,setPhotoFailed]=useState(false);
-  return <article className="perf-leader">
+  return <article className="perf-leader" data-placement={person.rank}>
+    <div className="perf-placement"><Medal size={16} aria-hidden="true"/> Position {person.rank}</div>
     <div className="perf-leader-heading">
       <span className="perf-avatar" aria-hidden="true">{person.hasPhoto&&!photoFailed
         ? <img src={"/api/staff-performance?photo="+encodeURIComponent(person.id)} alt="" onError={()=>setPhotoFailed(true)}/>
         : person.name.split(/\s+/).slice(0,2).map(word=>word[0]).join("").toUpperCase()}</span>
-      <div><small>Position {person.rank}</small><h5>{person.name}</h5><p>{person.department} · {person.designation}</p></div>
+      <div><h5>{person.name}</h5><p>{person.department} · {person.designation}</p></div>
     </div>
-    <strong className="perf-score">{number(person.score)} <small>/ 100</small></strong>
+    <div className="perf-scoreline"><strong className="perf-score">{number(person.score)} <small>/ 100</small></strong><span>Monthly score</span></div>
+    <meter className="perf-meter" min={0} max={100} value={person.score ?? 0} aria-label="Monthly performance score"/>
     <dl>
       <div><dt>Attendance</dt><dd>{number(person.attendance.attendancePercent,"%")}</dd></div>
       <div><dt>Punctuality</dt><dd>{number(person.attendance.punctualityPercent,"%")}</dd></div>
@@ -84,23 +87,46 @@ function Method({report}: {report: PerformancePage}) {
   </details>;
 }
 
+function TrendChart({ trends }: { trends: PerformanceTrend[] }) {
+  const [metric, setMetric] = useState<"score"|"attendance"|"punctuality">("score");
+  const entries = trends.map(row => ({
+    month: row.month,
+    value: metric === "score" ? row.score : metric === "attendance" ? row.attendance.attendancePercent : row.attendance.punctualityPercent,
+  }));
+  return <section className="perf-chart">
+    <div className="perf-subheading">
+      <h5>Six-month trend</h5>
+      <label>Metric<select value={metric} onChange={event => setMetric(event.target.value as typeof metric)}>
+        <option value="score">Average score</option><option value="attendance">Attendance</option><option value="punctuality">Punctuality</option>
+      </select></label>
+    </div>
+    <ol className="perf-chart-rows">
+      {entries.map(({month, value}) => <li key={month}>
+        <span>{periodLabel(month)}</span>
+        {value === null ? <span className="perf-no-measure">No qualifying data</span> : <meter value={value} min={0} max={100} aria-label={periodLabel(month)}/>}
+        <strong>{number(value,metric === "score" ? "" : "%")}</strong>
+      </li>)}
+    </ol>
+  </section>;
+}
+
 export function StaffPerformance() {
   const heading = useId();
   const [tab,setTab]=useState<typeof tabs[number]>(tabs[0]), [filter,setFilter]=useState(emptyFilters), [draft,setDraft]=useState(emptyFilters);
   const [pages,setPages]=useState({employees:1,arrival:1,punctuality:1}), [report,setReport]=useState<PerformancePage|null>(null);
-  const [loading,setLoading]=useState(true), [error,setError]=useState(""), [notice,setNotice]=useState(""), [writing,setWriting]=useState(false), [version,setVersion]=useState(0);
+  const [loading,setLoading]=useState(true), [error,setError]=useState(""), [queryFailed,setQueryFailed]=useState(false), [notice,setNotice]=useState(""), [writing,setWriting]=useState(false), [version,setVersion]=useState(0);
   const params = new URLSearchParams({...filter,page:String(pages.employees),arrivalPage:String(pages.arrival),punctualityPage:String(pages.punctuality)});
   const query = "?" + params.toString();
   useEffect(()=>{
     const controller = new AbortController();
     call(query,controller.signal).then(value=>{if(!controller.signal.aborted)setReport(value);})
-      .catch(reason=>{if(!controller.signal.aborted)setError(reason.message);}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
+      .catch(reason=>{if(!controller.signal.aborted){setQueryFailed(true);setError(reason.message);}}).finally(()=>{if(!controller.signal.aborted)setLoading(false);});
     return ()=>controller.abort();
   },[query,version]);
   const load = (select:Filters) => {
-    setError("");setLoading(true);setFilter(select);setPages({employees:1,arrival:1,punctuality:1});setVersion(value=>value+1);
+    setError("");setQueryFailed(false);setLoading(true);setFilter(select);setDraft(select);setPages({employees:1,arrival:1,punctuality:1});setVersion(value=>value+1);
   };
-  const paginate = (kind:PageKind,page:number)=>{setError("");setLoading(true);setPages(prior=>({...prior,[kind]:page}));};
+  const paginate = (kind:PageKind,page:number)=>{setError("");setQueryFailed(false);setLoading(true);setPages(prior=>({...prior,[kind]:page}));};
   async function update(data:Record<string,unknown>, form:HTMLFormElement) {
     setWriting(true);setError("");setNotice("");
     try {
@@ -116,11 +142,13 @@ export function StaffPerformance() {
     void update({...fields,action,weights,confirm:fields.confirm==="on"},form);
   }
 
-  return <section className="wf-panel staff-performance" aria-labelledby={heading}>
-    <header><div><h3 id={heading}>Employee performance</h3><p>Review monthly outcomes based on published schedules, recorded attendance and assigned work.</p></div>
-      {report&&<span className="wf-badge">{report.finalizedAt?"Finalized":"Provisional"}</span>}
+  const overview = report?.trends.at(-1);
+  return <section className="wf-panel staff-performance" aria-labelledby={heading} aria-busy={loading}>
+    <header className="perf-header"><div className="perf-title"><span className="perf-header-icon"><BarChart3 size={23} aria-hidden="true"/></span>
+      <div><h3 id={heading}>Employee performance</h3><p>Monthly outcomes from published schedules, recorded attendance and assigned work.</p></div></div>
+      {report&&!loading&&!queryFailed&&<span className="perf-state" data-finalized={!!report.finalizedAt}>{report.finalizedAt?"Finalized history":"Provisional report"}</span>}
     </header>
-    <form className="perf-filter" onSubmit={event=>{event.preventDefault();load(draft);}}>
+    <form className="perf-filter perf-main-filter" onSubmit={event=>{event.preventDefault();load(draft);}}>
       <label>Month<select value={draft.month.slice(5)} onChange={event=>setDraft({...draft,month:draft.month.slice(0,5)+event.target.value})}>
         {months.map((name,index)=><option key={name} value={String(index+1).padStart(2,"0")}>{name}</option>)}</select></label>
       <label>Year<input type="number" min="1900" max="2099" required value={draft.month.slice(0,4)} onChange={event=>setDraft({...draft,month:event.target.value+"-"+draft.month.slice(-2)})}/></label>
@@ -129,17 +157,25 @@ export function StaffPerformance() {
       <label>Employee<select value={draft.employee} onChange={event=>setDraft({...draft,employee:event.target.value})}>
         <option value="">All authorized employees</option>{report?.people.filter(person=>!draft.department||(person.departmentId??"unassigned")===draft.department)
           .map(person=><option key={person.id} value={person.id}>{person.name}</option>)}</select></label>
-      <label>Search<input value={draft.q} maxLength={120} onChange={event=>setDraft({...draft,q:event.target.value})} placeholder="Name or designation"/></label>
-      <button type="submit" className="btn btn-blue btn-small" disabled={loading}>Apply filters</button>
+      <label>Search<span className="perf-search"><Search size={15} aria-hidden="true"/><input type="search" value={draft.q} maxLength={120} onChange={event=>setDraft({...draft,q:event.target.value})} placeholder="Name or designation"/></span></label>
+      <button type="submit" className="btn btn-blue btn-small" disabled={loading}><Filter size={15}/> Apply filters</button>
     </form>
     {notice&&<p role="status" className="form-success">{notice}</p>}
     {error&&<p role="alert" className="form-error">{error}</p>}
     {loading&&<p role="status" className="perf-empty">Loading the report…</p>}
-    {!loading&&report&&<div className="perf-content">
+    {!loading&&report&&!queryFailed&&<div className="perf-content">
+      {overview&&<div className="perf-overview" aria-label="Selected report summary">
+        {([
+          ["Employees ranked",overview.ranked + " / " + overview.employees,Users],
+          ["Attendance",number(overview.attendance.attendancePercent,"%"),CalendarDays],
+          ["Punctuality",number(overview.attendance.punctualityPercent,"%"),Clock3],
+          ["Average score",number(overview.score),Trophy],
+        ] as const).map(([label,value,MetricIcon])=><div key={label}><span className="perf-metric-icon"><MetricIcon size={17} aria-hidden="true"/></span><span>{label}</span><strong>{value}</strong></div>)}
+      </div>}
       <div className="perf-controls">
         <nav aria-label="Performance reports">{tabs.map(title=><button key={title} type="button" aria-pressed={tab===title} onClick={()=>setTab(title)}>{title}</button>)}</nav>
         {report.canExport&&<div className="perf-downloads">{["csv","pdf"].map(format=><a key={format} className="btn btn-outline btn-small"
-          href={`/api/staff-performance${query}&format=${format}&report=${tab==="Attendance & arrival"?"arrival":"performance"}`}>Export {format.toUpperCase()}</a>)}</div>}
+          aria-label={`Export ${format.toUpperCase()} ${tab==="Attendance & arrival"?"arrival":"performance"} report`} href={`/api/staff-performance${query}&format=${format}&report=${tab==="Attendance & arrival"?"arrival":"performance"}`}><Download size={14} aria-hidden="true"/> {format.toUpperCase()}</a>)}</div>}
       </div>
       {tab==="Top performers"&&<>
         <h4>Monthly top 3 performers · {periodLabel(report.month)}</h4>
@@ -159,7 +195,7 @@ export function StaffPerformance() {
         {!report.arrival.length&&<p className="perf-empty">There are no published shifts matching these filters.</p>}
         <Table label="Scheduled and actual employee arrivals" headings={["Employee","Scheduled start","Actual arrival","Difference","Status"]}>
           {report.arrival.map(row=><tr key={row.id}><td>{row.name}</td><td>{displayInstant(row.scheduled,row.timeZone)}<small>{row.timeZone}</small></td>
-            <td>{displayInstant(row.checkedIn,row.timeZone)}</td><td>{number(row.differenceMinutes," min")}</td><td>{row.status}<small>{row.reason}</small></td></tr>)}
+            <td>{displayInstant(row.checkedIn,row.timeZone)}</td><td className="perf-timing">{row.differenceMinutes !== null && row.differenceMinutes > 0 ? "+" : ""}{number(row.differenceMinutes," min")}</td><td><span className="perf-arrival-status" data-status={row.status}>{row.status}</span><small>{row.reason}</small></td></tr>)}
         </Table>
         <Pagination kind="arrival" report={report} change={page=>paginate("arrival",page)}/>
       </>}
@@ -192,7 +228,7 @@ export function StaffPerformance() {
         <Pagination kind="employees" report={report} change={page=>paginate("employees",page)}/>
       </>}
       {tab==="Monthly trends"&&<>
-        <h4>Monthly performance trends</h4><p>Six months through {periodLabel(report.month)}.</p>
+        <h4>Monthly performance trends</h4><TrendChart trends={report.trends}/>
         <Table label="Monthly attendance and performance trends" headings={["Month","Status","Ranked employees","Average score","Attendance","Punctuality","Late arrivals","Absences","Tasks","Projects","Milestones"]}>
           {report.trends.map(row=><tr key={row.month}><td>{periodLabel(row.month)}</td><td>{row.finalized?"Finalized":"Provisional"}</td><td>{row.ranked} / {row.employees}</td>
            <td>{number(row.score)}</td><td>{number(row.attendance.attendancePercent,"%")}</td><td>{number(row.attendance.punctualityPercent,"%")}</td>

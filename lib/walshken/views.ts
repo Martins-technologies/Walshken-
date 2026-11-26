@@ -16,7 +16,7 @@ import {holidaysEnabled,assignmentOn,holidayRule} from './holiday-access';
 import {holidayData} from './holiday-data';
 import {hasPayrollAccess,payrollDataset,payrollEnabled} from './payroll-access';
 import {payrollData} from './payroll-data';
-import {workforceEnabled} from './workforce';
+import {workDataset,workforceEnabled} from './workforce';
 import {workforceData} from './workforce-data';
 import { collaborationRelease, releasedSections } from "./release";
 import { documentsEnabled } from "./document-access";
@@ -96,10 +96,16 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
     return json({row:row&&{...row,...(employment?{country:employment.country,jurisdiction:employment.jurisdiction,time_zone:employment.time_zone,employment_type:employment.employment_type,expected_hours:employment.expected_hours,work_schedule:employment.schedule}:{}),holiday_calendar:holidayCalendar,mfa_enabled:actor.mfa_enabled},sessions,compensation,mfaRequired,privacyNotice:await currentNotice(db,actor)});
   }
   if(section==="dashboard"&&collaborationRelease()){
-    const [conversations,events,alerts]=await Promise.all([messageViews(db,actor).then(response=>response.json()),meetings(db,actor),notifications(db,actor)]);
-    const taskData=tasksEnabled()&&actor.role!=="guest"?await taskDashboard(db,actor).then(r=>r.json()):null;
+    const [conversations,events,alerts,unread,taskData,active]=await Promise.all([
+      messageViews(db,actor).then(response=>response.json()),meetings(db,actor),notifications(db,actor),
+      one<{count:number}>(db,"SELECT count(*)::int AS count FROM notifications WHERE employee_id=? AND read_at IS NULL",actor.id),
+      tasksEnabled()&&actor.role!=="guest"?taskDashboard(db,actor).then(r=>r.json()):null,
+      workforceEnabled()&&actor.role!=="guest"?one(db,`SELECT a.id,a.starts_at,
+        (SELECT b.starts_at FROM breaks b WHERE b.attendance_id=a.id AND b.ends_at IS NULL AND b.voided_at IS NULL LIMIT 1) AS break_started
+        FROM attendance a WHERE a.org_id=? AND a.employee_id=? AND a.release_stage=? AND a.ends_at IS NULL LIMIT 1`,actor.org_id,actor.id,workDataset()):null,
+    ]);
     const management = staffReadinessEnabled() && canSuper(actor) ? await managementOverview(db,actor) : null;
-    return json({management,collaborationOverview:true,conversations:conversations.rows,meetings:events.filter(row=>!row.ended_at&&!row.cancelled_at&&String(row.ends_at)>now()),alerts,taskSummary:taskData?.stats});
+    return json({management,collaborationOverview:true,conversations:conversations.rows,meetings:events.filter(row=>!row.ended_at&&!row.cancelled_at&&String(row.ends_at)>now()),alerts,unreadUpdates:unread?.count??0,taskSummary:taskData?.stats,tasks:taskData?.rows,active,managedWorktime:workforceEnabled()});
   }
   if(section==="dashboard"){
     const [tasks,shiftRows,alerts,active,unsubmitted]=await Promise.all([

@@ -1,0 +1,35 @@
+.staff-sign-in.auth-page {grid-template-columns: minmax(0,.87fr) minmax(0,1.13fr); background: #f5f7fb}
+.staff-sign-in .auth-side {
+  padding: clamp(27px,5vw,74px); align-items: flex-start; background: #101e39; justify-content: space-between;
+}
+.staff-sign-in .auth-side .brand {font-size: 25px}
+.staff-sign-in .auth-story .auth-story-title {font-size: clamp(30px,3.6vw,52px); color: #fff; font-weight: 730; letter-spacing: -.045em; line-height: 1.08; margin-bottom: 14px}
+.staff-sign-in .auth-story>p:last-child {font-size: clamp(14px,1.2vw,17px); color: #c7d6ed; max-width: 36ch}
+.staff-sign-in .auth-side>a:last-child {font-size: 13px; padding-block: 7px}
+.staff-sign-in .auth-main {padding: clamp(23px,3.7vw,54px)}
+.staff-sign-in .auth-shell {width: min(100%,450px); background: #fff; border: 1px solid #dce3ed; box-shadow: 0 2px 8px #182e5210; border-radius: 17px; padding: clamp(20px,3.2vw,34px)}
+.staff-sign-in .auth-shell .icon-tile {width: 42px; height: 42px}
+.staff-sign-in .auth-shell h1 {font-size: clamp(25px,3vw,34px); margin: 11px 0 6px; font-weight: 730}
+.staff-sign-in .auth-shell>p {font-size: 13px; line-height: 1.6; margin-bottom: 17px}
+.staff-sign-in .auth-form {padding: 0; border: 0; background: none}
+.staff-sign-in .auth-form label {font-size: 12px; margin-bottom: 12px}
+.staff-sign-in .auth-form label small {font-size: 11px; font-weight: 500; color: #52627a}
+.staff-sign-in .auth-form input {border-color: #cdd8e7; margin-top: 5px; min-height: 43px}
+.staff-sign-in .auth-password {position: relative}
+.staff-sign-in .auth-password input {padding-right: 59px}
+.staff-sign-in .auth-reveal {position: absolute; right: 5px; bottom: 4px; min-height: 35px; padding-inline: 9px; border: 0; color: #2047aa; background: transparent; font-size: 12px; font-weight: 650}
+.staff-sign-in .auth-reveal:hover {background: #eef3ff}
+.staff-sign-in .auth-form .btn {margin-top: 4px}
+.staff-sign-in .auth-options {display: grid; margin-top: 13px; border-top: 1px solid #e7edf6; padding-top: 7px}
+.staff-sign-in .auth-toggle {text-align: left; width: fit-content; padding: 7px 0; font-size: 12px}
+@media(max-width:760px) {
+  .staff-sign-in.auth-page {grid-template-columns: minmax(0,1fr); align-content: start}
+  .staff-sign-in .auth-side {min-height: auto; padding: 15px clamp(18px,5vw,34px); flex-direction: row; align-items: center; gap: 14px; flex-wrap: wrap}
+  .staff-sign-in .auth-story {display: none}
+  .staff-sign-in .auth-side .brand {font-size: 22px}
+  .staff-sign-in .auth-side .brand img {width: 34px; height: 34px}
+  .staff-sign-in .auth-side>a:last-child {font-size: 11px; gap: 5px}
+  .staff-sign-in .auth-side>a:last-child>svg {width: 13px; height: 13px}
+  .staff-sign-in .auth-main {padding: 24px 13px 35px}
+  .staff-sign-in .auth-form input {font-size: 16px}
+}

@@ -39,7 +39,13 @@ async function meetingFor(db:Db,actor:Actor,target:string,lock=false){
   if(!m||m.removed_at||m.provider!=="livekit"||(actor.role==="guest"&&!(await policy(db,actor.org_id)).external_meetings))return fail(404,"Meeting is unavailable.");
   return m;
 }
-function assertOpen(m:Meeting){if(m.cancelled_at||m.ended_at)return fail(409,"This meeting has ended or was cancelled.");if(Date.now()<Date.parse(m.starts_at)-900000||Date.now()>=Date.parse(m.ends_at))return fail(409,"You can join from 15 minutes before the scheduled start until the scheduled end.");}
+function assertScheduled(m:Meeting){
+  if(m.cancelled_at||m.ended_at||m.ends_at<=now())return fail(409,"This meeting has ended or was cancelled.");
+}
+function assertOpen(m:Meeting){
+  assertScheduled(m);
+  if(Date.now()<Date.parse(m.starts_at)-900000)return fail(409,"You can join from 15 minutes before the scheduled start until the scheduled end.");
+}
 async function removeRemote(db:Db,room:string,identity:string){
   const c=roomClient(await liveKitSettings(db));
   await providerCall(async()=>{try{await c.removeParticipant(room,identity,{revokeTokenTs:BigInt(Math.floor(Date.now()/1000)+1)});}catch(e){if(!isMissing(e))throw e;}});
@@ -123,9 +129,14 @@ export async function meetingDetail(db:Db,actor:Actor,target:string){
   const settings=await organizationRecordingPolicy(db,m.org_id,p),recordable=!!m.recording_enabled&&permittedRecordingCategory(m,settings);
   const request=settings.host_approval?await currentRecordingRequest(db,m,settings.revision):null;
   const canStart=recordable&&await mayStartRecording(db,actor,m,p,settings);
-  return json({meeting:m,members,externalGuests,recordings,attendance:report,host,canRecord:canStart&&(!settings.host_approval||request?.status==="Approved"),recordingActive:!!active,
+  const canRecord=canStart&&(!settings.host_approval||request?.status==="Approved");
+  const recordingBlocker=canRecord&&!active&&m.started_at&&!m.ended_at&&!m.cancelled_at&&m.ends_at>now()?await recordingConsentBlocker(db,m,settings.participant_consent):null;
+  const canReviewConsent=host||isAdmin(actor)||!managementRecordingEnabled();
+  return json({meeting:m,members:canReviewConsent?members:members.map(member=>member.id===actor.id?member:{...member,recording_consent:null}),
+    externalGuests:canReviewConsent?externalGuests:externalGuests.map(guest=>({...guest,recording_consent:null})),
+    recordings,attendance:report,host,canRecord,recordingBlocker,recordingActive:!!active,
     recordingStatus:active?.status??null,stopPending:!!active?.stop_requested_at,
-    canStopRecording:!!active&&(host||isAdmin(actor)||canStart), recordingAllowed:recordable, consentRequired:settings.participant_consent,
+    canStopRecording:!!active&&(host||isAdmin(actor)||canStart), recordingAllowed:recordable, consentRequired:settings.participant_consent||!!active?.participant_consent_required,
     canRequestRecording:recordable&&settings.host_approval&&!active&&(!request||request.status==="Declined"||request.status==="Used")&&settings.request_roles.includes(actor.role as RecordingRole),
     canDecideRecording:host&&actor.role!=="guest"&&recordable&&request?.status==="Pending",recordingRequest:request,
     consentText:`I agree to this meeting being recorded, including my voice, video and shared screen. The recording will be accessible to authorized hosts and administrators and retained for ${m.recording_retention_days} days.`});
@@ -280,13 +291,14 @@ export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<
       }
       await audit(tx,actor,"Meeting recording deleted","meeting recording",recording.id).run();return json({ok:true,message:"Recording permanently deleted from private storage."});
     }
-    assertOpen(m);
     if(managementRecordingEnabled()&&["record-request","record-approve","record-decline"].includes(action)){
+      assertScheduled(m);
       if(await activeRecording(tx,target))return fail(409,"Stop the current recording before requesting another.");
       const settings=await organizationRecordingPolicy(tx,m.org_id,p);
       const message=await recordRequestAction(tx,actor,m,settings,action,data,host);
       return json({ok:true,message},action==="record-request"?201:200);
     }
+    if(["lock","invite","permissions","remove"].includes(action))assertScheduled(m);else assertOpen(m);
     if(action==="consent"){
       if(!m.recording_enabled)return fail(409,"Recording is disabled for this meeting.");
       const consent=pick(data.consent,["0","1"],"recording consent")==="1"?1:0;
@@ -305,7 +317,7 @@ export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<
       if(await activeRecording(tx,target))return fail(409,"Stop recording before changing the participant list. New participants must give their own consent.");
       const person=str(data.employee,"participant",80);await permittedParticipant(tx,actor,person,p);
       const count=await one<{n:number}>(tx,"SELECT count(*)::int AS n FROM meeting_members WHERE meeting_id=? AND removed_at IS NULL",target);
-      const external=meetingInvitesEnabled()?await one<{n:number}>(tx,"SELECT count(*)::int AS n FROM staff_meeting_guests WHERE meeting_id=? AND org_id=? AND revoked_at IS NULL",target,m.org_id):null;
+      const external=meetingInvitesEnabled()?await one<{n:number}>(tx,"SELECT count(*)::int AS n FROM staff_meeting_guests WHERE meeting_id=? AND org_id=? AND revoked_at IS NULL AND rsvp<>'Declined'",target,m.org_id):null;
       if((count?.n??0)+(external?.n??0)>=100)return fail(409,"This meeting supports up to 100 invited participants.");
       await run(tx,`INSERT INTO meeting_members (id,meeting_id,employee_id) VALUES (?,?,?) ON CONFLICT(meeting_id,employee_id) DO UPDATE SET removed_at=NULL,requested_at=NULL,admitted_at=NULL,co_host=0,can_publish=1,can_share=1,recording_consent=NULL,consent_at=NULL`,id(),target,person);
       await notify(tx,person,"Meeting invitation",m.title,linkTo(target)).run();await audit(tx,actor,"Meeting participant invited","meeting",`${target}/${person}`).run();return json({ok:true,message:"Participant invited."});
@@ -371,11 +383,12 @@ export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<
   return response;
 }
 
-async function checkRecordingConsent(db:Db,m:Meeting,required:boolean){
+async function recordingConsentBlocker(db:Db,m:Meeting,required:boolean){
   if(await one(db,`SELECT id FROM meeting_members WHERE meeting_id=? AND removed_at IS NULL
     AND (recording_consent=0 OR (? AND COALESCE(recording_consent,0)<>1)) LIMIT 1`,m.id,required)
     ||await (required?missingGuestRecordingConsent:declinedGuestRecordingConsent)(db,m))
-    return fail(409,required?"Every invited participant must give their own recording consent before recording starts.":"A participant declined recording. Recording cannot start.");
+    return required?"Every invited participant must give their own recording consent before recording starts.":"A participant declined recording. Recording cannot start.";
+  return null;
 }
 
 async function retryRecordingStop(db:Db,m:Pick<Meeting,"id"|"provider_room">){
@@ -389,7 +402,8 @@ async function retryRecordingStop(db:Db,m:Pick<Meeting,"id"|"provider_room">){
 async function saveMeetingConsent(db:Db,actor:Actor,target:string,data:Record<string,unknown>){
   const consent=pick(data.consent,["0","1"],"recording consent")==="1"?1:0;
   const {m,stop}=await db.transaction(async tx=>{
-    const m=await meetingFor(tx,actor,target,true);assertOpen(m);
+    const m=await meetingFor(tx,actor,target,true);
+    assertScheduled(m);
     const settings=await organizationRecordingPolicy(tx,m.org_id);
     if(!m.recording_enabled||consent&&!permittedRecordingCategory(m,settings))return fail(409,"Recording is disabled for this meeting.");
     await run(tx,"UPDATE meeting_members SET recording_consent=?,consent_at=? WHERE meeting_id=? AND employee_id=?",consent,now(),target,actor.id);
@@ -427,7 +441,8 @@ async function startRecording(db:Db,actor:Actor,target:string){
     if(await activeRecording(tx,target))return fail(409,"A recording is already active or processing.");
     const approval=recordingSettings.host_approval?await currentRecordingRequest(tx,m,recordingSettings.revision):null;
     if(recordingSettings.host_approval&&approval?.status!=="Approved")return fail(409,"A host must approve this recording request before it starts.");
-    await checkRecordingConsent(tx,m,recordingSettings.participant_consent);
+    const blocker=await recordingConsentBlocker(tx,m,recordingSettings.participant_consent);
+    if(blocker)return fail(409,blocker);
     if(!m.provider_room||!m.started_at)return fail(409,"Join the meeting before starting a recording.");
     const storage=await recordingStorage(tx),settings=await liveKitSettings(tx),recording=id();
     const key=`walshken/meetings/${target}/${recording}.mp4`,expires=new Date(Date.now()+m.recording_retention_days*86400000).toISOString();
@@ -479,9 +494,12 @@ async function reconcileRecordings(db:Db,meeting:string,room:string){
 async function updateEgress(db:Db,info:EgressInfo){
   const status=info.status===EgressStatus.EGRESS_COMPLETE?"Complete":info.status===EgressStatus.EGRESS_FAILED||info.status===EgressStatus.EGRESS_ABORTED||info.status===EgressStatus.EGRESS_LIMIT_REACHED?"Failed":info.status===EgressStatus.EGRESS_ENDING?"Stopping":info.status===EgressStatus.EGRESS_ACTIVE?"Active":"Starting";
   const stamp=(value:bigint)=>value>0n?new Date(Number(value/1000000n)).toISOString():null;
-  await run(db,`UPDATE meeting_recordings SET status=?,started_at=COALESCE(started_at,?),ended_at=COALESCE(ended_at,?) WHERE egress_id=?
-    AND status NOT IN ('Deleted','Complete','Failed') AND NOT (status='Stopping' AND ? IN ('Starting','Active'))`,status,stamp(info.startedAt),stamp(info.endedAt),info.egressId,status);
-  if(managementRecordingEnabled())await notifyRecordingTransition(db,info.egressId);
+  await db.transaction(async tx=>{
+    await run(tx,`UPDATE meeting_recordings SET status=?,started_at=COALESCE(started_at,?),ended_at=COALESCE(ended_at,?) WHERE egress_id=?
+      AND status NOT IN ('Deleted','Complete','Failed') AND NOT (status='Stopping' AND ? IN ('Starting','Active'))
+      AND NOT (status='Active' AND ?='Starting')`,status,stamp(info.startedAt),stamp(info.endedAt),info.egressId,status,status);
+    if(managementRecordingEnabled())await notifyRecordingTransition(tx,info.egressId);
+  });
 }
 async function notifyRecordingTransition(db:Db,egressId:string){
   const recording=await one<{id:string;meeting_id:string;org_id:string;created_by:string;status:string;started_at:string|null}>(db,`SELECT r.id,r.meeting_id,m.org_id,r.created_by,r.status,r.started_at
@@ -489,14 +507,12 @@ async function notifyRecordingTransition(db:Db,egressId:string){
   if(!recording?.started_at)return;
   const event=recording.status==="Active"?"started":["Complete","Failed"].includes(recording.status)?"stopped":null;
   if(!event)return;
-  await db.transaction(async tx=>{
-    const transition=await run(tx,"INSERT INTO meeting_events (id,meeting_id,event) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING",`recording-${recording.id}-${event}`,recording.meeting_id,`recording_${event}`);
-    if(!transition.count)return;
-    const recipients=await all<{id:string}>(tx,`SELECT e.id FROM meeting_members p JOIN employees e ON e.id=p.employee_id WHERE p.meeting_id=?
-      AND p.removed_at IS NULL AND e.org_id=? AND e.status='Active' AND e.employment_status<>'Ended'`,recording.meeting_id,recording.org_id);
-    for(const member of recipients)await notify(tx,member.id,`Meeting recording ${event}`,event==="started"?"This meeting is now being recorded.":"Recording has ended for this meeting.",linkTo(recording.meeting_id)).run();
-    await run(tx,"INSERT INTO audit (id,org_id,actor_id,action,entity,target_id) VALUES (?,?,?,?,?,?)",id(),recording.org_id,recording.created_by,`LiveKit confirmed recording ${event}`,"meeting recording",recording.id);
-  });
+  const transition=await run(db,"INSERT INTO meeting_events (id,meeting_id,event) VALUES (?,?,?) ON CONFLICT(id) DO NOTHING",`recording-${recording.id}-${event}`,recording.meeting_id,`recording_${event}`);
+  if(!transition.count)return;
+  const recipients=await all<{id:string}>(db,`SELECT e.id FROM meeting_members p JOIN employees e ON e.id=p.employee_id WHERE p.meeting_id=?
+    AND p.removed_at IS NULL AND e.org_id=? AND e.status='Active' AND e.employment_status<>'Ended'`,recording.meeting_id,recording.org_id);
+  for(const member of recipients)await notify(db,member.id,`Meeting recording ${event}`,event==="started"?"This meeting is now being recorded.":"Recording has ended for this meeting.",linkTo(recording.meeting_id)).run();
+  await run(db,"INSERT INTO audit (id,org_id,actor_id,action,entity,target_id) VALUES (?,?,?,?,?,?)",id(),recording.org_id,recording.created_by,`LiveKit confirmed recording ${event}`,"meeting recording",recording.id);
 }
 export async function liveKitWebhook(db:Db,request:Request){
   const length=Number(request.headers.get("content-length")??0);if(length>262144)return fail(413,"Webhook payload too large.");
@@ -541,6 +557,9 @@ export async function liveKitWebhook(db:Db,request:Request){
         await run(tx,`INSERT INTO meeting_attendance (id,meeting_id,employee_id,participant_sid,left_at,reason) VALUES (?,?,?,?,?,?) ON CONFLICT(participant_sid) DO UPDATE SET left_at=COALESCE(meeting_attendance.left_at,excluded.left_at),reason=excluded.reason`,id(),m.id,participant.identity,participant.sid,at,event.event);
     }
     if(event.event==="room_finished"){
+      // LiveKit can time out an empty room before the first guest actually connects.
+      // Keep the scheduled meeting open so subsequent authorized joins can recreate the room.
+      if(!m.started_at&&!m.ended_at&&!m.cancelled_at&&m.ends_at>now())return;
       await closeGuestPresence(tx,m,at,"Room finished");
       await run(tx,"UPDATE meeting_attendance SET left_at=COALESCE(left_at,?),reason=COALESCE(reason,'Room finished') WHERE meeting_id=?",at,m.id);
       const last=await one<{last:string|null}>(tx,"SELECT MAX(left_at) AS last FROM meeting_attendance WHERE meeting_id=?",m.id);

@@ -202,16 +202,21 @@ export async function taskDashboard(db:Db,actor:Actor,params=new URLSearchParams
  return json({managedTasks:true,rows:filtered.slice((page-1)*pageSize,page*pageSize),stats,team,manager:canManage(actor),staff:people,reviewers,projects,teamRows,running,serverTime:now(),today:localDate(now(),actor.time_zone),registry:{page,pages,total:filtered.length},query:{q,bucket,status,priority,employee}});
 }
 export async function taskDetail(db:Db,actor:Actor,target:string,commentPage=1){
- const task=await taskFor(db,actor,target),[people,notes,time,files,links,reviews,events]=await Promise.all([
+ const task=await taskFor(db,actor,target);
+ const projectRead=task.project_id&&projectLifecycleEnabled()?projectScope(actor,"read",taskDataset()):null;
+ const [people,notes,time,files,links,reviews,events,project]=await Promise.all([
   one(db,`SELECT e.name AS employee,e.employee_no,a.name AS assigner,r.name AS reviewer,d.name AS department,v.name AS division,p.name AS project FROM employees e LEFT JOIN employees a ON a.id=? LEFT JOIN employees r ON r.id=? LEFT JOIN units d ON d.id=? LEFT JOIN units v ON v.id=? LEFT JOIN projects p ON p.id=? WHERE e.id=?`,task.assigned_by,task.reviewer_id,task.department_id,task.division_id,task.project_id,task.employee_id),
   all(db,"SELECT n.id,n.body,n.created_at,e.name AS author FROM task_notes n JOIN employees e ON e.id=n.author_id WHERE n.task_id=? ORDER BY n.created_at DESC,n.id DESC LIMIT 51 OFFSET ?",target,(Math.min(10000,Math.max(1,Math.floor(commentPage)))-1)*50),
   all(db,"SELECT l.*,e.name AS employee FROM task_time_entries l JOIN employees e ON e.id=l.employee_id WHERE l.task_id=? ORDER BY l.created_at DESC LIMIT 500",target),
   all(db,"SELECT f.id,f.filename,f.mime,f.bytes,f.page_count,f.created_at,f.uploaded_by,e.name AS uploader FROM task_files f JOIN employees e ON e.id=f.uploaded_by WHERE f.task_id=? AND f.deleted_at IS NULL ORDER BY f.created_at DESC",target),
   all<{id:string;document_id:string}>(db,"SELECT id,document_id FROM task_document_links WHERE task_id=? ORDER BY created_at",target),
   all(db,"SELECT r.id,r.decision,r.note,r.created_at,r.task_revision,e.name AS actor FROM task_reviews r JOIN employees e ON e.id=r.actor_id WHERE r.task_id=? ORDER BY r.created_at DESC",target),
-  all(db,"SELECT a.id,a.action,a.detail,a.created_at,e.name AS actor FROM task_events a LEFT JOIN employees e ON e.id=a.actor_id WHERE a.task_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 200",target)
+  all(db,"SELECT a.id,a.action,a.detail,a.created_at,e.name AS actor FROM task_events a LEFT JOIN employees e ON e.id=a.actor_id WHERE a.task_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 200",target),
+  projectRead ? one<{id:string}>(db,`SELECT p.id FROM projects p JOIN employees owner ON owner.id=p.owner_id AND owner.org_id=p.org_id
+    WHERE p.org_id=? AND p.id=? AND (${projectRead.sql})`,actor.org_id,task.project_id,...projectRead.args) : null
  ]);
  const documents=[];for(const link of links){try{const context=await documentContext(db,actor,link.document_id);if(await documentMask(db,actor,context)&permissionBit('view'))documents.push({id:link.id,documentId:link.document_id,name:context.document!.name,available:true});else documents.push({id:link.id,available:false});}catch{documents.push({id:link.id,available:false});}}
  const actual=await one<{seconds:number}>(db,"SELECT COALESCE(SUM(seconds),0)::int AS seconds FROM task_time_entries WHERE task_id=? AND voided_at IS NULL",target);
- return json({row:{...task,...people},notes:notes.slice(0,50),moreComments:notes.length>50,commentPage,time,files,documents,reviews,events,actualSeconds:actual?.seconds??0,owns:task.employee_id===actor.id,manager:canManage(actor),canReview:canManage(actor)&&task.employee_id!==actor.id&&(canSuper(actor)||task.reviewer_id===actor.id),serverTime:now()});
+ return json({row:{...task,...people},projectHref:project?"/staff/projects?"+new URLSearchParams({project:project.id}):null,
+  notes:notes.slice(0,50),moreComments:notes.length>50,commentPage,time,files,documents,reviews,events,actualSeconds:actual?.seconds??0,owns:task.employee_id===actor.id,manager:canManage(actor),canReview:canManage(actor)&&task.employee_id!==actor.id&&(canSuper(actor)||task.reviewer_id===actor.id),serverTime:now()});
 }

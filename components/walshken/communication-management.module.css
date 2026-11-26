@@ -1,5 +1,6 @@
 :global(.chat-dialog).dialog {
-  width: min(1010px, calc(100% - 30px));
+  width: min(1030px, calc(100% - 24px));
+  max-height: 90dvh;
 }
 
 .management {
@@ -38,11 +39,17 @@
   color: var(--blue-dark);
 }
 
+.tabs button[aria-pressed="true"] { box-shadow: 0 2px 7px #132a5310; }
+
 .filters {
   display: grid;
   grid-template-columns: minmax(150px, 1.5fr) repeat(2, minmax(130px, 1fr)) auto;
   align-items: end;
   gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f8faff;
 }
 
 .filterField,
@@ -61,9 +68,10 @@
 .reviewForm textarea {
   width: 100%;
   min-width: 0;
-  min-height: 40px;
+  min-height: 44px;
   padding: 7px 10px;
   border: 1px solid var(--line);
+  border-radius: 8px;
   background: #fff;
   color: var(--ink);
   font-size: 14px;
@@ -74,9 +82,13 @@
   resize: vertical;
 }
 
-.filters button {
-  min-height: 40px;
+.filterActions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
+
+.filterActions button { min-height: 44px; }
 
 .results,
 .settingsGroup,
@@ -88,8 +100,24 @@
 }
 
 .settingsGroup h3,
+.resultHeading h3,
 .reviewHeading h3 {
   font-size: 17px;
+}
+
+.resultHeading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+}
+
+.resultHeading span,
+.pages {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .settingsGroup + .settingsGroup {
@@ -134,6 +162,9 @@
   font-weight: 650;
 }
 
+.table tbody tr:hover,
+.table tbody tr:focus-within { background: #f8faff; }
+
 .table tbody th small {
   display: block;
   color: var(--muted);
@@ -165,10 +196,7 @@
   justify-content: space-between;
 }
 
-.pages {
-  color: var(--muted);
-  font-size: 12px;
-}
+.pages button { min-height: 40px; }
 
 .notice {
   display: flex;
@@ -243,21 +271,22 @@
   white-space: pre-wrap;
 }
 
-@media (max-width: 750px) {
+@media (max-width: 870px) {
   .filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .filterField:first-child {
+  .filterField:first-child,
+  .filterActions {
     grid-column: 1 / -1;
-  }
-
-  .filters button {
-    justify-self: start;
   }
 }
 
 @media (max-width: 610px) {
+  :global(.chat-dialog).dialog { padding: 15px; }
+  .tabs button { min-height: 44px; }
+  .pages button { min-height: 44px; }
+
   .table {
     display: block;
   }

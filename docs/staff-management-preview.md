@@ -55,3 +55,13 @@ The preview grants in `ops/preview/management-runtime-grants.sql` apply only to 
 ## Verification scope
 
 The isolated test runner exercises staff team membership, messaging governance and warning behavior, recording and invitation authorization and transitions, project assignments/deliverables/reminders, performance ranking, arrival and export rules, and the existing portal regressions. Chromium checks verify the confirmation and cancel behavior. Provider mocks test actual application routes and request contracts. The QA scanner requirement remains in effect for new private deliverables, which require a clean verdict from a configured scanner.
+
+## Staff portal verification and interface update
+
+- The sidebar and “Find a page” search use the current user’s allowed navigation. The mobile drawer keeps focus inside while open and returns focus to its trigger when closed.
+- The overview uses real tasks, upcoming meetings, unread notices, attendance status and authorized organization metrics. Empty modules show their actual state. The sign-in screen, shared forms, searchable lists, private document viewer and responsive module layouts use the same staff-only styling.
+- Communication review now supports a direct audited lookup for users whose content permission is wider than their metadata permission. Direct conversation search clears stale recipients after a failed request.
+- Calls preserve active media through a failed background refresh. Recording changes use policy revisions, and hosts can act on recording requests before the join window. Guest links use the stable Preview branch URL when Vercel provides it.
+- Projects offer a searchable employee assignment picker. The unified calendar shows deadlines, milestones and deliverables only while the viewer has access to the underlying project.
+- The personal workforce view and export are constrained to the signed-in employee. Payroll CSV, PDF and employee statements honor explicit read and download decisions. Performance reports isolate insufficient holiday coverage to affected months.
+- This update uses the existing QA schema. To test live guest email, first verify the QA Resend sender and enable its saved connection. The browser must reach LiveKit for actual media, and signed provider callbacks must reach Preview for attendance and recording tests.

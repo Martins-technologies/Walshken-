@@ -1,7 +1,7 @@
 import { expectedTimesheets, expectedTimesheetsEnabled } from "./expected-timesheets";
 import {actionScope,hasAction} from './staff-authority';
 import {employeeLeaveBalances} from "./leave-balances";
-import {staffReadinessEnabled} from './staff-permissions';
+import {staffReadinessEnabled,type StaffAction} from './staff-permissions';
 import {all,AppError,audit,canManage,canSuper,date,fail,json,now,one,scope,str,type Actor,type Db} from './server';
 import {albertaRules,compliance,dailySegments,dayAdd,defaultPolicy,localInstant,localWall,totals,type WorkBreak,type WorkPolicy} from './attendance-rules';
 import {localDate} from './work';
@@ -9,13 +9,24 @@ import {attendanceFor,entryBreaks,policyAdmin,requireWorkforce,workDataset,workf
 import {holidaysEnabled,holidayDataset,holidayEmployee} from './holiday-access';
 import {applicableHolidays} from './holiday-engine';
 export function workRange(actor:Actor,params:URLSearchParams){const today=localDate(now(),actor.time_zone),from=date(params.get('from')??today.slice(0,7)+'-01','report start')!,to=date(params.get('to')??new Date(Date.UTC(Number(today.slice(0,4)),Number(today.slice(5,7)),0)).toISOString().slice(0,10),'report end')!;if(to<from||Date.parse(to)-Date.parse(from)>93*86400000)return fail(400,'Choose a report range up to 94 days.');return {from,to};}
+function workforceTeamAccess(actor:Actor) {
+ if(canManage(actor))return true;
+ const actions:StaffAction[]=['attendance.read','attendance.approve','attendance.policy','attendance.corrections','shifts.read','shifts.manage','timesheets.read','leave.read','leave.approve'];
+ return staffReadinessEnabled() && (actor.permissions??[]).some(rule=>rule.effect==='allow'
+   && actions.includes(rule.action) && (rule.scope_type!=='employee'||rule.scope_id!==actor.id) && hasAction(actor,rule.action));
+}
+function workforceReadScope(actor:Actor,action:StaffAction,team:boolean) {
+ const personal={sql:'e.id=?',args:[actor.id]};
+ if(!staffReadinessEnabled())return team?scope(actor,'e'):personal;
+ const permitted=actionScope(actor,action,'e',true);
+ return team?permitted:{sql:`(${permitted.sql}) AND ${personal.sql}`,args:[...permitted.args,...personal.args]};
+}
 export async function workforceReport(db:Db,actor:Actor,params:URLSearchParams,exportReport=false){
  requireWorkforce(actor);
- const {from,to}=workRange(actor,params),team=params.get('team')==='1'&&hasAction(actor,'attendance.read'),period=['day','week','month'].includes(params.get('period')??'')?params.get('period')!:'day';
- const read=staffReadinessEnabled()?actionScope(actor,'attendance.read','e',true):team?scope(actor,'e'):{sql:'e.id=?',args:[actor.id]};
+ const {from,to}=workRange(actor,params),team=params.get('team')==='1'&&workforceTeamAccess(actor),period=['day','week','month'].includes(params.get('period')??'')?params.get('period')!:'day';
+ const read=workforceReadScope(actor,'attendance.read',team);
  const exportScope=exportReport&&staffReadinessEnabled()?actionScope(actor,'attendance.export','e',true):{sql:'1=1',args:[]};
- const personal=exportReport&&!team?{sql:'e.id=?',args:[actor.id]}:{sql:'1=1',args:[]};
- const scoped={sql:`(${read.sql}) AND (${exportScope.sql}) AND (${personal.sql})`,args:[...read.args,...exportScope.args,...personal.args]};
+ const scoped={sql:`(${read.sql}) AND (${exportScope.sql})`,args:[...read.args,...exportScope.args]};
  const records=await all<Attendance & {name:string;employee_no:string;status:string|null;paid_seconds:number|null}>(db,`SELECT a.*,e.name,e.employee_no,t.status,t.paid_seconds FROM attendance a JOIN employees e ON e.id=a.employee_id LEFT JOIN timesheets t ON t.attendance_id=a.id WHERE a.org_id=? AND a.release_stage=? AND a.workflow_version=1 AND a.starts_at<? AND (a.ends_at IS NULL OR a.ends_at>?) AND ${scoped.sql} ORDER BY a.starts_at LIMIT 10001`,actor.org_id,workDataset(),dayAdd(to,2)+'T00:00:00Z',dayAdd(from,-1)+'T00:00:00Z',...scoped.args);
  if(records.length>10000)return fail(400,'This report has too many work intervals. Narrow the date range.');
  const breaks=records.length?await all<WorkBreak & {attendance_id:string}>(db,`SELECT b.* FROM breaks b JOIN attendance a ON a.id=b.attendance_id JOIN employees e ON e.id=a.employee_id WHERE a.org_id=? AND a.release_stage=? AND a.workflow_version=1 AND a.starts_at<? AND (a.ends_at IS NULL OR a.ends_at>?) AND b.voided_at IS NULL AND ${scoped.sql}`,actor.org_id,workDataset(),dayAdd(to,2)+'T00:00:00Z',dayAdd(from,-1)+'T00:00:00Z',...scoped.args):[];
@@ -24,9 +35,9 @@ export async function workforceReport(db:Db,actor:Actor,params:URLSearchParams,e
  return {from,to,period,rows:[...groups.values()].sort((a,b)=>a.period.localeCompare(b.period)||a.employee.localeCompare(b.employee)),totals:[...groups.values()].reduce((s,r)=>({gross:s.gross+r.gross,unpaid:s.unpaid+r.unpaid,paid:s.paid+r.paid,approved:s.approved+r.approved}),{gross:0,unpaid:0,paid:0,approved:0})};
 }
 export async function workforceData(db:Db,actor:Actor,params=new URLSearchParams()){
- requireWorkforce(actor);const {from,to}=workRange(actor,params),manager=canManage(actor)||hasAction(actor,'shifts.manage')||hasAction(actor,'attendance.approve'),team=params.get('team')==='1'&&manager,scoped=staffReadinessEnabled()?actionScope(actor,'attendance.read','e',true):team?scope(actor,'e'):{sql:'e.id=?',args:[actor.id]},start=dayAdd(from,-1)+'T00:00:00Z',end=dayAdd(to,2)+'T00:00:00Z';
- const resourceScope=(action:Parameters<typeof actionScope>[1])=>staffReadinessEnabled()?actionScope(actor,action,'e',true):scoped;
- const shiftScope=resourceScope('shifts.read'),sheetScope=resourceScope('timesheets.read'),leaveScope=resourceScope('leave.read'),policyScope=resourceScope('attendance.policy');
+ requireWorkforce(actor);const {from,to}=workRange(actor,params),manager=workforceTeamAccess(actor),team=params.get('team')==='1'&&manager,scoped=workforceReadScope(actor,'attendance.read',team),start=dayAdd(from,-1)+'T00:00:00Z',end=dayAdd(to,2)+'T00:00:00Z';
+ const resourceScope=(action:StaffAction)=>workforceReadScope(actor,action,team);
+ const shiftScope=resourceScope('shifts.read'),sheetScope=resourceScope('timesheets.read'),leaveScope=resourceScope('leave.read'),policyScope=staffReadinessEnabled()?actionScope(actor,'attendance.policy','e',true):scope(actor,'e');
  const [records,allBreaks,shifts,sheets,corrections,leave,holidays,absences,staff,swaps,events,policies,versions]=await Promise.all([
   all<Attendance & {name:string;shift_start:string|null;shift_end:string|null;title:string|null;location:string|null;timesheet_status:string|null}>(db,`SELECT a.*,e.name,s.starts_at AS shift_start,s.ends_at AS shift_end,s.title,s.location,t.status AS timesheet_status FROM attendance a JOIN employees e ON e.id=a.employee_id LEFT JOIN shifts s ON s.id=a.shift_id LEFT JOIN timesheets t ON t.attendance_id=a.id WHERE a.org_id=? AND a.release_stage=? AND a.workflow_version=1 AND a.starts_at<? AND (a.ends_at IS NULL OR a.ends_at>?) AND ${scoped.sql} ORDER BY a.starts_at DESC LIMIT 501`,actor.org_id,workDataset(),end,start,...scoped.args),
   all<WorkBreak & {attendance_id:string;label:string}>(db,`SELECT b.* FROM breaks b JOIN attendance a ON a.id=b.attendance_id JOIN employees e ON e.id=a.employee_id WHERE a.org_id=? AND a.release_stage=? AND a.starts_at<? AND (a.ends_at IS NULL OR a.ends_at>?) AND b.voided_at IS NULL AND ${scoped.sql} ORDER BY b.starts_at`,actor.org_id,workDataset(),end,start,...scoped.args),

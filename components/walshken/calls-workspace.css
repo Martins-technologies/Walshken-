@@ -1,0 +1,704 @@
+.calls-workspace {
+  container: calls / inline-size;
+  gap: 18px;
+}
+
+.calls-workspace .calls-title {
+  align-items: center;
+  flex-direction: row;
+  flex-wrap: wrap;
+  background: radial-gradient(ellipse at 102% -22%, #3962c91a 0, transparent 62%), #fff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: clamp(18px, 3cqi, 34px);
+  gap: 18px;
+}
+
+.calls-heading {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  min-width: 0;
+}
+
+.calls-heading-icon {
+  display: grid;
+  flex: 0 0 54px;
+  height: 54px;
+  place-items: center;
+  border-radius: 16px;
+  color: #fff;
+  background: linear-gradient(145deg, #173d95, #2c5ce0);
+  box-shadow: 0 9px 16px #2853bd28;
+}
+
+.calls-workspace .calls-title .calls-heading h2 {
+  margin: 0 0 4px;
+  font-size: clamp(22px, 3.1cqi, 32px);
+  line-height: 1.16;
+  letter-spacing: -.035em;
+}
+
+.calls-heading p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.calls-workspace .calls-title .row-actions {
+  gap: 10px;
+  width: auto;
+}
+
+.calls-workspace .calls-title .btn {
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.calls-workspace .calls-layout {
+  grid-template-columns: minmax(215px, .42fr) minmax(0, 1fr);
+  min-height: 550px;
+}
+
+.calls-workspace .calls-list {
+  max-height: none;
+  padding: 0;
+  border-right: 1px solid var(--line);
+  border-bottom: 0;
+  background: #f7faff;
+}
+
+.calls-list-heading {
+  display: grid;
+  gap: 12px;
+  padding: 22px 16px 14px;
+}
+
+.calls-list-heading h3 {
+  margin: 0;
+  letter-spacing: -.02em;
+  font-size: 16px;
+}
+
+.calls-list-heading .chat-tabs {
+  justify-content: space-between;
+  gap: 2px;
+  width: 100%;
+  padding: 3px;
+  margin: 0;
+  border-radius: 10px;
+  background: #eaf0f9;
+}
+
+.calls-list-heading .chat-tabs button {
+  flex: 1 1 0;
+  min-height: 37px;
+  border-radius: 8px;
+}
+
+.calls-list-heading .chat-tabs button[aria-pressed="true"] {
+  background: #fff;
+  color: #1d418d;
+  box-shadow: 0 1px 4px #16346b20;
+}
+
+.calls-list-heading .chat-find {
+  min-height: 43px;
+  margin: 0;
+  background: #fff;
+}
+
+.calls-workspace .calls-meeting-list {
+  max-height: min(600px, 62dvh);
+  padding: 0 10px;
+}
+
+.calls-meeting-list:empty {
+  flex: 0 0 auto;
+}
+
+.calls-workspace .calls-list .empty {
+  display: grid;
+  justify-items: center;
+  flex: 1;
+  align-content: start;
+  gap: 10px;
+  margin: 0;
+  padding: 20px 16px 32px;
+}
+
+.calls-workspace .call-card {
+  min-height: 74px;
+  padding: 11px 10px;
+  gap: 10px;
+}
+
+.call-card .call-card-label {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+
+.call-card-label small,
+.call-card-label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-card > .icon-tile {
+  width: 39px;
+  height: 39px;
+  flex: 0 0 39px;
+  background: #e9f0ff;
+  color: #324b94;
+}
+
+.call-card.selected > .icon-tile {
+  background: #d7e4ff;
+  color: #204ab7;
+}
+
+.call-card > svg:last-child {
+  flex: none;
+  color: #576e97;
+}
+
+.calls-policies {
+  margin-top: auto;
+  padding: 8px 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.calls-policies .calls-policy {
+  display: flex;
+  gap: 9px;
+  width: 100%;
+  min-height: 43px;
+  padding: 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+}
+
+.calls-policies .calls-policy:hover {
+  background: #e9f0fd;
+}
+
+.calls-policies .calls-policy svg:last-child {
+  margin-left: auto;
+}
+
+.calls-workspace .calls-detail {
+  display: flow-root;
+  padding: clamp(20px, 3.2cqi, 40px);
+}
+
+.calls-mobile-back {
+  display: none;
+}
+
+.calls-workspace .call-welcome {
+  min-height: 455px;
+  gap: 13px;
+}
+
+.calls-workspace .call-welcome h3 {
+  margin: 2px 0 0;
+  letter-spacing: -.03em;
+}
+
+.calls-workspace .call-welcome-art {
+  height: 94px;
+  width: 94px;
+  margin: 0 0 10px;
+  transform: none;
+  border-radius: 25px;
+}
+
+.calls-workspace .call-welcome-art i {
+  padding: 8px;
+  border-radius: 13px;
+}
+
+.call-detail-heading > div {
+  min-width: 0;
+}
+
+.calls-workspace .call-detail-heading h3 {
+  margin: 7px 0;
+  font-size: clamp(22px, 3.2cqi, 34px);
+  overflow-wrap: anywhere;
+  letter-spacing: -.032em;
+}
+
+.calls-workspace .call-detail-heading p,
+.call-message {
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.call-message {
+  margin: 12px 0;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+
+.calls-workspace .call-summary {
+  margin: 17px 0 20px;
+  padding: 11px 13px;
+  gap: 9px 18px;
+  border: 1px solid #e5ebf5;
+  border-radius: 11px;
+  background: #f7faff;
+  font-size: 12px;
+}
+
+.calls-workspace .call-summary .recording-indicator {
+  flex: 0 1 auto;
+}
+
+.calls-workspace .call-consent {
+  margin: 0 0 17px;
+  padding: 16px;
+  background: #f7faff;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.call-consent-heading,
+.call-consent-heading > strong,
+.calls-workspace .call-recording-panel h4 {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.call-consent-heading {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.call-consent-heading > strong,
+.calls-workspace .call-recording-panel h4 > svg {
+  color: #244a92;
+}
+
+.call-consent-actions {
+  margin-top: 12px;
+}
+
+.calls-workspace .call-live-consent {
+  display: flex;
+  align-items: center;
+  gap: 12px 24px;
+  flex-wrap: wrap;
+}
+
+.call-live-consent .call-consent-actions {
+  margin: 0 0 0 auto;
+}
+
+.calls-workspace .call-section {
+  min-width: 0;
+}
+
+.calls-workspace .call-section > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  list-style: none;
+}
+
+.call-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.calls-workspace .call-section > summary::after {
+  content: "";
+  width: 7px;
+  height: 7px;
+  margin: 0 5px 4px auto;
+  border-bottom: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.calls-workspace .call-section[open] > summary::after {
+  margin-block: 3px 0;
+  transform: rotate(225deg);
+}
+
+.calls-workspace .call-section > summary span {
+  display: inline-grid;
+  place-items: center;
+  padding: 1px 6px;
+  border-radius: 7px;
+  background: #edf3fe;
+  color: #244a92;
+  font-size: 11px;
+}
+
+.calls-workspace .call-recording-blocker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff7e8;
+  color: #763a11;
+}
+
+.call-sync-alert,
+.calls-workspace > .call-notice,
+.calls-workspace > .form-error {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  justify-content: space-between;
+  min-height: 45px;
+  padding: 9px 12px;
+  line-height: 1.45;
+}
+
+.call-sync-alert {
+  margin-bottom: 16px;
+  background: #fff7e8;
+  color: #763a11;
+  border: 1px solid #efddbe;
+  border-radius: 10px;
+  font-size: 13px;
+}
+
+.call-sync-alert > span {
+  flex: 1;
+}
+
+.calls-workspace .call-notice > button,
+.calls-workspace .form-error > button {
+  min-width: 32px;
+  min-height: 32px;
+}
+
+.calls-workspace .call-person-name {
+  min-width: min(125px, 100%);
+  overflow-wrap: anywhere;
+}
+
+.calls-workspace .calls-layout.in-call {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.calls-workspace .call-live {
+  margin-inline: 0;
+  position: relative;
+}
+
+.calls-workspace .call-stage {
+  height: clamp(300px, 53dvh, 620px);
+}
+
+.calls-workspace .call-stage.has-presentation {
+  grid-template-columns: minmax(0, 1fr) minmax(145px, 21%);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.calls-workspace .call-presentation {
+  min-width: 0;
+}
+
+.calls-workspace .call-live .lk-button {
+  min-height: 44px;
+}
+
+.calls-workspace .call-prejoin {
+  margin: 0;
+  min-width: 0;
+}
+
+.calls-workspace .call-prejoin.audio .lk-video-container {
+  display: none;
+}
+
+.calls-workspace .call-prejoin .lk-button-group-container {
+  min-width: 0;
+}
+
+.calls-workspace .call-prejoin .lk-prejoin {
+  min-width: 0;
+}
+
+.call-recording-playback {
+  display: block;
+  width: 100%;
+  max-height: 60dvh;
+  border-radius: 12px;
+  background: #101c2f;
+}
+
+.call-dialog {
+  max-height: min(88dvh, 860px);
+  overscroll-behavior: contain;
+}
+
+.call-dialog-content > .chat-dialog-heading {
+  position: sticky;
+  z-index: 1;
+  top: -1px;
+  padding-block: 5px;
+  background: white;
+  align-items: flex-start;
+}
+
+.call-dialog-content > .chat-dialog-heading h2 {
+  overflow-wrap: anywhere;
+}
+
+.call-dialog-content > p {
+  margin: 10px 0 18px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.call-dialog-content > .row-actions {
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.call-dialog-content > .staff-form + .staff-form {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 14px;
+}
+
+.call-dialog-content .call-recording-playback + .text-link {
+  display: block;
+  margin-top: 15px;
+}
+
+@container calls (max-width: 740px) {
+  .calls-workspace .calls-layout {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .calls-layout[data-pane="detail"] .calls-list,
+  .calls-layout[data-pane="list"] .calls-detail {
+    display: none;
+  }
+
+  .calls-workspace .calls-list {
+    border-right: 0;
+  }
+
+  .calls-workspace .calls-meeting-list {
+    max-height: min(575px, 60dvh);
+  }
+
+  .calls-mobile-back {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-height: 40px;
+    margin: -8px 0 12px;
+    padding: 6px 2px;
+    border: 0;
+    color: #244a92;
+    background: transparent;
+    text-align: left;
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .calls-workspace .call-welcome {
+    min-height: 270px;
+  }
+
+  .calls-workspace .call-stage.has-presentation {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .calls-workspace .call-live .lk-control-bar {
+    padding: 9px;
+  }
+}
+
+@container calls (max-width: 470px) {
+  .calls-heading-icon {
+    display: none;
+  }
+
+  .calls-workspace .calls-title .row-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .calls-workspace .calls-title .btn {
+    flex: 1 1 auto;
+    min-width: min-content;
+    padding-inline: 12px;
+  }
+
+  .calls-workspace .call-live-consent .call-consent-actions {
+    margin-left: 0;
+  }
+
+  .calls-workspace .call-stage {
+    height: clamp(280px, 46dvh, 390px);
+  }
+}
+
+@media (max-width: 550px) {
+  .call-dialog {
+    padding: 15px;
+  }
+
+  .call-dialog-content .staff-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.call-dialog:has(.call-composer),
+.call-dialog:has(.recording-policy-form) {
+  width: min(670px, calc(100% - 24px));
+}
+
+.call-dialog .call-composer-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.call-composer-fields:first-child > label:first-child {
+  grid-column: 1 / -1;
+}
+
+.call-invite-picker {
+  min-width: 0;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.call-invite-picker legend {
+  padding-inline: 4px;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.call-invite-picker legend span {
+  margin-left: 7px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.call-invite-picker p {
+  padding-block: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.call-invite-picker .chat-find {
+  display: flex;
+  margin-bottom: 8px;
+}
+
+.call-invite-picker .chat-find input {
+  min-width: 0;
+  padding: 3px 0;
+  background: transparent;
+  border: 0;
+}
+
+.call-invite-options {
+  max-height: 164px;
+  padding: 3px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.call-invite-options label {
+  display: flex;
+  align-items: center;
+  min-height: 43px;
+  padding: 5px 7px;
+  border-radius: 9px;
+  overflow-wrap: anywhere;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.call-invite-options label:hover,
+.call-invite-options label:has(input:checked) {
+  background: #edf3ff;
+}
+
+.call-invite-options .chat-avatar {
+  width: 27px;
+  height: 27px;
+  font-size: 10px;
+}
+
+.call-invite-options input[type="checkbox"],
+.call-dialog .recording-policy-form input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  accent-color: #2654c1;
+}
+
+.call-composer-settings {
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.call-composer-settings summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 43px;
+  color: #244a92;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.call-composer-settings summary::-webkit-details-marker {
+  display: none;
+}
+
+.call-composer-settings summary::after {
+  content: "+";
+  margin-left: auto;
+}
+
+.call-composer-settings[open] summary::after {
+  content: "−";
+}
+
+.call-composer-settings[open] .staff-fields {
+  padding: 5px 0 12px;
+}
+
+.call-dialog .recording-policy-form .staff-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (max-width: 480px) {
+  .call-dialog .call-composer-fields,
+  .call-dialog .recording-policy-form .staff-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

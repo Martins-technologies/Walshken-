@@ -73,8 +73,9 @@ const sections: { id: Section; label: string; icon: string; allowed: (access: Ac
   { id: "conversations", label: "Conversations", icon: "message", allowed: access => access.metadata },
   { id: "activity", label: "Activity", icon: "chart", allowed: access => access.reports },
   { id: "visibility", label: "Visibility settings", icon: "settings", allowed: access => access.teamVisibility || access.policy },
-  { id: "content", label: "Review messages", icon: "lock", allowed: access => access.content && !access.metadata },
+  { id: "content", label: "Review by link", icon: "lock", allowed: access => access.content },
 ];
+const resultTitles = { directory: "Employee directory", conversations: "Conversation records", activity: "Employee activity" } as const;
 const emptyFilters = { query: "", department: "", team: "" };
 const defaultRequest: Request = { section: "directory", page: 1, filters: emptyFilters, revision: 0 };
 const number = new Intl.NumberFormat("en");
@@ -155,7 +156,7 @@ function ReviewContent({ target, timeZone, onClose }: { target?: ReviewTarget; t
   const heading = useRef<HTMLHeadingElement>(null);
   const auditNote = useId();
 
-  useEffect(() => { heading.current?.focus(); }, [result?.title]);
+  useEffect(() => { heading.current?.focus(); }, [result?.title, result?.page]);
 
   function conversationId() {
     if (target) return target.id;
@@ -233,6 +234,8 @@ export function CommunicationManagement({ timeZone, onVisibilityChange }: { time
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ text: string; error: boolean } | null>(null);
   const [review, setReview] = useState<ReviewTarget | null>(null);
+  const resultsHeading = useRef<HTMLHeadingElement>(null);
+  const focusResults = useRef(false);
   const reviewTriggerPrefix = useId();
   const filterPrefix = useId();
   const { section, filters } = request;
@@ -242,6 +245,9 @@ export function CommunicationManagement({ timeZone, onVisibilityChange }: { time
     ? response.data : null;
   const waiting = section !== "content" && (loading || !loadError && response?.request !== request);
   const busy = saving || waiting;
+  const filtersSet = Object.values(draft).some(Boolean) || Object.values(filters).some(Boolean);
+  const resultTitle = section === "visibility" || section === "content" ? null : resultTitles[section];
+  const resultCount = data && resultTitle ? `${number.format(data.total)} ${data.total === 1 ? "result" : "results"}` : "";
 
   useEffect(() => {
     if (request.section === "content") return;
@@ -263,6 +269,11 @@ export function CommunicationManagement({ timeZone, onVisibilityChange }: { time
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, [request]);
+  useEffect(() => {
+    if (!focusResults.current || waiting) return;
+    focusResults.current = false;
+    if (!loadError) resultsHeading.current?.focus();
+  }, [waiting, loadError]);
 
   function navigate(next: Section) {
     setReview(null);
@@ -282,6 +293,17 @@ export function CommunicationManagement({ timeZone, onVisibilityChange }: { time
     event.preventDefault();
     setFeedback(null);
     setRequest(previous => ({ ...previous, filters: { ...draft, query: draft.query.trim() }, page: 1 }));
+  }
+
+  function clearFilters() {
+    setDraft(emptyFilters);
+    setFeedback(null);
+    setRequest(previous => ({ ...previous, filters: emptyFilters, page: 1 }));
+  }
+
+  function showPage(page: number) {
+    focusResults.current = true;
+    setRequest(previous => ({ ...previous, page }));
   }
 
   function reload() {
@@ -396,16 +418,21 @@ export function CommunicationManagement({ timeZone, onVisibilityChange }: { time
                 {response?.data.teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
               </select>
             </div>
-            <button type="submit" className="btn btn-outline btn-small" disabled={saving}><Icon name="search" size={16} /> Search</button>
+            <div className={styles.filterActions}>
+              <button type="submit" className="btn btn-blue btn-small" disabled={saving}><Icon name="search" size={16} /> Search</button>
+              <button type="button" className="btn btn-outline btn-small" onClick={clearFilters} disabled={saving || !filtersSet}>Clear filters</button>
+            </div>
           </form>}
           {feedback && <p className={feedback.error ? "form-error" : "form-success"} role={feedback.error ? "alert" : "status"}>{feedback.text}</p>}
           {loadError && <div className={styles.loadError}>
             <p className="form-error" role="alert">{loadError}</p>
             <button className="btn btn-outline btn-small" type="button" onClick={reload}>Retry</button>
           </div>}
-          {waiting && <p className={data ? "sr-only" : styles.empty} role="status">Loading communication records…</p>}
+          <p className="sr-only" role="status">{waiting ? "Loading communication records…" : !loadError && resultCount}</p>
+          {waiting && !data && <p className={styles.empty}>Loading communication records…</p>}
           {!waiting && !loadError && access && !available.length && <p className={styles.empty}>You do not have access to communication management.</p>}
           {data && !loadError && available.some(item => item.id === section) && <div className={styles.results} aria-busy={busy}>
+            {resultTitle && <div className={styles.resultHeading}><h3 tabIndex={-1} ref={resultsHeading}>{resultTitle}</h3><span>{resultCount}</span></div>}
             {section === "directory" && <ManagementTable label="Employee communication directory" rows={data.directory ?? []} columns={directoryColumns} empty="No employees match your search." />}
             {section === "conversations" && <ManagementTable label="Conversation metadata" rows={data.conversations ?? []} columns={conversationColumns} empty="No conversations match your search." />}
             {section === "activity" && <ManagementTable label="Communication activity" rows={data.activity ?? []} columns={activityColumns} empty="No employee activity matches your search." />}
@@ -420,7 +447,7 @@ export function CommunicationManagement({ timeZone, onVisibilityChange }: { time
                 <ManagementTable label="Team settings" rows={data.teams} columns={teamColumns} empty="No teams are available in your scope." />
               </div>}
             </>}
-            {section !== "visibility" && <PageControls data={data} busy={busy} onPage={next => setRequest(previous => ({ ...previous, page: next }))} />}
+            {section !== "visibility" && <PageControls data={data} busy={busy} onPage={showPage} />}
           </div>}
         </>}
   </section>;

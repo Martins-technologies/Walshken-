@@ -76,15 +76,16 @@ export async function projectsView(db: Db, actor: Actor, params: URLSearchParams
   const [milestones, owners, units, assignments, deliverables, events, eligible, workload] = await Promise.all([
     visible.length ? all(db, `SELECT m.*, e.name AS assignee FROM project_milestones m JOIN projects p ON p.id=m.project_id
       LEFT JOIN employees e ON e.id=m.assignee_id AND e.org_id=p.org_id WHERE p.org_id=? AND p.id=ANY(?::text[]) ORDER BY m.due_on,m.id`,actor.org_id,visible) : [],
-    all(db, `SELECT owner.id,owner.name FROM employees owner WHERE owner.org_id=? AND owner.role<>'guest'
+    all(db, `SELECT owner.id,owner.name,owner.employee_no FROM employees owner WHERE owner.org_id=? AND owner.role<>'guest'
       AND owner.status='Active' AND owner.employment_status<>'Ended' AND (${administer.sql}) ORDER BY owner.name`,actor.org_id,...administer.args),
     all(db,`SELECT id,name,kind FROM units WHERE org_id=? AND kind IN ('Department','Team') AND
       (?=1 OR EXISTS (SELECT 1 FROM employees owner WHERE owner.org_id=units.org_id AND owner.role<>'guest'
         AND (${administer.sql}) AND (owner.department_id=units.id OR EXISTS (SELECT 1 FROM staff_unit_memberships m
           WHERE m.org_id=owner.org_id AND m.employee_id=owner.id AND m.unit_id=units.id)))) ORDER BY name`,actor.org_id,canSuper(actor)?1:0,...administer.args),
-    visible.length ? all(db,`SELECT p.*, e.name FROM project_assignments p JOIN employees e ON e.id=p.employee_id AND e.org_id=p.org_id
+    visible.length ? all(db,`SELECT p.*,e.name,CASE WHEN p.project_id=ANY(?::text[]) THEN e.employee_no END AS employee_no
+      FROM project_assignments p JOIN employees e ON e.id=p.employee_id AND e.org_id=p.org_id
       WHERE p.org_id=? AND p.project_id=ANY(?::text[]) AND (p.unassigned_at IS NULL OR p.employee_id=? OR p.project_id=ANY(?::text[]))
-      ORDER BY p.assigned_at DESC, p.id`,actor.org_id,visible,actor.id,managedIds) : [],
+      ORDER BY p.assigned_at DESC, p.id`,managedIds,actor.org_id,visible,actor.id,managedIds) : [],
     visible.length ? all(db,`SELECT d.*,e.name AS assignee,v.id AS version_id,v.filename,v.version,v.status AS file_status,v.review_note,v.uploaded_by
       FROM project_deliverables d LEFT JOIN employees e ON e.id=d.assignee_id AND e.org_id=d.org_id
       LEFT JOIN LATERAL (SELECT * FROM project_deliverable_versions v WHERE v.org_id=d.org_id AND v.deliverable_id=d.id
@@ -93,7 +94,7 @@ export async function projectsView(db: Db, actor: Actor, params: URLSearchParams
     visible.length ? all(db,`SELECT a.id,a.action,a.target_id AS project_id,a.created_at,e.name AS actor FROM audit a
       LEFT JOIN employees e ON e.id=a.actor_id AND e.org_id=a.org_id
       WHERE a.org_id=? AND a.entity='project' AND a.target_id=ANY(?::text[]) ORDER BY a.created_at DESC,a.id DESC LIMIT 250`,actor.org_id,visible) : [],
-    visible.length ? all(db,`SELECT p.id AS project_id,e.id AS employee_id,e.name FROM projects p JOIN employees e ON e.org_id=p.org_id
+    visible.length ? all(db,`SELECT p.id AS project_id,e.id AS employee_id,e.name,e.employee_no FROM projects p JOIN employees e ON e.org_id=p.org_id
       WHERE p.org_id=? AND p.id=ANY(?::text[]) AND p.manager_id=? AND e.status='Active' AND e.employment_status<>'Ended' AND e.role<>'guest'
         AND (e.id=? OR e.manager_id=? OR (e.department_id IS NOT NULL AND e.department_id=p.department_id)
         OR EXISTS(SELECT 1 FROM staff_unit_memberships m WHERE m.org_id=e.org_id AND m.employee_id=e.id AND m.unit_id=p.team_id))

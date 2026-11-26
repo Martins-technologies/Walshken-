@@ -24,7 +24,7 @@ type CheckIn = { id: string; employee_id: string; shift_id: string | null; start
 type Leave = { employee_id: string; starts_on: string; ends_on: string };
 type WorkItem = { id: string; employee_id: string; due_on: string | null; completed_at: string | null; time_zone?: string; assigned_at?: string; unassigned_at?: string | null };
 type Assessment = { employee_id: string; month: string; review_score: number; quality_score: number | null };
-type Calendar = { days: Set<string>; pending: boolean };
+type Calendar = { days: Set<string>; pendingMonths: Set<string> };
 export type ReportSnapshot = { version: 1; month: string; model: PerformanceModel; employees: PerformanceEmployee[]; arrivals: ArrivalRecord[] };
 export type Period = { month: string; start: string; end: string };
 type Context = { employees: ReportEmployee[]; shifts: Shift[]; checkIns: CheckIn[]; leaves: Leave[]; tasks: WorkItem[];
@@ -45,18 +45,38 @@ export function reportPerson(employee: ReportEmployee): PerformancePerson {
   return { id: employee.id, name: employee.name, hasPhoto: employee.has_photo, department: employee.department ?? "Unassigned", departmentId: employee.department_id };
 }
 
-async function calendar(db: Db, employee: ReportEmployee, from: string, to: string): Promise<Calendar> {
-  const days = new Set<string>();
-  let pending = false;
+async function calendar(db: Db, employee: ReportEmployee, shifts: Shift[]): Promise<Calendar> {
+  const days = new Set<string>(), pendingMonths = new Set<string>();
+  const ranges = new Map<string, { from: string; to: string }>();
+  for (const shift of shifts) {
+    const first = localDate(shift.starts_at, shift.time_zone);
+    const last = localDate(new Date(timestamp(shift.ends_at) - 1).toISOString(), shift.time_zone);
+    const month = first.slice(0, 7), range = ranges.get(month);
+    ranges.set(month, {
+      from: range && range.from < first ? range.from : first,
+      to: range && range.to > last ? range.to : last,
+    });
+  }
+  const from = [...ranges.values()].map(range => range.from).sort()[0];
+  const to = [...ranges.values()].map(range => range.to).sort().at(-1)!;
   if (holidaysEnabled()) {
     for (const holiday of await employeeCompanyHolidays(db, employee, from, to)) if (holiday.closed) days.add(holiday.on_date);
-    try {
-      for (const holiday of await applicableHolidays(db, employee, from, to)) {
-        if (holiday.required || holiday.closed) days.add(holiday.day);
+    const addRequiredHolidays = async (start: string, end: string) => {
+      try {
+        for (const holiday of await applicableHolidays(db, employee, start, end)) {
+          if (holiday.required || holiday.closed) days.add(holiday.day);
+        }
+        return true;
+      } catch (error) {
+        if (!(error instanceof AppError) || error.status !== 409) throw error;
+        return false;
       }
-    } catch (error) {
-      if (!(error instanceof AppError) || error.status !== 409) throw error;
-      pending = true;
+    };
+    // An unverified historical rule should only affect months with overlapping shifts.
+    if (!(await addRequiredHolidays(from, to))) {
+      for (const [month, range] of ranges) {
+        if ((range.from === from && range.to === to) || !(await addRequiredHolidays(range.from, range.to))) pendingMonths.add(month);
+      }
     }
     const paidDays = await all<{ day: string }>(db, `
       SELECT a.configuration::jsonb #>> '{facts,payDay}' AS day
@@ -78,7 +98,7 @@ async function calendar(db: Db, employee: ReportEmployee, from: string, to: stri
     const assignment = await employmentPersonOn(db, employee, h.day);
     if (h.jurisdiction === assignment.jurisdiction) days.add(h.day);
   }
-  return { days, pending };
+  return { days, pendingMonths };
 }
 
 const evidenceLimit = 60_000;
@@ -132,12 +152,12 @@ export async function performanceEvidence(db: Db, actor: Actor, employees: Repor
     return fail(413, "Narrow the report to a department or employee before requesting this volume of history.");
   }
   const calendars = new Map<string, Calendar>();
-  const scheduled = new Set(shifts.map(shift => shift.employee_id));
+  const scheduled = group(shifts);
   // Keep the number of live Postgres connections bounded on Preview.
   const calendarEmployees = employees.filter(employee => scheduled.has(employee.id));
   for (let start = 0; start < calendarEmployees.length; start += 8) {
     await Promise.all(calendarEmployees.slice(start, start + 8).map(async employee => {
-      calendars.set(employee.id, await calendar(db, employee, from, dayAdd(to, 1)));
+      calendars.set(employee.id, await calendar(db, employee, scheduled.get(employee.id)!));
     }));
   }
   return { employees, shifts, checkIns, leaves, tasks, projects, milestones, assessments, calendars };
@@ -172,7 +192,7 @@ function arrive(shift: Shift, checkIn: CheckIn | undefined, leaves: Leave[], cal
     if (calendar?.days.has(cursor)) return record("Excluded", "Applicable holiday or company closure");
   }
   if (at < shift.starts_at && delta === null) return record("Upcoming", "Published shift has not started");
-  if (calendar?.pending) return record("Pending", "Verify the assigned holiday calendar");
+  if (calendar?.pendingMonths.has(day.slice(0, 7))) return record("Pending", "Verify the assigned holiday calendar for this month");
   if (checkIn && checkIn.source !== "Clock" && !checkIn.approved) return record("Pending", "Manual or corrected time awaits approval");
   if (delta !== null) {
     if (delta < 0) return record("Early", "Recorded check-in precedes the published start");

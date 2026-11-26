@@ -93,7 +93,8 @@ function invitationKey() {
 }
 export function meetingGuestLink(guest: Pick<Guest,"id"|"meeting_id"|"org_id"|"token_nonce">) {
   const preview = process.env.VERCEL_ENV === "preview";
-  const value = preview && process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : process.env.WALSHKEN_STAFF_EMAIL_ORIGIN;
+  const previewDomain = process.env.VERCEL_BRANCH_URL || process.env.VERCEL_URL;
+  const value = preview ? (previewDomain ? `https://${previewDomain}` : "") : process.env.WALSHKEN_STAFF_EMAIL_ORIGIN;
   let url: URL;
   try { url = new URL(value || ""); } catch { return fail(503, "Configure the staff email origin for external invitations."); }
   if (url.protocol !== "https:" || url.username || url.password || url.pathname !== "/" || url.search || url.hash || (preview && !url.hostname.endsWith(".vercel.app"))) {
@@ -122,9 +123,9 @@ export async function inviteMeetingGuests(db: Db, actor: Actor, meeting: GuestMe
     one<{ n: number }>(db, "SELECT count(*)::int AS n FROM meeting_members WHERE meeting_id=? AND removed_at IS NULL", meeting.id),
     all<Guest>(db, "SELECT * FROM staff_meeting_guests WHERE meeting_id=? AND org_id=?", meeting.id, actor.org_id),
   ]);
-  const byAddress = new Map(external.map(item => [item.email, item]));
-  const fresh = addresses.filter(addr => !byAddress.has(addr) || byAddress.get(addr)!.revoked_at);
-  if ((internal?.n ?? 0) + external.filter(item => !item.revoked_at).length + fresh.length > 100) return fail(409, "A meeting can have no more than 100 total participants.");
+  const openAddresses = new Set(external.filter(item => !item.revoked_at && item.rsvp !== "Declined").map(item => item.email));
+  const fresh = addresses.filter(addr => !openAddresses.has(addr));
+  if ((internal?.n ?? 0) + openAddresses.size + fresh.length > 100) return fail(409, "A meeting can have no more than 100 total participants.");
   for (const addr of fresh) {
     if (await one(db, "SELECT id FROM employees WHERE org_id=? AND lower(email)=? AND role<>'guest'", actor.org_id, addr)) {
       return fail(400, "Add your organization's staff via the internal participant selector.");
@@ -303,7 +304,7 @@ async function invitedSession(db: Db, guestId: string, lock: boolean) {
     JOIN employees e ON e.id=m.organizer_id AND e.org_id=m.org_id WHERE g.id=? AND m.provider='livekit' ${lock?"FOR UPDATE OF m,g":""}`,guestId);
 }
 function activeGuestRecording(db:Db, meetingId:string) {
-  return one<{id:string;participant_consent_required?:boolean|null}>(db,"SELECT * FROM meeting_recordings WHERE meeting_id=? AND status IN ('Starting','Active','Stopping') LIMIT 1",meetingId);
+  return one<{status:"Starting"|"Active"|"Stopping";participant_consent_required?:boolean|null}>(db,"SELECT * FROM meeting_recordings WHERE meeting_id=? AND status IN ('Starting','Active','Stopping') LIMIT 1",meetingId);
 }
 async function guestSessionView(db: Db, session: GuestSession) {
   const open=meetingJoinWindow(session);
@@ -313,13 +314,19 @@ async function guestSessionView(db: Db, session: GuestSession) {
       UNION ALL SELECT g.name FROM staff_meeting_guests g WHERE g.meeting_id=? AND g.org_id=? AND g.revoked_at IS NULL
       AND g.rsvp='Accepted' AND g.name<>'' AND EXISTS (SELECT 1 FROM staff_meeting_guest_presence a WHERE a.guest_id=g.id AND a.joined_at IS NOT NULL AND a.left_at IS NULL)`,session.id,session.org_id,session.id,session.org_id)
     : [];
+  const [recording,consentRequired,recordingEnabled]=await Promise.all([
+    activeGuestRecording(db,session.id),recordingConsentRequired(db,session),
+    session.recording_enabled?recordingPermitted(db,session):false,
+  ]);
+  const recordingRequired=!!recording?.participant_consent_required||consentRequired;
+  const recordingBlocked=!!recording&&(session.recording_consent===0||(session.recording_consent!==1&&recordingRequired));
   return {
     ok:true, title:session.title, organizer:session.organizer, description:session.guest_description, instructions:session.guest_instructions,
     startsAt:session.starts_at,endsAt:session.ends_at,timeZone:session.guest_time_zone,mode:session.mode,
     status:session.cancelled_at?"Cancelled":session.ended_at||session.ends_at<=now()?"Ended":session.rsvp,
-    guestName:session.guest_name,canJoin:open&&!session.locked_at,waiting:!!session.requested_at&&!session.admitted_at,
-    waitingRoom:lobbyRequired(session,session),recordingEnabled:!!session.recording_enabled&&await recordingPermitted(db,session),
-    recordingRequired:await recordingConsentRequired(db,session),recordingActive:!!await activeGuestRecording(db,session.id),
+    guestName:session.guest_name,canJoin:open&&!session.locked_at&&!recordingBlocked,waiting:!!session.requested_at&&!session.admitted_at,
+    joinStartsAt:new Date(Date.parse(session.starts_at)-900_000).toISOString(),locked:!!session.locked_at,canPublish:!!session.can_publish,
+    waitingRoom:lobbyRequired(session,session),recordingEnabled,recordingRequired,recordingStatus:recording?.status??null,recordingBlocked,
     recordingConsent:session.recording_consent,retentionDays:session.recording_retention_days, roster,
   };
 }

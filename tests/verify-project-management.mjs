@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 
 export async function verifyProjectManagement({ db, request, admin, staff, hr, person, adminId, staffId, runId }) {
   process.env.WALSHKEN_TASK_DATASET="preview";
+  process.env.WALSHKEN_CALENDAR_ENABLED="1";
+  process.env.WALSHKEN_MANAGEMENT_TEAMS_ENABLED="1";
   const manager=await person("employee","Assigned project manager","PROJECT-MANAGER-"+runId);
   const teamMember=await person("employee","Project team member","PROJECT-TEAM-"+runId);
   const outsider=await person("employee","Outside project","PROJECT-OUTSIDE-"+runId);
@@ -33,9 +35,17 @@ export async function verifyProjectManagement({ db, request, admin, staff, hr, p
   await request("projects/edit",403,manager,{id:project,revision:1,name:proof,owner:manager.id});
   await request("projects/assign",200,manager,{id:project,revision:1,employees:[staffId,teamMember.id]});
   await request("projects/assign",200,manager,{id:project,revision:2,employees:[staffId,teamMember.id]});
+  await request("projects/assign",409,manager,{id:project,revision:1,employees:[staffId]});
   assert.equal((await detail(teamMember)).assignments.length,2);
   await request("projects/milestone-add",200,manager,{id:project,revision:2,title:"Verify evidence",due:"2027-05-19",assignee:teamMember.id});
   const milestone=(await detail(teamMember)).milestones[0];
+  const detailsURL="/staff/projects?project="+project;
+  const datesFor=async (user,filter="")=>(await request("view/calendar?anchor=2027-05-01&types=project"+filter,200,user)).calendar.entries
+    .filter(entry=>entry.href===detailsURL);
+  assert.deepEqual((await datesFor(teamMember)).map(event=>event.id),["milestone:"+milestone.id,"project:"+project]);
+  assert.deepEqual((await datesFor(staff)).map(event=>event.id),["project:"+project]);
+  assert.deepEqual(await datesFor(outsider),[]);
+  assert.deepEqual((await datesFor(admin,"&team=unit:"+team)).find(event=>event.id==="project:"+project).people,[teamMember.id]);
   await request("projects/milestone-complete",403,staff,{id:project,revision:3,milestone:milestone.id});
   const { maintainProjects }=await import("../lib/walshken/project-work.ts");
   assert.ok(await maintainProjects(db,"2027-05-18T15:00:00.000Z")>=5);
@@ -53,6 +63,7 @@ export async function verifyProjectManagement({ db, request, admin, staff, hr, p
   assert.equal(after.workload[0].milestones_done,1);
   await request("projects/assign",200,manager,{id:project,revision:4,employees:[teamMember.id]});
   assert.equal(await found(staff),undefined);
+  assert.deepEqual(await datesFor(staff),[]);
   const retained=(await detail(admin)).assignments.find(row=>row.employee_id===staffId);
   assert.ok(retained.assigned_at&&retained.unassigned_at&&retained.unassigned_by===manager.id);
   await assert.rejects(()=>db.prepare("DELETE FROM project_assignments WHERE id=?",[retained.id]).run(),/immutable/);

@@ -11,7 +11,8 @@ export async function POST(request:Request, context:{params:Promise<{action:stri
     const data=await payload(request);
     const db=database();
     const ip=request.headers.get("x-vercel-forwarded-for") || "local";
-    await throttle(db,`external-meeting:${action}:${await digest(ip.slice(0,200))}`,action==="exchange"?40:240,60_000);
+    const limit=action==="exchange"?40:action==="status"?1600:240;
+    await throttle(db,`external-meeting:${action}:${await digest(ip.slice(0,200))}`,limit,60_000);
     return await guestMeetingAction(db,request,action,data);
   } catch(error) { return handleError(error); }
 }

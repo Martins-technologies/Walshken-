@@ -6,7 +6,9 @@ import { holidayDataset, holidaysEnabled, readRule } from "./holiday-access";
 import { holidayDates } from "./canadian-calendars";
 import type { CompanyHoliday, HolidayAssignment, HolidayRule } from "./holiday-types";
 import { payScope, payrollDataset, payrollEnabled } from "./payroll-access";
+import { projectLifecycleEnabled, projectScope } from "./project-authority";
 import { all, canManage, canPayroll, date, fail, json, now, requireStaff, scope, str, type Actor, type Db } from "./server";
+import { managementTeamsEnabled } from "./staff-unit-memberships";
 import { calendarBounds, calendarDay, calendarTypes, type CalendarEntry, type CalendarKind, type CalendarMode, type CalendarOption, type CalendarPerson, type CalendarView, type StaffCalendarData } from "./staff-calendar-types";
 import { taskDataset, tasksEnabled } from "./tasks";
 import { localDate } from "./work";
@@ -18,11 +20,42 @@ type Person = CalendarPerson & { departmentName: string | null; managerName: str
 type Timed = { id: string; title: string; starts_at: string; ends_at: string; employee_id: string };
 type Leave = { id: string; employee_id: string; starts_on: string; ends_on: string; category: string; status: string; note: string | null };
 type DateRow = { id: string; employee_id: string; work_date: string; status: string };
+type ProjectDate = { id: string; project_id: string; title: string; due_on: string; status: string; people: string[] };
+type CalendarTeam = { id: string; name: string; members: string[] };
 const ids = "SELECT jsonb_array_elements_text(?::jsonb)";
 const link = (path: string, values: Record<string, string> = {}) => "/staff/" + path + (Object.keys(values).length ? "?" + new URLSearchParams(values) : "");
 const timedDay = (stamp: string, zone: string) => localDate(stamp, zone);
 const unique = <T>(values: T[]) => [...new Set(values)];
 const rangeLimit = 92 * 86_400_000;
+
+async function projectDates(db: Db, actor: Actor, roster: Person[], department: string, from: string, to: string) {
+  const allowed = projectScope(actor, "read", taskDataset());
+  return all<ProjectDate>(db, `
+    WITH accessible AS (
+      SELECT p.id,p.name,p.due_on,p.status,p.owner_id,p.manager_id FROM projects p
+      JOIN employees owner ON owner.id=p.owner_id AND owner.org_id=p.org_id
+      WHERE p.org_id=? AND p.status NOT IN ('Cancelled','Archived')
+        AND (?='' OR COALESCE(p.department_id,owner.department_id)=?)
+        AND (${allowed.sql})
+    ), assigned AS (
+      SELECT p.id AS project_id,p.owner_id AS employee_id FROM accessible p
+      UNION SELECT p.id,p.manager_id FROM accessible p WHERE p.manager_id IS NOT NULL
+      UNION SELECT a.project_id,a.employee_id FROM project_assignments a
+        JOIN accessible p ON p.id=a.project_id WHERE a.org_id=? AND a.unassigned_at IS NULL
+    ), deadlines AS (
+      SELECT 'project:'||p.id AS id,p.id AS project_id,p.name AS title,p.due_on,p.status,NULL::text AS assignee_id
+        FROM accessible p WHERE p.due_on BETWEEN ? AND ?
+      UNION ALL SELECT 'milestone:'||m.id,p.id,m.title,m.due_on,
+        CASE WHEN m.completed_at IS NOT NULL THEN 'Completed milestone' ELSE 'Milestone deadline' END,m.assignee_id
+        FROM project_milestones m JOIN accessible p ON p.id=m.project_id WHERE m.due_on BETWEEN ? AND ?
+      UNION ALL SELECT 'deliverable:'||d.id,p.id,d.title,d.due_on,'Deliverable deadline',d.assignee_id
+        FROM project_deliverables d JOIN accessible p ON p.id=d.project_id
+        WHERE d.org_id=? AND d.archived_at IS NULL AND d.due_on BETWEEN ? AND ?
+    ) SELECT d.id,d.project_id,d.title,d.due_on,d.status,array_agg(a.employee_id ORDER BY a.employee_id) AS people
+      FROM deadlines d JOIN assigned a ON a.project_id=d.project_id AND (d.assignee_id IS NULL OR d.assignee_id=a.employee_id)
+      WHERE a.employee_id IN(${ids}) GROUP BY d.id,d.project_id,d.title,d.due_on,d.status`,
+    actor.org_id,department,department,...allowed.args,actor.org_id,from,to,from,to,actor.org_id,from,to,JSON.stringify(roster.map(person => person.id)));
+}
 // Some time zones move clocks forward at midnight. Find the first instant of that local day if midnight is skipped.
 function dayBoundary(day: string, zone: string) {
   try {
@@ -173,10 +206,14 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
   const filters = { department: filter("department"), country: filter("country"),region:filter("region"),jurisdiction:filter("jurisdiction"), employee: filter("employee"), team: filter("team"), kinds };
   const scoped = personal ? { sql: "e.id=?", args: [actor.id] } : scope(actor);
   const payrollManagement = mode === "admin" && canPayroll(actor) && payrollEnabled();
-  let [people, payrollPeople, groups] = await Promise.all([
+  const [people, payrollPeople, groups, units] = await Promise.all([
     peopleInScope(db, actor, scoped),
     payrollManagement ? payScope(db, actor).then(allowed => peopleInScope(db, actor, allowed)) : Promise.resolve([]),
     personal ? Promise.resolve([]) : calendarTeams(db, actor),
+    !personal && managementTeamsEnabled() ? all<CalendarTeam>(db,`
+      SELECT u.id,u.name,array_agg(m.employee_id) AS members FROM units u
+      JOIN staff_unit_memberships m ON m.org_id=u.org_id AND m.unit_id=u.id
+      WHERE u.org_id=? AND u.kind='Team' GROUP BY u.id,u.name ORDER BY lower(u.name),u.id`,actor.org_id) : Promise.resolve([]),
   ]);
   const scopedPeople=[...new Map([...people,...payrollPeople].map(person=>[person.id,person])).values()];
   const histories=new Map<string,EmploymentTerms[]>();
@@ -206,12 +243,15 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
   const departments = options(visible, "departmentId", "departmentName");
   const visibleIds = new Set(visible.map(person => person.id));
   const visibleGroups = groups.filter(group => group.members.some(id => visibleIds.has(id)));
+  const visibleUnits = units.filter(unit => unit.members.some(id => visibleIds.has(id)));
   const teams = [
+    ...visibleUnits.map(unit => ({ id: "unit:" + unit.id, name: unit.name })),
     ...options(visible, "managerId", "managerName").map(team => ({ ...team, name: team.name + "’s team" })),
     ...visibleGroups.map(group => ({ id: "group:" + group.id, name: group.name })),
   ];
-  const groupMembers = filters.team.startsWith("group:")
-    ? new Set(visibleGroups.find(group => "group:" + group.id === filters.team)?.members ?? []) : null;
+  const membersForTeam = filters.team.startsWith("unit:")
+    ? new Set(visibleUnits.find(unit => "unit:" + unit.id === filters.team)?.members ?? [])
+    : filters.team.startsWith("group:") ? new Set(visibleGroups.find(group => "group:" + group.id === filters.team)?.members ?? []) : null;
   const matchGeography=(person:Person,day:string)=>{
     const geo=geographyOn(person,day);
     return (!filters.country||filters.country===geo.country)&&(!filters.region||filters.region===geo.region)
@@ -219,7 +259,7 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
   };
   const commonMatch = (person: Person) => (!filters.employee || filters.employee === person.id)
     && [...possibleDays].some(day=>matchGeography(person,day))
-    && (!filters.team || (groupMembers ? groupMembers.has(person.id) : filters.team === person.managerId || filters.team === person.id));
+    && (!filters.team || (membersForTeam ? membersForTeam.has(person.id) : filters.team === person.managerId || filters.team === person.id));
   const matches = (person: Person) => commonMatch(person) && (!filters.department || filters.department === person.departmentId);
   const selected = people.filter(matches);
   const taskPeople = people.filter(commonMatch);
@@ -230,7 +270,7 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
   const stage = workDataset();
   const records = workforceEnabled() && selected.length > 0;
   const requestedType = (...types: CalendarKind[]) => kinds.length === 0 || types.some(type => kinds.includes(type));
-  const [shifts, tasks, meetings, leave, absences, sheets, corrections, swaps, paydays, holidays, taskDepartments] = await Promise.all([
+  const [shifts, tasks, meetings, leave, absences, sheets, corrections, swaps, paydays, holidays, taskDepartments, projects] = await Promise.all([
     records ? all<Timed & { location: string; state: string }>(db, `SELECT s.id,s.title,s.starts_at,s.ends_at,s.employee_id,s.location,s.state
       FROM shifts s WHERE s.org_id=? AND s.release_stage=? AND s.workflow_version=1 AND s.state IN ('Published'${personal ? "" : ",'Draft'"})
       AND s.starts_at<? AND s.ends_at>? AND s.employee_id IN(${ids})`, actor.org_id, stage, end, start, rosterJson) : [],
@@ -282,6 +322,8 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
       JOIN units u ON u.id=t.department_id AND u.org_id=t.org_id AND u.kind='Department'
       WHERE t.org_id=? AND t.release_stage=? AND t.workflow_version=1 AND t.status<>'Cancelled'
       AND t.employee_id IN(${ids})`, actor.org_id, taskDataset(), JSON.stringify(people.map(person => person.id))) : [],
+    projectLifecycleEnabled() && taskPeople.length && requestedType("project")
+      ? projectDates(db,actor,taskPeople,filters.department,from,to) : [],
   ]);
   const entries: CalendarEntry[] = [...holidays.entries];
   const appendDate = (id: string, kind: CalendarKind, title: string, day: string, people: string[], status?: string, href?: string, endDate = day) => {
@@ -302,6 +344,8 @@ export async function staffCalendar(db: Db, actor: Actor, params: URLSearchParam
       appendDate("review:" + task.id, "approval", task.title, timedDay(task.submitted_at, actor.time_zone), [task.employee_id],
         task.reviewer_id === actor.id ? "Your task review" : "Task review pending", href);
   }
+  for (const project of projects) appendDate(project.id,"project",project.title,project.due_on,project.people,project.status,
+    link("projects",{project:project.project_id}));
   const meetingRows = new Map<string, CalendarEntry>();
   for (const meeting of meetings) {
     const endsAt = meeting.ended_at ? new Date(Math.min(Date.parse(meeting.ended_at), Date.parse(meeting.ends_at))).toISOString() : meeting.ends_at;

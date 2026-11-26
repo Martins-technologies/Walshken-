@@ -1,0 +1,30 @@
+.staff-premium .documents-app {
+  --doc-line: var(--line);
+  --doc-muted: var(--muted);
+  min-width: 0;
+}
+.documents-app .document-navigation {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px;
+}
+.documents-app .document-navigation .document-tabs {margin: 0; min-width: 0}
+.documents-app .document-navigation button[aria-pressed="true"] {color: var(--blue-dark); background: var(--cloud)}
+.documents-app .document-navigation .document-secure-badge {margin: 0; flex: none; color: #40577b}
+.staff-premium .documents-app :is(.document-folders,.document-list,.document-security-panel,.document-inspector,.document-form) {
+  border-radius: var(--portal-radius);
+}
+.staff-premium .documents-app .document-name {min-width: 165px}
+.staff-premium .documents-app .document-name strong {overflow-wrap: anywhere}
+.staff-premium .documents-app .documents-toolbar :is(input,select) {min-width: 0; max-width: 100%}
+.staff-premium .documents-app .document-inspector {scroll-margin-top: 73px}
+.staff-premium .documents-app .document-inspector h3 {overflow-wrap: anywhere}
+.staff-premium .documents-app .document-security-panel h3 {margin-top: 4px}
+.staff-premium .documents-app .document-list-heading {align-items: flex-start}
+.staff-premium .documents-app .document-list-heading h3 {overflow-wrap: anywhere}
+.staff-premium .documents-app .document-empty {min-height: 137px}
+@media(max-width:700px) {
+  .documents-app .document-navigation {align-items: flex-start; flex-direction: column}
+  .staff-premium .documents-app .document-inspector-grid {grid-template-columns: minmax(0,1fr)}
+  .staff-premium .documents-app .document-view-actions select {max-width: 100%}
+  .staff-premium .documents-app .documents-toolbar :is(input,select) {font-size: 16px}
+  .staff-premium .documents-app .document-name {min-width: 155px}
+}

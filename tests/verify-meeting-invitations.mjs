@@ -41,6 +41,22 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
   const rows=await all("SELECT * FROM staff_meeting_guests WHERE meeting_id=? ORDER BY email",id);
   assert.equal(rows.length,2,"Canonical and duplicate email handling");
   const [external,declined]=rows;
+  const vercelEnvironment = {VERCEL_ENV:process.env.VERCEL_ENV,VERCEL_BRANCH_URL:process.env.VERCEL_BRANCH_URL,VERCEL_URL:process.env.VERCEL_URL};
+  try {
+    process.env.VERCEL_ENV="preview";
+    process.env.VERCEL_BRANCH_URL="stable-preview.vercel.app";
+    process.env.VERCEL_URL="deployment-preview.vercel.app";
+    assert.equal(new URL(meetingGuestLink(external)).host,"stable-preview.vercel.app");
+    delete process.env.VERCEL_BRANCH_URL;
+    assert.equal(new URL(meetingGuestLink(external)).host,"deployment-preview.vercel.app");
+    delete process.env.VERCEL_URL;
+    assert.throws(()=>meetingGuestLink(external),/staff email origin/);
+  } finally {
+    for (const [key,value] of Object.entries(vercelEnvironment)) {
+      if(value===undefined)delete process.env[key];
+      else process.env[key]=value;
+    }
+  }
   const organizerDetails=await request("meeting/"+id,200,admin);
   const participantDetails=await request("meeting/"+id,200,staff);
   assert.equal(organizerDetails.externalGuests.find(g=>g.id===external.id).email,"guest@partner.test");
@@ -108,6 +124,9 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     assert.deepEqual(claims.video.canPublishSources,["microphone","camera"]);
     assert.ok(!claims.video.roomAdmin&&!claims.video.roomRecord&&!claims.video.canPublishData);
     assert.ok(claims.exp-claims.nbf<=60);
+    await emit("room_finished",claims.video.room);
+    assert.equal((await requestGuest("status",200,guest,{},browser)).status,"Accepted","An empty provider room must not end a scheduled meeting.");
+    await requestGuest("join",200,guest,{},browser);
     const remote={identity:claims.sub,sid:"PA_external_guest",kind:"STANDARD",joinedAt:String(Math.floor(Date.now()/1000))};
     participants.set(claims.video.room,[remote]);
     await emit("participant_joined",claims.video.room,remote);
@@ -122,6 +141,11 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     assert.equal(participants.get(claims.video.room).length,0);
     await requestGuest("join",404,guest,{},browser);
     await requestGuest("exchange",404,guest,{token},{});
+    await request("calls/guest-invite",200,admin,{id,externalEmails:[declined.email]});
+    const reinvited=await read("SELECT * FROM staff_meeting_guests WHERE id=?",declined.id);
+    assert.equal(reinvited.rsvp,"Invited");
+    assert.notEqual(reinvited.token_nonce,declined.token_nonce);
+    await requestGuest("exchange",404,declined.id,{token:declineToken},declineBrowser);
 
     const scheduled=(await request("calls/schedule",201,admin,{...options,title:"Future external meeting",members:[],externalEmails:["future@partner.test"],startsAt:future(7_200_000),endsAt:future(10_800_000)})).id;
     const scheduledGuest=await read("SELECT * FROM staff_meeting_guests WHERE meeting_id=?",scheduled);
