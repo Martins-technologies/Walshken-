@@ -21,7 +21,7 @@ type Absence={id:string;employee_id:string;name:string;title:string;starts_at:st
 type Swap={id:string;requester_id:string;partner_id:string;requester:string;partner:string;source_start:string;target_start:string;status:string;revision:number;note:string;review_note:string};
 type Event={id:string;name:string;actor:string;action:string;created_at:string;detail:string;entity:string};
 type Report={from:string;to:string;period:string;rows:{employee:string;employeeNo:string;employeeId:string;period:string;gross:number;unpaid:number;paid:number;approved:number;openRecords:number}[];totals:{gross:number;unpaid:number;paid:number;approved:number}};
-type Data={managedWorkforce:boolean;canViewPerformance?:boolean;canExportAttendance?:boolean;workExceptions?:RecordRow[]|null;leaveBalances?:{balances:{code:string;name:string;paid:boolean;entitlement:number;used:number;pending:number;available:number;from:string;to:string}[]}|null;leaveError?:string;staffReadiness?:boolean;holidayManagement?:boolean;team:boolean;manager:boolean;policyAdmin:boolean;actorId:string;from:string;to:string;today:string;serverTime:string;rows:Entry[];shifts:Scheduled[];sheets:Timesheet[];corrections:Correction[];leave:Leave[];holidays:Holiday[];absences:Absence[];staff:Employee[];swaps:Swap[];events:Event[];policy:WorkPolicy|null;policyRevision:number;policyError:string;active:(Attendance&{breaks:Break[];policy:WorkPolicy})|null;currentShifts:Shift[];swapChoices:(Shift&{name:string})[];report:Report;truncated:boolean;rules:{source:string;verifiedOn:string}};
+type Data={managedWorkforce:boolean;detailPolicy?:boolean;canViewPerformance?:boolean;canExportAttendance?:boolean;workExceptions?:RecordRow[]|null;leaveBalances?:{balances:{code:string;name:string;paid:boolean;entitlement:number;used:number;pending:number;available:number;from:string;to:string}[]}|null;leaveError?:string;staffReadiness?:boolean;holidayManagement?:boolean;team:boolean;manager:boolean;policyAdmin:boolean;actorId:string;from:string;to:string;today:string;serverTime:string;rows:Entry[];shifts:Scheduled[];sheets:Timesheet[];corrections:Correction[];leave:Leave[];holidays:Holiday[];absences:Absence[];staff:Employee[];swaps:Swap[];events:Event[];policy:WorkPolicy|null;policyRevision:number;policyError:string;active:(Attendance&{breaks:Break[];policy:WorkPolicy})|null;currentShifts:Shift[];swapChoices:(Shift&{name:string})[];report:Report;truncated:boolean;rules:{source:string;verifiedOn:string}};
 type Review={action:string;id:string;revision?:number;title:string;choices?:string[];incidents?:string[]};
 const hours=(s:number)=>`${(s/3600).toFixed(2)} h`;
 const clock=(s:number)=>`${Math.floor(s/3600)}:${String(Math.floor(s/60)%60).padStart(2,'0')}:${String(Math.floor(s)%60).padStart(2,'0')}`;
@@ -35,16 +35,19 @@ function Empty({text}:{text:string}){return <div className="wf-empty"><CalendarD
 export function WorkforceWorkspace({section,actor,initial}:{section:string;actor:Viewer;initial:unknown}){
  const [data,setData]=useState(initial as Data),[filters,setFilters]=useState({from:(initial as Data).from,to:(initial as Data).to,team:(initial as Data).team?'1':'0',period:(initial as Data).report.period}),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[mode,setMode]=useState(''),[selected,setSelected]=useState<Entry|null>(null),[editShift,setEditShift]=useState<Scheduled|null>(null),[review,setReview]=useState<Review|null>(null),[checked,setChecked]=useState<string[]>([]),[calendar,setCalendar]=useState('month'),[tick,setTick]=useState(Date.now()),[history,setHistory]=useState<Event[]|null>(null);
  const [dateDraft,setDateDraft]=useState({from:filters.from,to:filters.to});
- const query=new URLSearchParams(filters).toString(),activeQuery=useRef(query);
+ const requestsPolicy=mode==='policy'||mode==='manual';
+ const params=new URLSearchParams({...filters,section,...(requestsPolicy?{details:'policy'}:{})});
+ const query=params.toString(),activeQuery=useRef(query),loadedQuery=useRef(query);
  const load=useCallback(async()=>{
-   try{const result=await api('list?'+query);if(activeQuery.current===query)setData(result);}
+   try{const result=await api('list?'+query);if(activeQuery.current===query){loadedQuery.current=query;setData(result);}}
    catch(error){if(activeQuery.current===query)throw error;}
  },[query]);
  useEffect(()=>{
    activeQuery.current=query;
+   if(loadedQuery.current===query)return;
    const controller=new AbortController();
    api('list?'+query,undefined,controller.signal).then(result=>{
-     if(!controller.signal.aborted)setData(result);
+     if(!controller.signal.aborted){loadedQuery.current=query;setData(result);}
    }).catch(reason=>{
      if(!controller.signal.aborted)setError(reason.message);
    });
@@ -87,9 +90,10 @@ export function WorkforceWorkspace({section,actor,initial}:{section:string;actor
   <div className="wf-stats" aria-label="Selected attendance totals">{statistics.map(({label,value,summary,Icon})=><div key={label}>
     <span className="wf-metric-icon"><Icon size={16} aria-hidden="true"/></span><span>{label}</span><strong>{value}</strong><small>{summary}</small>
   </div>)}</div>
-  {mode==='policy'&&<PolicyForm data={data} busy={busy} save={input=>action('policy-save',input)} close={()=>setMode('')}/>}
+  {requestsPolicy&&!data.detailPolicy&&!error&&<p className="wf-loading" role="status">Loading employee policies…</p>}
+  {mode==='policy'&&data.detailPolicy&&<PolicyForm data={data} busy={busy} save={input=>action('policy-save',input)} close={()=>setMode('')}/>}
   {mode==='shift'&&<ShiftForm data={data} actor={actor} shift={editShift} busy={busy} save={input=>action(editShift?'shift-edit':'shift-create',input)} close={()=>{setMode('');setEditShift(null);}}/>}
-  {mode==='manual'&&<IntervalForm data={data} actor={actor} busy={busy} save={input=>action('manual-entry',input)} close={()=>setMode('')}/>}
+  {mode==='manual'&&data.detailPolicy&&<IntervalForm data={data} actor={actor} busy={busy} save={input=>action('manual-entry',input)} close={()=>setMode('')}/>}
   {mode==='correction'&&selected&&<IntervalForm key={selected.id} data={data} actor={actor} entry={selected} busy={busy} save={input=>action('correction-request',input)} close={()=>setMode('')}/>}
   {mode==='history'&&selected&&<section className="wf-panel"><header><h3>Attendance history · {selected.name}</h3><button className="icon-button" onClick={()=>setMode('')} aria-label="Close history"><X size={18}/></button></header>{history?<EventList events={history} zone={actor.timeZone}/>:<p>Loading recorded history…</p>}</section>}
   {review&&<section className="wf-panel wf-review" key={review.id+review.action}><header><h3>{review.title}</h3><button className="icon-button" onClick={()=>setReview(null)} aria-label="Close review"><X size={18}/></button></header><form className="wf-form" onSubmit={e=>{e.preventDefault();const value=formValues(e);void action(review.action,{...value,id:review.id,revision:review.revision,acknowledge:value.acknowledge==='on'});}}>{review.choices&&<label>Decision<select name="decision">{review.choices.map(s=><option key={s}>{s}</option>)}</select></label>}{review.incidents?.length?<div className="wf-warning"><strong>Recorded compliance incident</strong>{review.incidents.map(s=><p key={s}>{s}</p>)}<label className="wf-check"><input name="acknowledge" type="checkbox"/>I have documented this incident and am approving only actual payable time. This does not erase the issue or deduct an untaken break.</label></div>:null}<label>Review note / reason<textarea name="note" required maxLength={1500}/></label><button className="btn btn-blue btn-small" disabled={busy}>Save recorded decision</button></form></section>}

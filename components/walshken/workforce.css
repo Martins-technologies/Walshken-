@@ -13,7 +13,7 @@
 .workforce-app .wf-filterbar label { min-width: 0; }
 .workforce-app .wf-filterbar :where(input,select,button,a) { min-height: 39px; }
 .workforce-app .wf-filterbar input, .workforce-app .wf-filterbar select { background: #fbfdff; padding-block: 7px; }
-.wf-stats > div { background: linear-gradient(145deg,#f4f8ff,#fff 72%); padding: clamp(12px,2.5cqw,21px); min-width: 0; }
+.wf-stats > div { background: #fff; padding: clamp(12px,2.5cqw,21px); min-width: 0; }
 .workforce-app .wf-metric-icon {
   display: grid;
   width: 34px;
@@ -26,15 +26,15 @@
 .wf-stats strong { font-variant-numeric: tabular-nums; }
 .wf-stats small, .workforce-app .wf-table small { color: #516886; }
 .wf-loading { padding: 13px 16px; border-radius: 10px; border: 1px solid #dce6f3; background: #f6f9ff; color: #36537b; }
-.workforce-app .wf-panel:not(.staff-performance) > header { background: linear-gradient(110deg,#f0f5fe,#fff 82%); }
+.workforce-app .wf-panel:not(.staff-performance) > header { background: #f8fafd; }
 .workforce-app .wf-panel > .table-scroll { overflow-x: auto; max-width: 100%; }
 .workforce-app .wf-table { font-variant-numeric: tabular-nums; }
 .workforce-app .wf-table th { color: #455b7b; }
 .workforce-app .wf-table tbody tr:hover { background: #f9fbff; }
 .workforce-app .wf-row-actions button:hover { text-decoration: underline; }
 .workforce-app .wf-form :where(input:not([type=checkbox]),select,textarea) { min-height: 40px; }
-.workforce-app .wf-clock-card { background: linear-gradient(115deg,#e5eeff,#fdfdff 70%); }
-.workforce-app .wf-clock-card.clocked-in { background: linear-gradient(115deg,#e0edff,#fcfeff 70%); }
+.workforce-app .wf-clock-card { background: #f8faff; }
+.workforce-app .wf-clock-card.clocked-in { background: #eef4ff; }
 .wf-schedule-range { font-size: .82rem; }
 .workforce-app .wf-calendar > .wf-muted { min-width: 0; }
 .workforce-app .wf-calendar-days > div.today > strong { color: #174bc3; font-weight: 750; }

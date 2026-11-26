@@ -7,7 +7,7 @@
   align-items: center;
   flex-direction: row;
   flex-wrap: wrap;
-  background: radial-gradient(ellipse at 102% -22%, #3962c91a 0, transparent 62%), #fff;
+  background: #fff;
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: clamp(18px, 3cqi, 34px);
@@ -28,7 +28,7 @@
   place-items: center;
   border-radius: 16px;
   color: #fff;
-  background: linear-gradient(145deg, #173d95, #2c5ce0);
+  background: #2455d6;
   box-shadow: 0 9px 16px #2853bd28;
 }
 

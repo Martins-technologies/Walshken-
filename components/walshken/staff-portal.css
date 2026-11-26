@@ -87,7 +87,7 @@
 .staff-premium .panel-heading p {margin-top: 5px; line-height: 1.5}
 .staff-premium .panel-heading>.text-link {flex: none; white-space: nowrap; min-height: 24px}
 .staff-premium .panel-grid,.staff-premium .integration-grid {gap: 15px}
-.staff-premium .table-scroll {overscroll-behavior-inline: contain; scrollbar-width: thin; scrollbar-color: #bac8dc #f3f6fa; max-width: 100%; border-radius: 8px}
+.staff-premium .table-scroll {position: relative; overscroll-behavior-inline: contain; scrollbar-width: thin; scrollbar-color: #bac8dc #f3f6fa; max-width: 100%; border-radius: 8px}
 .staff-premium .staff-table {font-variant-numeric: tabular-nums}
 .staff-premium .staff-table th {background: #f0f3f8; color: #42536c; padding: 10px 12px; font-size: 11px; letter-spacing: .01em}
 .staff-premium .staff-table td {line-height: 1.48; padding: 11px 12px; border-color: #ebeff5}
@@ -107,6 +107,7 @@
 .staff-premium .btn-outline:hover:not(:disabled) {border-color: #bcccec}
 .staff-premium .staff-fields {gap: 0 14px}
 .staff-premium .staff-fields>*,.staff-premium .staff-form label {min-width: 0}
+.staff-premium .table-filter>label {min-width: 0; max-width: 100%}
 .staff-premium .staff-form label {font-size: 12px; margin-bottom: 13px}
 .staff-premium :is(.staff-form,.table-filter,.select-label) :is(input,select,textarea) {border-color: #cad5e4; color: var(--ink); min-width: 0; max-width: 100%}
 .staff-premium .staff-form :is(input,select,textarea):not([type="checkbox"]) {margin-top: 6px}

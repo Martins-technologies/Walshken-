@@ -119,7 +119,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
     return json({tasks,shifts:shiftRows,alerts,active,drafts:unsubmitted?.count??0});
   }
   if(section==="reports"&&performanceEnabled()&&(!canManage(actor)||!workforceEnabled()))return json({performanceOnly:true});
-  if(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section)){const query=new URLSearchParams(params);if(!query.has("team")&&["scheduling","approvals","reports","holidays"].includes(section))query.set("team","1");return workforceData(db,actor,query);}
+  if(workforceEnabled()&&["attendance","shifts","scheduling","timesheets","approvals","leave","holidays","reports"].includes(section)){const query=new URLSearchParams(params);query.set("section",section);if(!query.has("team")&&["scheduling","approvals","reports","holidays"].includes(section))query.set("team","1");return workforceData(db,actor,query);}
   if(section==="tasks") return tasksEnabled()?taskDashboard(db,actor,params):json({rows:await taskRows(db,actor),staff:canManage(actor)?await staffChoices(db,actor):[],projects:await projectRows(db,actor)});
   if(section==="projects") return projectLifecycleEnabled()?projectsView(db,actor,params):json({rows:await projectRows(db,actor)});
   if(["attendance","shifts","scheduling","timesheets","approvals","leave"].includes(section)){

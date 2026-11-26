@@ -4,7 +4,7 @@
 .pay-workspace :where(a,.pay-table-wrap,summary):focus-visible { outline: 2px solid #315ccb; outline-offset: 3px; }
 .pay-hero {
   padding: clamp(18px,3cqw,32px);
-  background: linear-gradient(115deg,#172d61,#244da0 72%,#3058b0);
+  background: #182e60;
   border-radius: 18px;
   position: relative;
 }
@@ -38,7 +38,7 @@
 .pay-tabs button.active { background: #fff; border-color: #ccdafa; color: #214baa; }
 .pay-tabs button:hover:not(.active) { background: #f8faff; }
 .pay-card, .pay-total { border-radius: 16px; border-color: #dce6f3; }
-.pay-total { background: linear-gradient(150deg,#f1f6ff,#fff 74%); }
+.pay-total { background: #fff; }
 .pay-total, .pay-total dl { font-variant-numeric: tabular-nums; }
 .pay-card :where(header p,.pay-help), .pay-guide p { margin-block: 4px 8px; }
 .pay-table-wrap { border: 1px solid #dce6f3; border-radius: 10px; }
