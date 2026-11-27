@@ -1,9 +1,10 @@
 import {createHash} from "node:crypto";
 import {clientEmailOrigin,clientEmailSender,sendClientEmail} from "./client-email";
+import {clientNoticeEmail,type ClientNoticeType} from "./client-email-templates";
 import {clientPortalEnabled} from "./client-feature";
 import {all,fail,id,json,now,one,run,str,type Db} from "./server";
 
-type NoticeType = "security"|"case"|"document"|"payment"|"invoice"|"agreement"|"call"|"announcement";
+type NoticeType = ClientNoticeType;
 type Notice = {type: NoticeType; title: string; body: string; href: string; dedupeKey: string; email?: boolean; securityRecipient?: string};
 type Mail = {id: string; customer_id: string; type: NoticeType; mail_to: string | null; attempts: number; lease_token: string; transport_digest: string | null};
 const internalLink = /^\/customer(?:\/[a-z0-9_./-]*)?(?:\?[a-z0-9_~.%+&=-]+)?$/i;
@@ -32,7 +33,7 @@ export async function notifyClient(db: Db, customerId: string, notice: Notice) {
 
 export async function clientNotifications(db: Db, customerId: string) {
   const [notifications, count, preference] = await Promise.all([
-    all(db, `SELECT id,type,title,body,href,created_at AS "createdAt",read_at AS "readAt",delivery FROM client_notifications
+    all(db, `SELECT id,type,title,body,href,created_at AS "createdAt",read_at AS "readAt",COALESCE(provider_delivery,delivery) AS delivery FROM client_notifications
       WHERE customer_id=? ORDER BY created_at DESC,id DESC LIMIT 100`, customerId),
     one<{n:number}>(db, "SELECT COUNT(*)::int AS n FROM client_notifications WHERE customer_id=? AND read_at IS NULL", customerId),
     one<{email:number}>(db, "SELECT email FROM client_notification_preferences WHERE customer_id=?", customerId),
@@ -99,12 +100,7 @@ export async function processClientNotificationEmails(db: Db, budget = 9_000) {
     const delivery = await run(db,`UPDATE client_notifications SET attempts=attempts+1,mail_to=?,transport_digest=?
       WHERE id=? AND lease_token=? AND delivery='Processing'`, to,transport,job.id,job.lease_token);
     if (!delivery.count) continue;
-    const security = job.type==="security";
-    const subject = security ? "Walshken account security alert" : "New update in your Walshken client portal";
-    const path = security ? "/customer/security" : "/customer/notifications";
-    const content = security ? "An account security event occurred. Review it in your client portal."
-      : "You have a new update. Sign in to your client portal to view it.";
-    const sent = await sendClientEmail(sender,to,{subject,text:`${content}\n\n${origin}${path}`},`walshken-client-notice/${job.id}`);
+    const sent = await sendClientEmail(sender,to,clientNoticeEmail(job.type,origin),"walshken-client-notice/"+job.id);
     if (sent.receipt) {await finish("Accepted",sent.receipt);result.accepted++;}
     else if (sent.retryable && job.attempts<4) {
       await finish("Retry",null,new Date(Date.now()+60_000*2**job.attempts).toISOString());

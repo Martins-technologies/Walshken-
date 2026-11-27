@@ -58,7 +58,7 @@ function MeetingComposer({action,fields,people,finished,onTypeChange}:{
     catch(reason){setFailure(reason instanceof Error?reason.message:"Unable to save this meeting.");}
     finally{setPending(false);}
   }
-  return <form className="staff-form call-composer" onSubmit={send} onInvalidCapture={event=>{
+  return <form method="post" className="staff-form call-composer" onSubmit={send} onInvalidCapture={event=>{
     const target=event.target;
     if(target instanceof HTMLElement){const settings=target.closest("details");if(settings)settings.open=true;}
   }} onChangeCapture={event=>{
@@ -95,6 +95,9 @@ function MeetingComposer({action,fields,people,finished,onTypeChange}:{
 export function Calls({data,actor,refresh}:{data:ViewData;actor:Viewer;refresh:()=>void}){
   const [focus,setFocus]=useState(""),[detail,setDetail]=useState<Details|null>(null),[tab,setTab]=useState("Upcoming"),[search,setSearch]=useState("");
   const [dialog,setDialog]=useState(""),[notice,setNotice]=useState(""),[error,setError]=useState(""),[loadError,setLoadError]=useState(""),[busy,setBusy]=useState(false);
+  const [guestLink,setGuestLink]=useState("");
+  const [manualGuestCopy,setManualGuestCopy]=useState(false);
+  const guestLinkInput=useRef<HTMLInputElement>(null);
   const [recordingPlayback,setRecordingPlayback]=useState<{recording:string;url:string}|null>(null);
   const [access,setAccess]=useState<Access|null>(null),[devices,setDevices]=useState<Devices|null>(null),[waiting,setWaiting]=useState(false),[preview,setPreview]=useState(false);
   const [clock,setClock]=useState(Date.now()),[confirmAction,setConfirmAction]=useState<{action:string;employee?:string;recording?:string}|null>(null);
@@ -159,6 +162,24 @@ export function Calls({data,actor,refresh}:{data:ViewData;actor:Viewer;refresh:(
     catch(e){setError(e instanceof Error?e.message:"Unable to complete this action.");}finally{setBusy(false);setConfirmAction(null);}
   }
   async function copyLink(id:string){try{await navigator.clipboard.writeText(new URL(`/staff/calls?meeting=${encodeURIComponent(id)}`,window.location.origin).href);setNotice("Meeting link copied. Only invited, active accounts can join.");}catch{setError("The link could not be copied. You can copy the meeting URL from your address bar.");}}
+  async function openGuestLink(guest:string){
+    if(busy)return;
+    setBusy(true);setError("");setNotice("");
+    try{
+      const response=await api("calls/guest-link",{id:focus,guest});
+      if(!response.url)throw new Error("The invitation link is unavailable.");
+      setGuestLink(response.url);setManualGuestCopy(false);setDialog("guest-link");
+    }catch(reason){setError(reason instanceof Error?reason.message:"The invitation link could not be opened.");}
+    finally{setBusy(false);}
+  }
+  async function copyGuestLink(){
+    try{
+      await navigator.clipboard.writeText(guestLink);
+      setDialog("");setGuestLink("");setNotice("Invitation link copied.");
+    }catch{
+      guestLinkInput.current?.focus();guestLinkInput.current?.select();setManualGuestCopy(true);
+    }
+  }
   const policy=data.meetingPolicy;
   const managedRecording=data.recordingCategories!==undefined;
   const creationCategory=(creation.type==="Group"?"Group":creation.mode) as RecordingCategory;
@@ -248,6 +269,7 @@ export function Calls({data,actor,refresh}:{data:ViewData;actor:Viewer;refresh:(
               {detail.host&&open&&!guest.revoked_at&&<div className="row-actions">
                 {!!guest.requested_at&&!guest.admitted_at&&<button type="button" className="btn btn-blue btn-small" disabled={busy||!!m.locked_at} onClick={()=>void act("guest-admit",{guest:guest.id})}>Admit</button>}
                 <button className="text-link" type="button" onClick={()=>setDialog(`guest-permissions:${guest.id}`)}>Permissions</button>
+                {data.guestInvites?.canInvite&&!guest.opened&&guest.rsvp!=="Declined"&&<button className="text-link" type="button" disabled={busy} onClick={()=>void openGuestLink(value(guest,"id"))}>Open invitation link</button>}
                 {data.guestInvites?.canInvite&&guest.rsvp!=="Declined"&&!m.started_at&&<button className="text-link" type="button" disabled={busy} onClick={()=>void act("guest-resend",{guest:guest.id})}>Send replacement link</button>}
                 <button className="text-link danger" type="button" disabled={busy} onClick={()=>setDialog(`revoke-guest:${guest.id}`)}>Revoke</button>
               </div>}
@@ -298,6 +320,12 @@ export function Calls({data,actor,refresh}:{data:ViewData;actor:Viewer;refresh:(
       {name:"endsAt",label:"Ends (meeting time zone)",value:meetingLocalStamp(value(m,"ends_at"),value(m,"guest_time_zone")||meetingZone),type:"datetime-local",preserveLocalValue:true,required:true},
       {...zoneField,value:value(m,"guest_time_zone")||meetingZone},
     ]} submit="Save new meeting time" onDone={result=>{setDialog("");setNotice(result.message??"Rescheduled.");void load();refresh();}}/></Modal>}
+    {dialog==="guest-link"&&guestLink&&<Modal title="External meeting invitation" close={()=>{setDialog("");setGuestLink("");}}>
+      <p>Share this private link with the invited recipient. The first device that opens it can respond to the invitation.</p>
+      <div className="staff-fields"><label>Secure invitation link<input ref={guestLinkInput} readOnly value={guestLink} onFocus={event=>event.currentTarget.select()}/></label></div>
+      <button type="button" className="btn btn-outline" onClick={()=>void copyGuestLink()}>Copy invitation link</button>
+      {manualGuestCopy&&<small role="status">The link is selected for manual copying.</small>}
+    </Modal>}
     {dialog.startsWith("revoke-guest:")&&<Modal title="Revoke guest access?" close={()=>setDialog("")}><p>The secure link will expire immediately and the guest will be disconnected.</p><div className="row-actions">
       <button type="button" className="btn btn-outline" onClick={()=>setDialog("")}>Keep invitation</button>
       <button type="button" className="btn btn-danger" disabled={busy} onClick={()=>{const guest=dialog.slice("revoke-guest:".length);setDialog("");void act("guest-revoke",{guest});}}>Revoke access</button>

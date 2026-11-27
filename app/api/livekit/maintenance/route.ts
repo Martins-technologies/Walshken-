@@ -3,6 +3,8 @@ import { maintainClientCalls } from "@/lib/walshken/client-calls";
 import { clientPortalEnabled } from "@/lib/walshken/client-feature";
 import { maintainClientDocuments } from "@/lib/walshken/client-documents";
 import { processClientNotificationEmails } from "@/lib/walshken/client-notifications";
+import { maintainClientAppointmentReminders } from "@/lib/walshken/client-appointments";
+import { remindClientPayments } from "@/lib/walshken/client-payment-plans";
 import { purgeExpiredClientChallenges } from "@/lib/walshken/client-auth";
 import {processMeetingInvitationEmails} from "@/lib/walshken/meeting-invitation-email";
 import {maintainProjects} from "@/lib/walshken/projects";
@@ -24,6 +26,8 @@ export async function GET(request:Request){
     const clientPortal = clientPortalEnabled() ? {
       calls: await maintainClientCalls(db,orgId),
       documents: await maintainClientDocuments(db,orgId),
+      appointments: await maintainClientAppointmentReminders(db,orgId),
+      payments: await remindClientPayments(db),
       expiredChallenges: await purgeExpiredClientChallenges(db),
       notifications: await processClientNotificationEmails(db,Math.max(0,Math.min(8500,41000-(Date.now()-started)))),
     } : undefined;

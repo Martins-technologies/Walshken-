@@ -1,0 +1,76 @@
+.root {
+  --appointment-stroke: var(--cp-line, #dbe3ef);
+  --appointment-ink: var(--cp-ink, #122642);
+  --appointment-muted: var(--cp-muted, #506481);
+  display: grid;
+  gap: 14px;
+  color: var(--appointment-ink);
+  min-width: 0;
+}
+.panel {
+  min-width: 0;
+  border: 1px solid var(--appointment-stroke);
+  border-radius: 14px;
+  background: #fff;
+  padding: clamp(16px,2vw,24px);
+}
+.header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.header h2 { margin: 0; font-size: 1.15rem; letter-spacing: -.022em; }
+.header p,.rows p,.help {
+  margin: 5px 0 0;
+  color: var(--appointment-muted);
+  font-size: .85rem;
+  line-height: 1.55;
+}
+.help { margin-top: 12px; }
+.rows { list-style: none; margin: 0; padding: 0; }
+.rows li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px 16px;
+  padding: 12px 0;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--appointment-stroke);
+}
+.rows strong { font-size: .92rem; overflow-wrap: anywhere; }
+.rows .highlight { padding-inline: 12px; background: #edf3ff; border-radius: 8px; }
+.actions { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.actions a,.actions button {
+  font-size: .81rem;
+  white-space: normal;
+}
+.form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.form + .rows { margin-top: 18px; }
+.field { display: grid; gap: 5px; min-width: 0; max-width: 100%; font-size: .82rem; font-weight: 650; }
+.field input,.field select {
+  width: 100%;
+  border: 1px solid var(--appointment-stroke);
+  border-radius: 8px;
+  padding: 8px 10px;
+  min-height: 41px;
+  font: inherit;
+  color: var(--appointment-ink);
+  background: #fff;
+}
+.field select { max-width: min(100%, 45vw); }
+.failure,.notice,.empty {
+  padding: 9px 12px;
+  margin: 0;
+  border-radius: 8px;
+  background: #f4f7fc;
+  font-size: .88rem;
+  line-height: 1.5;
+}
+.failure { background: #fff0ef; color: #8e2925; }
+.notice { background: #e9f7ef; color: #215e42; }
+.root button:focus-visible,.root a:focus-visible,.root input:focus-visible,.root select:focus-visible { outline: 3px solid #6c9aff; outline-offset: 2px; }
+@media(max-width: 620px) {
+  .form .field,.form .field select,.header .field { width: 100%; max-width: 100%; }
+}

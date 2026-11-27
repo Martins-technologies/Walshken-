@@ -2,14 +2,16 @@
 
 import "./client-documents.css";
 import { useCallback,useEffect,useRef,useState,type FormEvent } from "react";
-import { clientDocumentAccept,clientDocumentCaptureNotice,clientDocumentCategories,clientDocumentMaxSize,type ClientDocumentEvent,type ClientDocumentRequest,type ClientDocumentRow,type ClientDocumentVersionRow } from "@/lib/walshken/client-document-types";
+import { clientDocumentAccept,clientDocumentCaptureNotice,clientDocumentCategories,clientDocumentMaxSize,clientDocumentQuality,type ClientWatermarkPolicy,type ClientDocumentEvent,type ClientDocumentRequest,type ClientDocumentRow,type ClientDocumentVersionRow } from "@/lib/walshken/client-document-types";
 import { ClientDocumentCamera } from "./client-document-camera";
+import { ClientDocumentWatermarkSettings } from "./client-document-watermark-settings";
 import { Icon } from "./brand";
 
 type Policy={revision:number;retain_days:number;client_download:boolean;policy_basis:string};
-type Data={documents:ClientDocumentRow[];requests:ClientDocumentRequest[];history:ClientDocumentVersionRow[];events:ClientDocumentEvent[];canManage:boolean;canConfigure:boolean;canDownload:boolean;policy:Policy|null};
+type Data={documents:ClientDocumentRow[];requests:ClientDocumentRequest[];history:ClientDocumentVersionRow[];events:ClientDocumentEvent[];canManage:boolean;canConfigure:boolean;canDownload:boolean;policy:Policy|null;watermark:ClientWatermarkPolicy|null};
 type FileState={key:string;file:File;percent:number;status:"Ready"|"Uploading"|"Submitted"|"Failed";note?:string};
 const pretty=(stamp:string)=>new Date(stamp).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"});
+const prettyDay=(day:string)=>new Date(day+"T12:00:00").toLocaleDateString(undefined,{dateStyle:"medium"});
 const kb=(bytes:number)=>new Intl.NumberFormat(undefined,{maximumFractionDigits:1}).format(bytes/1024)+" KB";
 function endpoint(action:string,caseId:string,staff:boolean,document?:string,version?:string,page?:number){
   const params=new URLSearchParams({case:caseId});
@@ -41,8 +43,8 @@ function upload(url:string,body:FormData,progress:(percentage:number)=>void){
   });
 }
 
-function SecureDocumentViewer({caseId,staff,item,version,canDownload,close}:{
-  caseId:string;staff:boolean;item:ClientDocumentRow;version:ClientDocumentVersionRow;canDownload:boolean;close:()=>void;
+export function SecureDocumentViewer({caseId,staff,item,version,canDownload,close}:{
+  caseId:string;staff:boolean;item:Pick<ClientDocumentRow,"id">;version:Pick<ClientDocumentVersionRow,"id"|"filename"|"version"|"page_count">;canDownload:boolean;close:()=>void;
 }){
   const dialog=useRef<HTMLDialogElement>(null),generation=useRef(0);
   const [page,setPage]=useState(1),[source,setSource]=useState(""),[mask,setMask]=useState(true),[privacy,setPrivacy]=useState(true);
@@ -104,7 +106,7 @@ function SecureDocumentViewer({caseId,staff,item,version,canDownload,close}:{
   return <dialog ref={dialog} className="client-doc-dialog client-secure-doc" aria-label="Secure document preview" onCancel={close}>
     <header><div><h2>{version.filename}</h2><p>Secure preview · Version {version.version}</p></div><button type="button" className="icon-button" aria-label="Close document preview" onClick={close}><Icon name="close"/></button></header>
     <div className="client-doc-mask" onContextMenu={event=>event.preventDefault()} onDragStart={event=>event.preventDefault()}>
-      {mask?<div role="status"><Icon name="lock" size={28}/><strong>{error?"Preview unavailable":"Private preview protected"}</strong><p>{error||"The page is hidden while Walshken verifies your access."}</p>{error&&<button className="btn btn-outline btn-small" type="button" onClick={()=>setReload(n=>n+1)}>Retry preview</button>}</div>:<img src={source} alt={`Watermarked image of ${version.filename}, page ${page}`} draggable={false}/>}
+      {mask?<div role="status"><Icon name="lock" size={28}/><strong>{error?"Preview unavailable":"Private preview protected"}</strong><p>{error||"The page is hidden while Walshken verifies your access."}</p>{error&&<button className="btn btn-outline btn-small" type="button" onClick={()=>setReload(n=>n+1)}>Retry preview</button>}</div>:<img src={source} alt={`Secure image of ${version.filename}, page ${page}`} draggable={false}/>}
     </div>
     <footer><div className="client-doc-pages">
       <button type="button" className="icon-button" disabled={page<=1} aria-label="Previous page" onClick={()=>setPage(p=>p-1)}><Icon name="previous"/></button>
@@ -122,8 +124,9 @@ function UploadBox({caseId,requests,replacement,selectedRequest,close,updated}:{
   caseId:string;requests:ClientDocumentRequest[];replacement:ClientDocumentRow|null;selectedRequest:string;close:()=>void;updated:()=>void;
 }){
   const chooser=useRef<HTMLInputElement>(null),cameraInput=useRef<HTMLInputElement>(null);
-  const [items,setItems]=useState<FileState[]>([]),[category,setCategory]=useState<string>(clientDocumentCategories[0]),[description,setDescription]=useState("");
+  const [items,setItems]=useState<FileState[]>([]),[category,setCategory]=useState<string>(clientDocumentCategories[0]),[description,setDescription]=useState(""),[expiry,setExpiry]=useState("");
   const [requirement,setRequirement]=useState(selectedRequest),[camera,setCamera]=useState<File|null>(null),[drag,setDrag]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState("");
+  const requiredCategory=requests.find(item=>item.id===requirement)?.expected_category;
   function add(files:File[]){
     if(busy)return;
     const valid=files.filter(file=>/\.(pdf|jpe?g|png)$/i.test(file.name)&&file.size>0&&file.size<=clientDocumentMaxSize);
@@ -144,7 +147,8 @@ function UploadBox({caseId,requests,replacement,selectedRequest,close,updated}:{
       const body=new FormData();
       body.append("case",caseId);body.append("file",item.file);body.append("uploadId",item.key);
       if(replacement)body.append("document",replacement.id);
-      else{body.append("category",category);body.append("description",description);body.append("requirement",requirement);}
+      else{body.append("category",requiredCategory??category);body.append("description",description);body.append("requirement",requirement);}
+      if(expiry)body.append("expiry",expiry);
       update(item.key,{percent:0,status:"Uploading",note:""});
       try{
         const note=await upload(endpoint("upload",caseId,false),body,percent=>update(item.key,{percent}));
@@ -158,10 +162,11 @@ function UploadBox({caseId,requests,replacement,selectedRequest,close,updated}:{
     <header><span className="icon-tile"><Icon name="attachment"/></span><div><h3>{replacement?"Submit a replacement":"Submit documents"}</h3><p>{replacement?`The existing version of ${replacement.filename} remains in your case history.`:"Add PDF, JPEG or PNG files. Each file can be up to 3 MB."}</p></div>{replacement&&<button className="btn btn-outline btn-small" type="button" disabled={busy} onClick={close}>Cancel replacement</button>}</header>
     <form method="post" onSubmit={send}>
       {!replacement&&<div className="client-doc-upload-fields">
-        <label>Document category<select value={category} onChange={event=>setCategory(event.target.value)} disabled={busy}>{clientDocumentCategories.map(item=><option key={item}>{item}</option>)}</select></label>
-        <label>Document request<select value={requirement} onChange={event=>setRequirement(event.target.value)} disabled={busy}><option value="">No specific request</option>{requests.filter(item=>["Open","Submitted","Replacement requested"].includes(item.status)).map(item=><option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
+        <label>Document category<select value={requiredCategory??category} onChange={event=>setCategory(event.target.value)} disabled={busy||!!requiredCategory}>{clientDocumentCategories.map(item=><option key={item}>{item}</option>)}</select></label>
+        <label>Document request<select value={requirement} onChange={event=>setRequirement(event.target.value)} disabled={busy}><option value="">No specific request</option>{requests.filter(item=>item.needs_submission||item.status==="Submitted").map(item=><option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
         <label>Description <span>(optional)</span><textarea maxLength={1000} value={description} onChange={event=>setDescription(event.target.value)} disabled={busy} rows={2} placeholder="Add details that will help staff review the file"/></label>
       </div>}
+      <label className="client-doc-expiry-input">Expiry date for these files <span>(optional)</span><input type="date" value={expiry} onChange={event=>setExpiry(event.target.value)} disabled={busy}/></label>
       <div className={`client-doc-drop ${drag?"drag-over":""}`} onDragOver={event=>{event.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)} onDrop={event=>{event.preventDefault();setDrag(false);add(Array.from(event.dataTransfer.files));}}>
         <span className="icon-tile"><Icon name="file"/></span><strong>Drop your files here</strong>
         <div><button type="button" className="btn btn-outline btn-small" disabled={busy} onClick={()=>chooser.current?.click()}>Choose files</button><button type="button" className="btn btn-outline btn-small" disabled={busy} onClick={()=>cameraInput.current?.click()}><Icon name="technology" size={16}/>Scan with camera</button></div>
@@ -180,17 +185,18 @@ function ClientCaseDocuments({caseId,staff,onChanged}:{caseId:string;staff:boole
   const [data,setData]=useState<Data|null>(null),[error,setError]=useState(""),[notice,setNotice]=useState("");
   const [selected,setSelected]=useState(""),[replacement,setReplacement]=useState<ClientDocumentRow|null>(null),[requirement,setRequirement]=useState("");
   const [viewer,setViewer]=useState<{item:ClientDocumentRow;version:ClientDocumentVersionRow}|null>(null),[action,setAction]=useState<{item?:ClientDocumentRow;type:string}|null>(null);
+  const [configureWatermark,setConfigureWatermark]=useState(false);
   const dialog=useRef<HTMLDialogElement>(null),sequence=useRef(0);
   const reload=useCallback(async()=>{
     const seq=++sequence.current;
     try{const value=await read<Data>(endpoint("list",caseId,staff,selected));if(seq===sequence.current){setData(value);setError("");}}
     catch(reason){if(seq===sequence.current)setError(reason instanceof Error?reason.message:"Document information is unavailable.");}
   },[caseId,staff,selected]);
-  useEffect(()=>{setData(null);setSelected("");setReplacement(null);setRequirement("");setViewer(null);},[caseId,staff]);
+  useEffect(()=>{setData(null);setSelected("");setReplacement(null);setRequirement("");setViewer(null);setConfigureWatermark(false);},[caseId,staff]);
   useEffect(()=>{if(caseId)void reload();},[caseId,reload]);
   useEffect(()=>{if(action){const node=dialog.current;node?.showModal();return()=>node?.close();}},[action]);
   function current(item:ClientDocumentRow):ClientDocumentVersionRow{
-    return {id:item.current_version_id,version:item.version,filename:item.filename,page_count:item.page_count,byte_size:item.byte_size,scan_status:item.scan_status,submitted_at:item.submitted_at,retain_until:item.retain_until};
+    return {id:item.current_version_id,version:item.version,filename:item.filename,page_count:item.page_count,byte_size:item.byte_size,scan_status:item.scan_status,submitted_at:item.submitted_at,retain_until:item.retain_until,quality_flags:item.quality_flags,submitted_expiry_on:item.submitted_expiry_on};
   }
   const [busy,setBusy]=useState(false),[actionError,setActionError]=useState("");
   function begin(type:string,item?:ClientDocumentRow){setActionError("");setAction({type,item});}
@@ -216,11 +222,11 @@ function ClientCaseDocuments({caseId,staff,onChanged}:{caseId:string;staff:boole
     {data&&<>
       {!staff&&<UploadBox key={`${caseId}/${replacement?.id??""}/${requirement}`} caseId={caseId} requests={data.requests} replacement={replacement} selectedRequest={requirement} close={()=>setReplacement(null)} updated={()=>{void reload();onChanged?.();}}/>}
       {!!data.requests.length&&<section className="client-doc-card">
-        <header><span className="icon-tile"><Icon name="list"/></span><div><h3>Document requests</h3><p>Items Walshken asked you to provide for this case.</p></div></header>
-        <ul className="client-doc-list">{data.requests.map(item=><li key={item.id}><div><strong>{item.title}</strong>{item.instructions&&<small>{item.instructions}</small>}{item.due_on&&<small>Due {item.due_on}</small>}</div><span className="client-doc-tag">{item.status}</span>{!staff&&["Open","Replacement requested"].includes(item.status)&&<button className="btn btn-outline btn-small" type="button" onClick={()=>{setReplacement(null);setRequirement(item.id);document.querySelector(".client-doc-upload")?.scrollIntoView({behavior:"smooth",block:"center"});}}>Add file</button>}</li>)}</ul>
+        <header><span className="icon-tile"><Icon name="list"/></span><div><h3>Document checklist</h3><p>{data.requests.filter(item=>item.needs_submission).length} of {data.requests.length} requests need a submission.</p></div></header>
+        <ul className="client-doc-list">{data.requests.map(item=><li key={item.id}><div><strong>{item.title}</strong>{item.instructions&&<small>{item.instructions}</small>}{item.expected_category&&<small>Required category · {item.expected_category}</small>}{item.due_on&&<small>Due {prettyDay(item.due_on)}</small>}</div><span className={`client-doc-tag ${item.needs_submission?"client-doc-attention":""}`}>{item.needs_submission&&item.status!=="Replacement requested"?"Missing document":item.status}</span>{!staff&&item.needs_submission&&<button className="btn btn-outline btn-small" type="button" onClick={()=>{setReplacement(null);setRequirement(item.id);document.querySelector(".client-doc-upload")?.scrollIntoView({behavior:"smooth",block:"center"});}}>Add file</button>}</li>)}</ul>
       </section>}
       <section className="client-doc-card">
-        <header><span className="icon-tile"><Icon name="file"/></span><div><h3>Submitted documents</h3><p>{staff?"Review submitted versions and manage protected records.":"Check review progress and open a secure preview."}</p></div>{data.canConfigure&&<button className="btn btn-outline btn-small" type="button" onClick={()=>begin("policy")}><Icon name="shield" size={16}/>Document policy</button>}</header>
+        <header><span className="icon-tile"><Icon name="file"/></span><div><h3>Submitted documents</h3><p>{staff?"Review submitted versions and manage protected records.":"Check review progress and open a secure preview."}</p></div>{data.canConfigure&&<div className="client-doc-row-actions"><button className="btn btn-outline btn-small" type="button" onClick={()=>begin("policy")}><Icon name="shield" size={16}/>Document policy</button>{data.watermark&&<button className="btn btn-outline btn-small" type="button" onClick={()=>setConfigureWatermark(true)}>Watermark · {data.watermark.enabled?"On":"Off"}</button>}</div>}</header>
         {!data.documents.length&&<p className="client-doc-empty">No documents have been submitted for this case.</p>}
         <ul className="client-doc-list">{data.documents.map(item=>{
           const unavailable=!!item.deleted_at||item.disposal_status==="Approved",isOpen=selected===item.id;
@@ -235,17 +241,21 @@ function ClientCaseDocuments({caseId,staff,onChanged}:{caseId:string;staff:boole
               {staff&&data.canManage&&!item.deleted_at&&<button className="text-link" type="button" onClick={()=>begin(item.hold_id?"release-hold":"hold",item)}>{item.hold_id?"Release legal hold":"Place legal hold"}</button>}
               {staff&&data.canManage&&item.disposal_status==="Requested"&&<button className="btn btn-outline btn-small" type="button" onClick={()=>begin("decide-deletion",item)}>Review deletion request</button>}
             </div>
+            {!unavailable&&item.verified_expiry_on&&<small className={`client-doc-expiry ${item.verified_expiry_on<=new Date(Date.now()+30*86400000).toISOString().slice(0,10)?"client-doc-attention":""}`}>Verified expiry · {prettyDay(item.verified_expiry_on)}</small>}
+            {!unavailable&&!item.verified_expiry_on&&item.submitted_expiry_on&&<small>Reported expiry · {prettyDay(item.submitted_expiry_on)} · Awaiting review</small>}
+            {!unavailable&&!!item.quality_flags?.length&&<ul className="client-doc-quality" aria-label="Automated document checks">{item.quality_flags.map(flag=><li key={flag}>{clientDocumentQuality[flag]}</li>)}</ul>}
             {item.disposal_status==="Requested"&&<small>Deletion request under review.</small>}
             {staff&&item.hold_id&&<small>Legal hold active.</small>}
             {isOpen&&<div className="client-doc-history">
               {!data.history.length&&<p>Loading version history…</p>}
-              {data.history.map(version=><div key={version.id}><span><strong>Version {version.version}</strong><small>{version.filename} · {pretty(version.submitted_at)}{staff?` · ${version.scan_status}`:""}</small></span>{!unavailable&&<button type="button" className="btn btn-outline btn-small" onClick={()=>setViewer({item,version})}>Secure preview</button>}</div>)}
+              {data.history.map(version=><div key={version.id}><span><strong>Version {version.version}</strong><small>{version.filename} · {pretty(version.submitted_at)}{staff?` · ${version.scan_status}`:""}</small>{version.submitted_expiry_on&&<small>Reported expiry · {prettyDay(version.submitted_expiry_on)}</small>}{!!version.quality_flags?.length&&<small>{version.quality_flags.map(flag=>clientDocumentQuality[flag]).join(" ")}</small>}</span>{!unavailable&&<button type="button" className="btn btn-outline btn-small" onClick={()=>setViewer({item,version})}>Secure preview</button>}</div>)}
               {staff&&!!data.events.length&&<details><summary>Audit history</summary><ul>{data.events.map(event=><li key={event.id}><strong>{event.action}</strong> · {event.actor_kind} · {pretty(event.occurred_at)}{event.detail&&<small>{event.detail}</small>}</li>)}</ul></details>}
             </div>}
           </li>;
         })}</ul>
       </section>
     </>}
+    {configureWatermark&&data?.watermark&&<ClientDocumentWatermarkSettings caseId={caseId} value={data.watermark} onClose={()=>setConfigureWatermark(false)} onSaved={message=>{setConfigureWatermark(false);setNotice(message);void reload();onChanged?.();}}/>}
     {viewer&&<SecureDocumentViewer key={viewer.version.id} item={viewer.item} version={viewer.version} caseId={caseId} staff={staff} canDownload={!!data?.canDownload} close={()=>setViewer(null)}/>}
     {action&&<dialog ref={dialog} className="client-doc-dialog" aria-label={labels[action.type]} onCancel={closeAction}>
       <header><div><h2>{labels[action.type]}</h2>{action.item&&<p>{action.item.filename}</p>}</div><button type="button" className="icon-button" aria-label="Close" onClick={closeAction}><Icon name="close"/></button></header>
@@ -256,6 +266,7 @@ function ClientCaseDocuments({caseId,staff,onChanged}:{caseId:string;staff:boole
           <label className="client-doc-check"><input name="download" type="checkbox" defaultChecked={data?.policy?.client_download}/> Allow clients to download their own originals after password confirmation</label>
         </>:<>
           {action.type==="review"&&<label>Review decision<select name="decision"><option>Accepted</option><option>Replacement requested</option></select></label>}
+          {action.type==="review"&&<><label>Verified expiry date (optional)<input type="date" name="expiry" defaultValue={action.item?.verified_expiry_on??action.item?.submitted_expiry_on??""}/></label><p>Verify the date against the original before accepting a document. Automated quality checks assist staff review.</p></>}
           {action.type==="decide-deletion"&&<label>Deletion decision<select name="decision"><option>Declined</option><option>Approved</option></select></label>}
           {action.type==="decide-deletion"&&<p>Approval requires eligible retention dates and applies to all versions of this document. A legal hold blocks disposal.</p>}
           <label>{action.type==="review"?"Client-visible review note":"Reason"}<textarea name="reason" minLength={1} maxLength={action.type==="review"?1000:1200} required/></label>

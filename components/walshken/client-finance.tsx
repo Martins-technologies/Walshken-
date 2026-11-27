@@ -9,16 +9,19 @@ import { dateText } from "./ui";
 import styles from "./client-finance.module.css";
 
 type InvoiceLine = { description: string; quantity: number; unit_minor: number; tax_bps: number; total_minor: number };
+type PaymentMode = "Full" | "Partial" | "Installments";
+type Installment = { id: string; position: number; due_on: string; amount_minor: number; paid_minor: number; balance_minor: number };
 type Invoice = {
   id: string; case_id: string; case_reference: string; invoice_number: string | null;
   issuer_name: string; issuer_address: string; issuer_tax_number: string | null;
   subtotal_minor: number; tax_minor: number; total_minor: number; currency: string;
   issue_on: string | null; due_on: string; status: "Draft" | "Open" | "Processing" | "Paid" | "Void";
-  items: InvoiceLine[];
+  items: InvoiceLine[]; paid_minor: number; balance_minor: number; payment_blocked: boolean; active_payment: boolean;
+  payment_plan: { mode: PaymentMode; installments: Installment[] };
 };
 type Payment = {
   id: string; invoice_id: string; invoice_number: string; amount_minor: number; currency: string;
-  status: "Creating" | "Pending" | "Processing" | "Paid" | "Failed" | "Expired";
+  status: "Creating" | "Pending" | "Processing" | "Paid" | "Failed" | "Expired" | "Review" | "Refunded";
   provider_reference: string | null; receipt_number: string | null; created_at: string; confirmed_at: string | null; sandbox: boolean;
 };
 type Agreement = {
@@ -37,9 +40,9 @@ type DownloadKind = "invoice" | "receipt" | "agreement";
 type StaffDialog =
   | { type: "invoice-form"; invoice?: Invoice }
   | { type: "agreement-form"; agreement?: Agreement }
-  | { type: "invoice-view"; invoice: Invoice }
+  | { type: "invoice-view" | "payment-plan"; invoice: Invoice }
   | { type: "agreement-view"; agreement: Agreement }
-  | { type: "invoice-issue" | "invoice-void" | "agreement-publish" | "agreement-withdraw"; id: string; label: string };
+  | { type: "invoice-issue" | "invoice-void" | "payment-reconcile" | "agreement-publish" | "agreement-withdraw"; id: string; label: string };
 type ClientDialog =
   | { type: "invoice"; invoice: Invoice }
   | { type: "agreement"; agreement: Agreement };
@@ -115,9 +118,9 @@ function amount(minor: number, currency: string) {
 }
 
 function Status({ value }: { value: string }) {
-  const tone = /^(Paid|Signed)$/.test(value) ? "good" : /^(Failed|Void|Declined|Withdrawn)$/.test(value) ? "risk"
-    : /^(Open|Issued|Creating|Pending|Processing)$/.test(value) ? "wait" : "neutral";
-  const name = ({ Open: "Payment due", Issued: "Awaiting signature", Creating: "Starting checkout" } as Record<string, string>)[value] || value;
+  const tone = /^(Paid|Signed)$/.test(value) ? "good" : /^(Failed|Void|Declined|Withdrawn|Review)$/.test(value) ? "risk"
+    : /^(Open|Issued|Creating|Pending|Processing|Partially paid)$/.test(value) ? "wait" : "neutral";
+  const name = ({ Open: "Payment due", Issued: "Awaiting signature", Creating: "Starting checkout", Review: "Under review" } as Record<string, string>)[value] || value;
   return <span className={styles.status} data-tone={tone}>{name}</span>;
 }
 
@@ -194,8 +197,21 @@ function InvoiceBreakdown({ invoice }: { invoice: Invoice }) {
     <dl className={styles.totals}>
       <div><dt>Subtotal</dt><dd>{amount(invoice.subtotal_minor, invoice.currency)}</dd></div>
       <div><dt>Tax</dt><dd>{amount(invoice.tax_minor, invoice.currency)}</dd></div>
-      <div><dt>Total</dt><dd>{amount(invoice.total_minor, invoice.currency)}</dd></div>
+      <div><dt>Total invoice</dt><dd>{amount(invoice.total_minor, invoice.currency)}</dd></div>
+      {invoice.paid_minor > 0 && <div><dt>Verified payments</dt><dd>{amount(invoice.paid_minor, invoice.currency)}</dd></div>}
+      {invoice.status !== "Draft" && <div><dt>Outstanding</dt><dd>{amount(invoice.balance_minor, invoice.currency)}</dd></div>}
     </dl>
+    {invoice.payment_plan.mode === "Partial" && <p className={styles.paymentNote}>This invoice accepts full or partial payments.</p>}
+    {invoice.payment_plan.mode === "Installments" && <div>
+      <h3>Installment schedule</h3>
+      <ul className={styles.breakdown} aria-label="Installment schedule">
+        {invoice.payment_plan.installments.map(item => <li key={item.id}>
+          <div><strong>Installment {item.position}</strong><small>Due {dateText(item.due_on)} · {amount(item.amount_minor, invoice.currency)}</small></div>
+          {item.balance_minor > 0 ? <strong>{amount(item.balance_minor, invoice.currency)} due</strong> : <Status value="Paid"/>}
+        </li>)}
+      </ul>
+    </div>}
+    {invoice.payment_blocked && <p className={styles.paymentNote} role="status">A Stripe charge is under review. Contact the case team before sending another payment.</p>}
   </>;
 }
 
@@ -210,13 +226,13 @@ function InvoiceList({ invoices, empty, select, actions }: {
         <button type="button" className={styles.rowTitle} onClick={() => select(invoice)}>{invoice.invoice_number || "Draft invoice"}<ChevronRight size={15} aria-hidden="true"/></button>
         <p>{invoice.case_reference} · Due {dateText(invoice.due_on)}</p>
       </div>
-      <div className={styles.recordAmount}><strong>{amount(invoice.total_minor, invoice.currency)}</strong><Status value={invoice.status}/></div>
+      <div className={styles.recordAmount}><strong>{amount(invoice.total_minor, invoice.currency)}</strong><Status value={invoice.status === "Open" && invoice.paid_minor ? "Partially paid" : invoice.status}/></div>
       {actions && <div className={styles.rowActions}>{actions(invoice)}</div>}
     </li>)}
   </ul>;
 }
 
-function PaymentHistory({ payments, caseId, refresh }: { payments: Payment[]; caseId?: string; refresh: () => void }) {
+function PaymentHistory({ payments, caseId, refresh, reconcile }: { payments: Payment[]; caseId?: string; refresh: () => void; reconcile?: (payment: Payment) => void }) {
   return <Frame label="Payment history" count={payments.length} action={payments.some(payment => /^(Creating|Pending|Processing)$/.test(payment.status)) &&
     <button type="button" className={styles.link} onClick={refresh}><RefreshCw size={15}/>Refresh status</button>}>
     {!payments.length ? <Empty title="No payment activity" body="Records from secure checkout will appear here."/> :
@@ -231,6 +247,9 @@ function PaymentHistory({ payments, caseId, refresh }: { payments: Payment[]; ca
           <div className={styles.recordAmount}><strong>{amount(payment.amount_minor, payment.currency)}</strong><Status value={payment.status}/></div>
           {payment.status === "Paid" && payment.receipt_number && <div className={styles.rowActions}>
             <PdfLink kind="receipt" id={payment.id} caseId={caseId}/>
+          </div>}
+          {payment.status === "Review" && reconcile && <div className={styles.rowActions}>
+            <button type="button" className="btn btn-outline btn-small" onClick={() => reconcile(payment)}>Verify Stripe refund</button>
           </div>}
         </li>)}
       </ul>}
@@ -310,6 +329,39 @@ function AgreementResponse({ agreement, busy, answer }: {
   </form>;
 }
 
+function PayInvoiceOptions({ invoice, busy, pay }: {
+  invoice: Invoice; busy: boolean; pay: (choice?: { payNext?: true; amountMinor?: number }) => void;
+}) {
+  const [error, setError] = useState("");
+  const next = invoice.payment_plan.installments.find(item => item.balance_minor > 0);
+  return <div className={styles.form}>
+    <div className={styles.actionBar}>
+      {invoice.payment_plan.mode === "Installments" && next && !invoice.active_payment && <button type="button" className="btn btn-blue" disabled={busy}
+        onClick={() => pay({ payNext: true })}>Pay installment {next.position} · {amount(next.balance_minor, invoice.currency)}<ArrowUpRight size={16}/></button>}
+      <button type="button" className={invoice.payment_plan.mode === "Installments" && !invoice.active_payment ? "btn btn-outline" : "btn btn-blue"} disabled={busy}
+        onClick={() => pay()}>
+        {invoice.active_payment ? "Continue checkout" : "Pay balance · " + amount(invoice.balance_minor, invoice.currency)}<ArrowUpRight size={16}/>
+      </button>
+    </div>
+    {invoice.payment_plan.mode === "Partial" && !invoice.active_payment && <form method="post" className={styles.form}
+      onSubmit={event => {
+        event.preventDefault();
+        const minor = toMinor(String(new FormData(event.currentTarget).get("paymentAmount") ?? ""));
+        if (minor === null || minor < 1 || minor > invoice.balance_minor) {
+          setError("Enter an amount between " + amount(1, invoice.currency) + " and the outstanding balance.");
+          return;
+        }
+        setError("");
+        pay({ amountMinor: minor });
+      }}>
+      <label>Partial payment amount ({invoice.currency})<input name="paymentAmount" type="number" inputMode="decimal"
+        min={(1 / 100).toFixed(2)} max={(invoice.balance_minor / 100).toFixed(2)} step=".01" required maxLength={10}/></label>
+      {error && <p className={styles.error} role="alert">{error}</p>}
+      <div className={styles.actionBar}><button className="btn btn-outline" disabled={busy}>Pay this amount<ArrowUpRight size={16}/></button></div>
+    </form>}
+  </div>;
+}
+
 export function ClientFinance({ section }: { section: "payments" | "agreements" }) {
   const finance = useFinance();
   const { data, error, notice, pending, mutate, refresh, clearNotice } = finance;
@@ -329,14 +381,15 @@ export function ClientFinance({ section }: { section: "payments" | "agreements" 
   const balances = new Map<string, number>();
   for (const invoice of data.invoices) {
     if (invoice.status === "Open" || invoice.status === "Processing") {
-      balances.set(invoice.currency, (balances.get(invoice.currency) || 0) + invoice.total_minor);
+      balances.set(invoice.currency, (balances.get(invoice.currency) || 0) + invoice.balance_minor);
     }
   }
   const paymentAllowed = data.checkoutMode !== "unconfigured";
-  const invoicesDue = data.invoices.filter(invoice => invoice.status === "Open").length;
-  const pay = (invoice: Invoice) => void mutate({ action: "checkout", id: invoice.id });
-  const payLabel = (invoice: Invoice) => data.payments.some(payment => payment.invoice_id === invoice.id && payment.status === "Pending")
-    ? "Continue checkout" : "Pay securely";
+  const invoicesDue = data.invoices.filter(invoice => invoice.status === "Open" && invoice.balance_minor > 0).length;
+  const canPay = (invoice: Invoice) => invoice.status === "Open" && invoice.balance_minor > 0 && paymentAllowed && !invoice.payment_blocked;
+  const pay = (invoice: Invoice, choice?: { payNext?: true; amountMinor?: number }) => void mutate({ action: "checkout", id: invoice.id, ...choice });
+  const openInvoice = (invoice: Invoice) => { clearNotice(); setDialog({ type: "invoice", invoice }); };
+  const currentInvoice = dialog?.type === "invoice" ? data.invoices.find(invoice => invoice.id === dialog.invoice.id) ?? dialog.invoice : null;
 
   return <div className={styles.root}>
     {!dialog && <Feedback notice={notice}/>}
@@ -358,11 +411,12 @@ export function ClientFinance({ section }: { section: "payments" | "agreements" 
       </section>
       {invoicesDue > 0 && !paymentAllowed && <p className={styles.paymentNote}><LockKeyhole size={17} aria-hidden="true"/> Online checkout is unavailable. Contact your assigned representative about these invoices.</p>}
       <Frame label="Invoices" count={data.invoices.length}>
-        <InvoiceList invoices={data.invoices} empty="Invoices from Walshken will appear here." select={invoice => { clearNotice(); setDialog({ type: "invoice", invoice }); }}
+        <InvoiceList invoices={data.invoices} empty="Invoices from Walshken will appear here." select={openInvoice}
           actions={invoice => <>
             <PdfLink kind="invoice" id={invoice.id}/>
-            {invoice.status === "Open" && paymentAllowed && <button type="button" className="btn btn-blue btn-small" disabled={pending} onClick={() => pay(invoice)}>
-              {payLabel(invoice)}<ArrowUpRight size={15}/></button>}
+            {canPay(invoice) && <button type="button" className="btn btn-blue btn-small" disabled={pending}
+              onClick={() => invoice.active_payment || invoice.payment_plan.mode === "Full" ? pay(invoice) : openInvoice(invoice)}>
+              {invoice.active_payment ? "Continue checkout" : invoice.payment_plan.mode === "Full" ? "Pay securely" : "Payment options"}<ArrowUpRight size={15}/></button>}
           </>}/>
       </Frame>
       <PaymentHistory payments={data.payments} refresh={refresh}/>
@@ -373,14 +427,11 @@ export function ClientFinance({ section }: { section: "payments" | "agreements" 
           ? <PdfLink kind="agreement" id={agreement.id} text="Download signed copy"/>
           : <button type="button" className="btn btn-outline btn-small" onClick={() => { clearNotice(); setDialog({ type: "agreement", agreement }); }}>View agreement</button>}/>
     </Frame>}
-    {dialog?.type === "invoice" && <Dialog title={dialog.invoice.invoice_number || "Invoice details"} close={close}>
-      <InvoiceBreakdown invoice={dialog.invoice}/>
+    {currentInvoice && <Dialog title={currentInvoice.invoice_number || "Invoice details"} close={close}>
+      <InvoiceBreakdown invoice={currentInvoice}/>
       <Feedback notice={notice}/>
-      <div className={styles.actionBar}>
-        <PdfLink kind="invoice" id={dialog.invoice.id}/>
-        {dialog.invoice.status === "Open" && paymentAllowed &&
-          <button type="button" className="btn btn-blue" disabled={pending} onClick={() => pay(dialog.invoice)}>{payLabel(dialog.invoice)}<ArrowUpRight size={16}/></button>}
-      </div>
+      {canPay(currentInvoice) && <PayInvoiceOptions invoice={currentInvoice} busy={pending} pay={choice => pay(currentInvoice, choice)}/>}
+      <div className={styles.actionBar}><PdfLink kind="invoice" id={currentInvoice.id}/></div>
     </Dialog>}
     {dialog?.type === "agreement" && <Dialog title={dialog.agreement.title} close={close}>
       <AgreementTerms agreement={dialog.agreement}/>
@@ -470,6 +521,56 @@ function InvoiceForm({ invoice, pending, save }: {
   </form>;
 }
 
+type InstallmentInput = { key: number; dueOn: string; payment: string };
+
+function PaymentPlanForm({ invoice, pending, save }: {
+  invoice: Invoice; pending: boolean; save: (data: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const [mode, setMode] = useState<PaymentMode>(invoice.payment_plan.mode);
+  const [items, setItems] = useState<InstallmentInput[]>(() => invoice.payment_plan.installments.length ? invoice.payment_plan.installments.map((item, index) => ({
+    key: index, dueOn: item.due_on, payment: (item.amount_minor / 100).toFixed(2),
+  })) : [{ key: 0, dueOn: "", payment: "" }, { key: 1, dueOn: "", payment: "" }]);
+  const nextKey = useRef(items.length);
+  const [error, setError] = useState("");
+  const total = items.reduce((sum, item) => sum + (toMinor(item.payment) ?? 0), 0);
+  function change(key: number, field: "dueOn" | "payment", value: string) {
+    setItems(rows => rows.map(row => row.key === key ? { ...row, [field]: value } : row));
+  }
+  return <form method="post" className={styles.form} aria-busy={pending} onSubmit={event => {
+    event.preventDefault();
+    if (mode === "Installments" && (total !== invoice.total_minor || items.some(item => (toMinor(item.payment) ?? 0) <= 0))) {
+      setError("All installments must be positive and add up to the invoice total.");
+      return;
+    }
+    setError("");
+    void save({ action: "payment-plan", id: invoice.id, mode,
+      installments: items.map(item => ({ dueOn: item.dueOn, amountMinor: toMinor(item.payment) })) });
+  }}>
+    <p>{invoice.invoice_number} · Total {amount(invoice.total_minor, invoice.currency)}</p>
+    <label>Payment arrangement<select value={mode} onChange={event => { setError(""); setMode(event.target.value as PaymentMode); }}>
+      <option value="Full">Full payment only</option><option value="Partial">Allow partial payments</option><option value="Installments">Scheduled installments</option>
+    </select></label>
+    {mode === "Installments" && <>
+      <fieldset className={styles.lineItems}>
+        <legend>Schedule due dates and amounts</legend>
+        {items.map((item, index) => <div key={item.key} className={styles.planRow}>
+          <label>Due date {index + 1}<input type="date" value={item.dueOn} required onChange={event => change(item.key, "dueOn", event.target.value)}/></label>
+          <label>Amount ({invoice.currency})<input type="number" inputMode="decimal" step=".01" min=".01" value={item.payment} required
+            onChange={event => change(item.key, "payment", event.target.value)}/></label>
+          {items.length > 2 && <button type="button" className={styles.iconButton} aria-label={"Remove installment " + (index + 1)}
+            onClick={() => setItems(rows => rows.filter(row => row.key !== item.key))}><Trash2 size={18}/></button>}
+        </div>)}
+        <button type="button" className="btn btn-outline btn-small" disabled={items.length >= 24}
+          onClick={() => { const key = nextKey.current++; setItems(rows => [...rows, { key, dueOn: "", payment: "" }]); }}><Plus size={15}/>Add installment</button>
+      </fieldset>
+      <div className={styles.estimate}><span>Scheduled total</span><strong>{amount(total, invoice.currency)}</strong></div>
+    </>}
+    {mode === "Partial" && <p>Clients can enter their own payment amount up to the remaining balance.</p>}
+    {error && <p className={styles.error} role="alert">{error}</p>}
+    <div className={styles.actionBar}><button className="btn btn-blue" disabled={pending}>{pending ? "Saving…" : "Save payment arrangement"}</button></div>
+  </form>;
+}
+
 function AgreementForm({ agreement, pending, save }: {
   agreement?: Agreement; pending: boolean; save: (data: Record<string, unknown>) => Promise<unknown>;
 }) {
@@ -495,6 +596,7 @@ function AgreementForm({ agreement, pending, save }: {
 const decisions = {
   "invoice-issue": { title: "Issue invoice", description: "The client can review the invoice and will receive a portal notification.", reason: false, destructive: false },
   "invoice-void": { title: "Void invoice", description: "Record why this invoice should no longer be collected.", reason: true, destructive: true },
+  "payment-reconcile": { title: "Verify Stripe refund", description: "After fully refunding the reviewed charge in Stripe, verify the refund here to resolve the payment review.", reason: false, destructive: false },
   "agreement-publish": { title: "Publish agreement", description: "This version will be made available to the client for their decision.", reason: false, destructive: false },
   "agreement-withdraw": { title: "Withdraw agreement", description: "Record why this version should no longer accept a response.", reason: true, destructive: true },
 } as const;
@@ -536,11 +638,15 @@ export function StaffClientFinance({ caseId }: { caseId: string }) {
               <button type="button" className="btn btn-outline btn-small" onClick={() => open({ type: "invoice-form", invoice })}>Edit draft</button>
               <button type="button" className="btn btn-blue btn-small" onClick={() => open({ type: "invoice-issue", id: invoice.id, label: "Draft invoice" })}>Issue</button>
             </>}
-            {data.canManage && invoice.status === "Open" && !data.payments.some(payment => payment.invoice_id === invoice.id && /^(Creating|Pending|Processing|Paid)$/.test(payment.status)) && <button type="button" className={styles.danger}
-              onClick={() => open({ type: "invoice-void", id: invoice.id, label: invoice.invoice_number || "Draft invoice" })}>Void</button>}
+            {data.canManage && invoice.status === "Open" && !invoice.active_payment && !invoice.paid_minor && !invoice.payment_blocked && <>
+              <button type="button" className="btn btn-outline btn-small" onClick={() => open({ type: "payment-plan", invoice })}>Payment arrangement</button>
+              <button type="button" className={styles.danger}
+                onClick={() => open({ type: "invoice-void", id: invoice.id, label: invoice.invoice_number || "Draft invoice" })}>Void</button>
+            </>}
           </>}/>
       </Frame>
-      <PaymentHistory payments={data.payments} caseId={caseId} refresh={refresh}/>
+      <PaymentHistory payments={data.payments} caseId={caseId} refresh={refresh} reconcile={data.canManage
+        ? payment => open({ type: "payment-reconcile", id: payment.id, label: payment.invoice_number }) : undefined}/>
     </> : <Frame label="Case agreements" count={data.agreements.length} action={data.canManage ? <button type="button" className="btn btn-blue btn-small" onClick={() => open({ type: "agreement-form" })}><Plus size={16}/>New agreement</button> : undefined}>
       <AgreementList agreements={data.agreements} select={agreement => open({ type: "agreement-view", agreement })}
         actions={agreement => {
@@ -565,6 +671,7 @@ export function StaffClientFinance({ caseId }: { caseId: string }) {
     {dialog && <Dialog close={close} title={
       decision?.title ?? (dialog.type === "invoice-form" ? dialog.invoice ? "Edit invoice draft" : "Create invoice"
         : dialog.type === "agreement-form" ? dialog.agreement ? "Draft a new version" : "Create agreement"
+        : dialog.type === "payment-plan" ? "Payment arrangement"
         : dialog.type === "invoice-view" ? dialog.invoice.invoice_number || "Invoice details"
         : dialog.type === "agreement-view" ? dialog.agreement.title : "Confirm action")
     }>
@@ -572,6 +679,7 @@ export function StaffClientFinance({ caseId }: { caseId: string }) {
       {dialog.type === "invoice-form" && <InvoiceForm invoice={dialog.invoice} pending={pending} save={save}/>}
       {dialog.type === "agreement-form" && <AgreementForm agreement={dialog.agreement} pending={pending} save={save}/>}
       {dialog.type === "invoice-view" && <InvoiceBreakdown invoice={dialog.invoice}/>}
+      {dialog.type === "payment-plan" && <PaymentPlanForm invoice={dialog.invoice} pending={pending} save={save}/>}
       {dialog.type === "agreement-view" && <AgreementTerms agreement={dialog.agreement}/>}
       {decision && "id" in dialog && <form method="post" className={styles.form} onSubmit={event => {
         event.preventDefault();

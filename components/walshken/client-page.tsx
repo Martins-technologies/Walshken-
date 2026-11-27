@@ -5,9 +5,9 @@ import { customerFor, customerToken } from "@/lib/walshken/customer";
 import type { ClientSection } from "@/lib/walshken/client-feature";
 import { ClientPortal } from "./client-portal";
 
-export async function ClientPage({section, caseId}: {section:ClientSection; caseId?: string}) {
+export async function ClientPage({section, caseId,appointmentId}: {section:ClientSection; caseId?: string;appointmentId?:string}) {
   const db = workspaceDatabase();
   const customer = db && await customerFor(db,customerToken((await headers()).get("cookie")));
   if (!customer) redirect("/customer/sign-in");
-  return <ClientPortal section={section} person={{name:customer.name,email:customer.email}} initialCase={caseId}/>;
+  return <ClientPortal section={section} person={{name:customer.name,email:customer.email}} initialCase={caseId} appointmentId={appointmentId}/>;
 }

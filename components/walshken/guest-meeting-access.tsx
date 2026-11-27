@@ -85,7 +85,7 @@ function GuestConference({mode, onError}: {mode: string; onError: (message: stri
   </>;
 }
 
-function MeetingFacts({meeting}: {meeting: GuestDetails}) {
+function MeetingFacts({meeting,calendarPending,onCalendar}: {meeting: GuestDetails;calendarPending:boolean;onCalendar:()=>void}) {
   return <aside className={styles.facts} aria-labelledby="meeting-schedule">
     <h2 id="meeting-schedule"><Icon name="calendar" size={20}/>Meeting schedule</h2>
     <dl className={styles.times}>
@@ -93,6 +93,11 @@ function MeetingFacts({meeting}: {meeting: GuestDetails}) {
       <div><dt>Ends</dt><dd><time dateTime={meeting.endsAt}>{dateLine(meeting.endsAt, meeting.timeZone)}</time></dd></div>
       <div><dt>Time zone</dt><dd>{meeting.timeZone.replaceAll("_", " ")}</dd></div>
     </dl>
+    {["Invited","Accepted"].includes(meeting.status)&&<div className={styles.actions}>
+      <button type="button" onClick={onCalendar} disabled={calendarPending}>
+        <Icon name="download" size={16}/>{calendarPending?"Preparing calendar file…":"Download calendar file"}
+      </button>
+    </div>}
     {!!meeting.roster.length && <details className={styles.roster}>
       <summary><Icon name="users" size={17}/>Meeting participants</summary>
       <ul>{meeting.roster.map(({name}, index) => <li key={`${name}-${index}`}>{name}</li>)}</ul>
@@ -107,6 +112,7 @@ export function GuestMeetingAccess() {
   const [notice, setNotice] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState<GuestAction | null>(null);
+  const [calendarPending,setCalendarPending] = useState(false);
   const [prejoin, setPrejoin] = useState(false);
   const [access, setAccess] = useState<Access | null>(null);
   const [connected, setConnected] = useState(false);
@@ -227,6 +233,20 @@ export function GuestMeetingAccess() {
     setDevices(selection);
     void act("join");
   };
+  async function downloadCalendar() {
+    if(!guest||calendarPending)return;
+    setCalendarPending(true);setError("");
+    try {
+      const response=await fetch("/api/meeting-guest/calendar",{method:"POST",credentials:"same-origin",cache:"no-store",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({guest})});
+      if(!response.ok||!response.headers.get("Content-Type")?.startsWith("text/calendar"))throw new Error("The meeting calendar file is unavailable.");
+      const url=URL.createObjectURL(await response.blob());
+      const link=document.createElement("a");
+      link.href=url;link.download="walshken-meeting.ics";link.click();
+      window.setTimeout(()=>URL.revokeObjectURL(url),1000);
+    }catch(reason){setError(reason instanceof Error?reason.message:"The meeting calendar file could not be downloaded.");}
+    finally{setCalendarPending(false);}
+  }
   const open = !!meeting?.canJoin;
   const checkingDevices = prejoin && !!meeting?.canPublish;
   const actionTitle = !meeting ? "" : meeting.status === "Invited" ? "Respond to the invitation"
@@ -272,7 +292,7 @@ export function GuestMeetingAccess() {
                   {connectionActive ? "Connected" : meeting.status === "Invited" ? "Response needed" : meeting.status}
                 </span>
               </header>
-              {meeting.status === "Invited" && <form className={styles.form} onSubmit={event => {event.preventDefault(); void act("accept", {name});}}>
+              {meeting.status === "Invited" && <form method="post" className={styles.form} onSubmit={event => {event.preventDefault(); void act("accept", {name});}}>
                 <label htmlFor="meeting-guest-name">Your display name</label>
                 <input id="meeting-guest-name" value={name} onChange={event => setName(event.target.value)} required maxLength={100} autoComplete="name"/>
                 <div className={styles.actions}>
@@ -329,7 +349,7 @@ export function GuestMeetingAccess() {
               </div>
             </section>}
           </div>
-          <MeetingFacts meeting={meeting}/>
+          <MeetingFacts meeting={meeting} calendarPending={calendarPending} onCalendar={()=>void downloadCalendar()}/>
         </div>
       </article>}
     </div>

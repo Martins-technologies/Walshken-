@@ -4,6 +4,7 @@ import {requireEmployeeAction,requireOrganizationAction} from './staff-authority
 import {managementTeamsEnabled,organizationMembershipAction} from './staff-unit-memberships';
 import {integrationSettings} from "./integration-settings";
 import {verifyStorageRotation} from "./storage-rotation";
+import {validateClientStorage} from "./client-document-storage";
 import {employmentTermsOn} from "./employment-engine";
 import {localDate} from "./work";
 import {validateMessageRetention} from "./retention";
@@ -376,7 +377,8 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
         return json({ok:true,message:'Stripe accepted the API key. A verified webhook delivery checks the signing secret separately.'});
       }
       if(provider.id==='livekit')await verifyLiveKitConnection(settings as LiveKitSettings);
-      else if(['recording-storage','document-storage-review','client-document-storage'].includes(provider.id))await verifyRecordingStorage(settings as RecordingStorage);
+      else if(provider.id==='client-document-storage')await verifyRecordingStorage(validateClientStorage(settings as RecordingStorage));
+      else if(['recording-storage','document-storage-review'].includes(provider.id))await verifyRecordingStorage(settings as RecordingStorage);
       else if(provider.id==='payroll-calculator-review')await verifyCalculatorConnection(settings as CalculatorSettings);
       else if(provider.id==='malware-scanner')await verifyScanner(settings as {endpoint:string;apiKey:string});
       else return fail(409,'This provider requires a recipient-specific delivery test.');
@@ -417,14 +419,14 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     }
     const settings: Record<string,string> = {};
     for (const [key, label] of provider.fields) settings[key] = str(data[key],label,400);
+    const storageProvider=["recording-storage","document-storage-review","client-document-storage"].includes(provider.id);
     if(provider.id==="livekit") {
       validateLiveKit(settings as LiveKitSettings);
       if(data.enabled==="1") await verifyLiveKitConnection(settings as LiveKitSettings);
     }
-    if(["recording-storage","document-storage-review","client-document-storage"].includes(provider.id)) {
-      validateStorage(settings as RecordingStorage);
+    if(storageProvider) {
       if(["document-storage-review","client-document-storage"].includes(provider.id)&&settings.bucket==="walshken-call-recordings")return fail(400,"Use a separate private document bucket.");
-      await verifyStorageRotation(db,integrationId,settings as RecordingStorage,data.enabled==="1");
+      validateStorage(settings as RecordingStorage);
     }
     if(provider.id==="payroll-calculator-review"){if(!payrollEnabled())return fail(404,"Payroll is not enabled here.");validateCalculatorSettings(settings as CalculatorSettings);if(data.enabled==="1")await verifyCalculatorConnection(settings as CalculatorSettings);}
     if (provider.id==="resend") validateEmailSettings(settings as {apiKey:string;from:string});
@@ -434,12 +436,18 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     }
     if (provider.id==="malware-scanner" && data.enabled==="1") await verifyScanner(settings as {endpoint:string;apiKey:string});
     const protectedValue = await encryptSettings(integrationId, settings);
-    await db.batch([
-      stmt(db,`INSERT INTO integrations (id,configuration,enabled,updated_at) VALUES (?,?,?,?)
+    const saveSettings=(connection:Db)=>connection.batch([
+      stmt(connection,`INSERT INTO integrations (id,configuration,enabled,updated_at) VALUES (?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET configuration=excluded.configuration,enabled=excluded.enabled,updated_at=excluded.updated_at`,
         integrationId,protectedValue,data.enabled==="1"?1:0,now()),
-      audit(db,actor,"Integration credentials rotated","integration",integrationId),
+      audit(connection,actor,"Integration credentials rotated","integration",integrationId),
     ]);
+    if(storageProvider)await db.transaction(async tx=>{
+      await one(tx,"SELECT id FROM organizations WHERE id=? FOR UPDATE",actor.org_id);
+      await verifyStorageRotation(tx,integrationId,settings as RecordingStorage,data.enabled==="1");
+      await saveSettings(tx);
+    });
+    else await saveSettings(db);
     return json({ ok:true,message:"Integration settings saved securely." });
   }
   if (area === "holidays" && action === "add") {

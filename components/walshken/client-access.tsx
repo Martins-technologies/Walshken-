@@ -16,7 +16,7 @@ const titles:Record<Mode,string>={login:"Sign in to your portal",register:"Creat
 type AccessReply={challengeId?:string;message?:string;verified?:boolean;resendAfter?:number};
 export function ClientAccess({mode:initial}:{mode:Mode}){
   const [mode,setMode]=useState(initial),[challenge,setChallenge]=useState(""),[email,setEmail]=useState(""),[busy,setBusy]=useState(false);
-  const [notice,setNotice]=useState(""),[error,setError]=useState(""),[visible,setVisible]=useState(false);
+  const [notice,setNotice]=useState(""),[error,setError]=useState(""),[visible,setVisible]=useState(false),[mfaRequired,setMfaRequired]=useState(false);
   const [ready,setReady]=useState(false);
   useEffect(()=>setReady(true),[]);
   const challengeForm=mode==="verify"||mode==="reset-code";
@@ -35,7 +35,7 @@ export function ClientAccess({mode:initial}:{mode:Mode}){
       setVisible(false);
       setMode(mode==="reset"?"reset-code":"verify");
       setNotice(reply.message??"Check your email for the one-time code.");
-    }catch(e){setError((e as Error).message);}
+    }catch(e){if(mode==="login"&&(e as {status?:number}).status===428)setMfaRequired(true);setError((e as Error).message);}
     finally{setBusy(false);}
   }
   async function resend(){
@@ -61,6 +61,7 @@ export function ClientAccess({mode:initial}:{mode:Mode}){
         {!challengeForm&&<label>Email address<input type="email" name="email" autoComplete="username" autoCapitalize="none" spellCheck={false} defaultValue={email} required maxLength={254}/></label>}
         {challengeForm&&<label>One-time code<input name="code" inputMode="numeric" autoComplete="one-time-code" required pattern="[0-9]{6}" maxLength={6}/></label>}
         {["login","register","reset-code"].includes(mode)&&<label>Password<span className="client-password"><input name="password" type={visible?"text":"password"} minLength={mode==="login"?undefined:12} maxLength={160} autoComplete={mode==="login"?"current-password":"new-password"} required/><button type="button" onClick={()=>setVisible(!visible)}>{visible?"Hide":"Show"}</button></span></label>}
+        {mode==="login"&&mfaRequired&&<label>Authenticator or recovery code<input name="mfaCode" autoComplete="one-time-code" maxLength={24} autoFocus required/></label>}
         {(mode==="register"||mode==="reset-code")&&<label>Confirm password<input type="password" name="confirmPassword" autoComplete="new-password" minLength={12} maxLength={160} required/></label>}
         {error&&<p className="client-alert" role="alert">{error}</p>}
         {notice&&<p className="client-success" role="status">{notice}</p>}

@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { meetingLocalCandidates } from "./meeting-time";
+import { guardClientAppointmentsForStaff } from "./client-appointment-conflicts";
 import { actionScope } from "./staff-authority";
 import { all, audit, cookieValue, datetime, digest, email, fail, id, json, notify, now, one, pick, run, str, timeZone, type Actor, type Db } from "./server";
 import { isMissing, liveKitSettings, participantToken, providerCall, publishSources, roomClient } from "./livekit";
@@ -91,9 +92,10 @@ function invitationKey() {
   if (!key || key.length < 32) return fail(503, "External invitations require a server signing key.");
   return key;
 }
-export function meetingGuestLink(guest: Pick<Guest,"id"|"meeting_id"|"org_id"|"token_nonce">) {
+export function meetingGuestLink(guest: Pick<Guest,"id"|"meeting_id"|"org_id"|"token_nonce">, requestOrigin?:string) {
   const preview = process.env.VERCEL_ENV === "preview";
-  const previewDomain = process.env.VERCEL_BRANCH_URL || process.env.VERCEL_URL;
+  const previewDomains = [process.env.VERCEL_BRANCH_URL,process.env.VERCEL_URL].filter(Boolean);
+  const previewDomain = previewDomains.find(domain=>requestOrigin===`https://${domain}`)??previewDomains[0];
   const value = preview ? (previewDomain ? `https://${previewDomain}` : "") : process.env.WALSHKEN_STAFF_EMAIL_ORIGIN;
   let url: URL;
   try { url = new URL(value || ""); } catch { return fail(503, "Configure the staff email origin for external invitations."); }
@@ -103,6 +105,17 @@ export function meetingGuestLink(guest: Pick<Guest,"id"|"meeting_id"|"org_id"|"t
   const path = new URL("/meeting-access", url);
   path.hash = `${guest.id}.${meetingGuestSecret(guest, invitationKey())}`;
   return path.toString();
+}
+
+export async function shareMeetingGuestLink(db:Db,actor:Actor,meeting:GuestMeeting,data:Record<string,unknown>,requestOrigin?:string) {
+  await requireMeetingGuestInviter(db,actor);
+  const guest=await one<Guest>(db,`SELECT id,org_id,meeting_id,token_nonce,expires_at,revoked_at,rsvp,session_hash
+    FROM staff_meeting_guests WHERE id=? AND org_id=? AND meeting_id=?`,str(data.guest,"guest invitation",80),actor.org_id,meeting.id);
+  if (!guest || !guestOpen(guest) || guest.rsvp==="Declined") return fail(404,"This guest invitation is unavailable.");
+  if (guest.session_hash) return fail(409,"This invitation has already been opened. Send a replacement link to invite another device.");
+  const url=meetingGuestLink(guest,requestOrigin);
+  await audit(db,actor,"External meeting link opened for sharing","meeting invitation",guest.id).run();
+  return json({ok:true,url});
 }
 
 async function queueGuestEmail(db: Db, guest: Guest, event: Delivery, revision: number, at = now()) {
@@ -169,12 +182,13 @@ export async function guestRoster(db: Db, m: GuestMeeting, host: boolean) {
   if (!meetingInvitesEnabled()) return [];
   return all(db, `SELECT g.id,COALESCE(NULLIF(g.name,''),'Invited guest') AS name,g.rsvp,g.requested_at,g.admitted_at,g.revoked_at,
     g.can_publish,g.can_share,g.recording_consent,CASE WHEN ?=1 THEN g.email ELSE NULL END AS email,
+    CASE WHEN ?=1 THEN g.session_hash IS NOT NULL ELSE NULL END AS opened,
     CASE WHEN ?=1 THEN e.status ELSE NULL END AS delivery,CASE WHEN ?=1 THEN e.error_code ELSE NULL END AS delivery_error,
     CASE WHEN ?=1 THEN e.event_type ELSE NULL END AS delivery_event,
     EXISTS(SELECT 1 FROM staff_meeting_guest_presence a WHERE a.guest_id=g.id AND a.left_at IS NULL AND a.joined_at IS NOT NULL) AS connected
     FROM staff_meeting_guests g LEFT JOIN LATERAL (SELECT status,error_code,event_type FROM staff_meeting_guest_emails
     WHERE guest_id=g.id AND (event_type<>'Reminder' OR status='Sent') ORDER BY created_at DESC,id DESC LIMIT 1) e ON true
-    WHERE g.meeting_id=? AND g.org_id=? ORDER BY g.created_at,g.id`, host?1:0,host?1:0,host?1:0,host?1:0,m.id,m.org_id);
+    WHERE g.meeting_id=? AND g.org_id=? ORDER BY g.created_at,g.id`, host?1:0,host?1:0,host?1:0,host?1:0,host?1:0,m.id,m.org_id);
 }
 
 export async function guestAttendance(db: Db, meeting: Pick<GuestMeeting,"id"|"org_id">) {
@@ -238,6 +252,8 @@ export async function rescheduleGuestMeeting(db: Db, actor: Actor, meeting: Gues
   const start=scheduledMeetingTime(data.startsAt,"meeting start",zone),end=scheduledMeetingTime(data.endsAt,"meeting end",zone);
   if (start < now() || end<=start || Date.parse(end)-Date.parse(start)>43_200_000) return fail(400,"Choose future start and end times no more than 12 hours apart.");
   if (start===meeting.starts_at && end===meeting.ends_at && zone===meeting.guest_time_zone) return json({ok:true,message:"The existing meeting time is already selected."});
+  const roster=await all<{employee_id:string}>(db,"SELECT employee_id FROM meeting_members WHERE meeting_id=? AND removed_at IS NULL",meeting.id);
+  await guardClientAppointmentsForStaff(db,meeting.org_id,[meeting.organizer_id,...roster.map(member=>member.employee_id)],start,end);
   const revision=meeting.guest_revision+1;
   await run(db, "UPDATE meetings SET starts_at=?,ends_at=?,guest_time_zone=?,guest_revision=? WHERE id=? AND org_id=?",start,end,zone,revision,meeting.id,meeting.org_id);
   await updateMeetingGuestSchedule(db,actor,{...meeting,starts_at:start,ends_at:end,guest_time_zone:zone,guest_revision:revision},false);
@@ -330,6 +346,29 @@ async function guestSessionView(db: Db, session: GuestSession) {
     recordingConsent:session.recording_consent,retentionDays:session.recording_retention_days, roster,
   };
 }
+
+function calendarInvitation(session:GuestSession) {
+  const stamp=(value:string)=>new Date(value).toISOString().replace(/[-:]/g,"").replace(/\.\d{3}Z$/,"Z");
+  const escape=(value:string)=>value.replace(/\\/g,"\\\\").replace(/\r\n|[\r\n]/g,"\\n").replace(/[,;]/g,match=>"\\"+match).replace(/[\x00-\x08\x0B-\x1F\x7F]/g,"");
+  const fold=(line:string)=>{
+    const lines=[] as string[];
+    let current="", length=0;
+    for(const symbol of line){
+      const bytes=Buffer.byteLength(symbol);
+      if(length+bytes>75){lines.push(current);current=" ";length=1;}
+      current+=symbol;
+      length+=bytes;
+    }
+    return [...lines,current].join("\r\n");
+  };
+  const uid=createHash("sha256").update(`meeting-calendar-v1:${session.org_id}:${session.id}`).digest("hex");
+  const note=`${session.guest_description}\n\nScheduled time zone: ${session.guest_time_zone}\nUse your original secure Walshken invitation to join.`.trim();
+  const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Walshken//Private Meetings//EN","CALSCALE:GREGORIAN","METHOD:PUBLISH","BEGIN:VEVENT",
+    `UID:${uid}@walshken`, `DTSTAMP:${stamp(now())}`, `SEQUENCE:${session.guest_revision}`, `DTSTART:${stamp(session.starts_at)}`, `DTEND:${stamp(session.ends_at)}`,
+    `SUMMARY:${escape(session.title)}`, `DESCRIPTION:${escape(note)}`, "STATUS:CONFIRMED", "CLASS:PRIVATE", "END:VEVENT", "END:VCALENDAR"];
+  return new Response(lines.map(fold).join("\r\n")+"\r\n",{headers:{"Content-Type":"text/calendar; charset=utf-8", "Content-Disposition":'attachment; filename="walshken-meeting.ics"',"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
+}
+
 export async function guestMeetingAction(db: Db, request: Request, action: string, data: Record<string,unknown>): Promise<Response> {
   if (!meetingInvitesEnabled()) return fail(404,"External meeting invitations are unavailable.");
   const guest = str(data.guest,"guest invitation",80);
@@ -355,6 +394,11 @@ export async function guestMeetingAction(db: Db, request: Request, action: strin
     if (!cookie || !session.session_hash || await digest(cookie)!==session.session_hash) return fail(401,"Open your original meeting invitation link.");
     if (action==="status") return json(await guestSessionView(tx,session));
     if (!activeMeeting(session)) return fail(409,"This meeting has ended or was cancelled.");
+    if (action==="calendar") {
+      if(session.rsvp==="Declined")return fail(403,"This invitation was declined.");
+      await guestAudit(tx,session,"External meeting calendar file downloaded");
+      return calendarInvitation(session);
+    }
     if (action==="accept" || action==="decline") {
       if (session.rsvp==="Declined" && action==="accept") return fail(409,"This invitation was declined. Ask the organizer for a new invitation.");
       const rsvp=action==="accept"?"Accepted":"Declined",name=action==="accept"?str(data.name,"display name",100):session.guest_name;

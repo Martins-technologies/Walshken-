@@ -64,7 +64,7 @@ export function invoicePdf(invoice:Invoice,items:InvoiceItem[],payment?:Payment)
     {text:`Bill to: ${invoice.recipient_name}\n${invoice.recipient_email}\nCase ${invoice.case_reference}`,space:12},
     ...items.map(item=>({text:`${item.position}. ${item.description}\n${item.quantity} × ${money(item.unit_minor)} · tax ${(item.tax_bps/100).toFixed(2)}% · total ${money(item.total_minor)}`,space:5})),
     {text:`Subtotal ${money(invoice.subtotal_minor)}\nTax ${money(invoice.tax_minor)}`,space:4},
-    {text:`${payment?"Confirmed payment":"Invoice total"} ${money(invoice.total_minor)}`,size:15,space:8},
+    {text:`${payment?"Confirmed payment":"Invoice total"} ${money(payment?.amount_minor??invoice.total_minor)}`,size:15,space:8},
     ...(payment?[{text:`Invoice ${invoice.invoice_number}\nConfirmed ${payment.confirmed_at} UTC\nStripe reference: ${payment.provider_reference??payment.provider_session}`}] : []),
     ...(invoice.status==="Void"?[{text:"This invoice was voided. No payment is due."}]:[]),
   ]);

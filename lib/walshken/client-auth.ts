@@ -1,5 +1,6 @@
 import {randomInt,timingSafeEqual} from "node:crypto";
 import {passwordHash,passwordMatches} from "./passwords";
+import {verifyClientMfa} from "./client-mfa";
 import {clientPortalEnabled} from "./client-feature";
 import {clientEmailOrigin,requireClientEmailSender,sendClientEmail,type ClientEmailSender} from "./client-email";
 import {recordClientProfileChange} from "./client-profile";
@@ -92,6 +93,7 @@ export async function signInClient(db:Db,request:Request,data:Record<string,unkn
   return db.transaction(async tx=>{
     const current = await activeAccount(tx,account.id);
     if (!current || current.password_hash!==account.password_hash || current.email!==account.email) return fail(401,genericSignIn);
+    await verifyClientMfa(tx,current.id,data.mfaCode);
     const token=await issueClientSession(tx,request,current,!!current.email_verified_at);
     return clientSessionResponse(request,token,{ok:true,verified:!!current.email_verified_at});
   });

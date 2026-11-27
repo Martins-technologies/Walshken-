@@ -11,7 +11,7 @@ import { database, digest, now, one, run } from "../lib/walshken/server.ts";
 const root=process.cwd(), sandbox=mkdtempSync(join(tmpdir(),"walshken-client-calls-"));
 const migrations=join(sandbox,"supabase","migrations");
 mkdirSync(migrations,{recursive:true});symlinkSync(join(root,"drizzle"),join(sandbox,"drizzle"),"dir");
-for(const migration of ["20261125231710_staff_unit_memberships.sql","20261127090000_client_identity.sql","20261127090200_client_cases.sql","20261127090700_client_calls.sql"]) {
+for(const migration of ["20261125231710_staff_unit_memberships.sql","20261127090000_client_identity.sql","20261127090200_client_cases.sql","20261127090700_client_calls.sql","20261128105000_client_preferences_and_mfa.sql"]) {
   copyFileSync(join(root,"supabase","migrations",migration),join(migrations,migration));
 }
 process.chdir(sandbox);process.on("exit",()=>rmSync(sandbox,{recursive:true,force:true}));

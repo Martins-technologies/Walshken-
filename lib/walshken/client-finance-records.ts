@@ -15,7 +15,7 @@ export type Invoice={
   case_reference:string;
 };
 export type Payment={
-  id:string;invoice_id:string;org_id:string;amount_minor:number;currency:Invoice["currency"];sandbox:boolean;status:"Creating"|"Pending"|"Processing"|"Paid"|"Failed"|"Expired";
+  id:string;invoice_id:string;org_id:string;amount_minor:number;currency:Invoice["currency"];sandbox:boolean;status:"Creating"|"Pending"|"Processing"|"Paid"|"Failed"|"Expired"|"Review"|"Refunded";
   invoice_number:string;provider_session:string|null;provider_reference:string|null;receipt_number:string|null;
   checkout_url:string|null;expiry_at:string|null;created_at:string;confirmed_at:string|null;
 };

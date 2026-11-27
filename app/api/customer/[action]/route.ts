@@ -5,6 +5,10 @@ import {
 } from "@/lib/walshken/customer";
 import {finishClientChallenge,requestClientEmailChange,requestClientPasswordReset,requestClientVerification,resendClientChallenge} from "@/lib/walshken/client-auth";
 import {clientSessionStatus,listClientSessions,reauthenticateClient,revokeClientSessions,type Customer} from "@/lib/walshken/client-sessions";
+import {changeClientAccess,readClientAccess} from "@/lib/walshken/client-account-admin";
+import {clientMfaAction,clientMfaSummary} from "@/lib/walshken/client-mfa";
+import {clientLanguages,manageClientLanguages,saveClientLocale} from "@/lib/walshken/client-preferences";
+import {withClientDb} from "@/lib/walshken/client-feature";
 import {customerProfileData,setVerifiedClientFields} from "@/lib/walshken/client-profile";
 import {clientNotifications,notifyClient,processClientNotificationEmails,readClientNotification,setClientNotificationPreferences} from "@/lib/walshken/client-notifications";
 import {audit,checkOrigin,currentActor,database,fail,handleError,json,needsStaffMfa,one,payload,requireSuper,str,throttle,type Db} from "@/lib/walshken/server";
@@ -15,9 +19,9 @@ const legacyPosts = ["sign-in","sign-up","sign-out","request","profile","passwor
 const clientPosts = [
   ...legacyPosts, "verify","verification","resend","password-reset","password-reset-confirm",
   "activity","email-change","email-change-verify","session-revoke","session-revoke-others","reauthenticate",
-  "notification-read","notification-preferences","profile-verification","announcement",
+  "notification-read","notification-preferences","profile-verification","announcement","mfa-setup","mfa-confirm","mfa-disable","locale","language-policy","account-access",
 ];
-const actionsWithEmail = new Set(["sign-in","verify","password-reset-confirm","password","email-change-verify","announcement"]);
+const actionsWithEmail = new Set(["sign-in","verify","password-reset-confirm","password","email-change-verify","announcement","mfa-confirm","mfa-disable"]);
 
 async function profileReviewer(db:Db,request:Request) {
   const actor = await currentActor(db,request);
@@ -29,11 +33,13 @@ async function profileReviewer(db:Db,request:Request) {
 export async function GET(request:Request,{params}:{params:Promise<{action:string}>}) {
   try {
     const {action} = await params;
-    if (!clientPortalEnabled() || !["status","profile","sessions","notifications","profile-verification"].includes(action)) {
+    if (!clientPortalEnabled() || !["status","profile","sessions","notifications","profile-verification","mfa","locale","language-policy","account-access"].includes(action)) {
       return fail(404,"Client account action unavailable.");
     }
     const db=database();
     if(action==="status")return await clientSessionStatus(db,request);
+    if(action==="account-access"){await profileReviewer(db,request);return readClientAccess(db,str(new URL(request.url).searchParams.get("id"),"client",80));}
+    if(action==="language-policy"){await profileReviewer(db,request);return json(await clientLanguages(db));}
     if(action==="profile-verification"){
       const reviewer=await profileReviewer(db,request);
       const clientId=str(new URL(request.url).searchParams.get("id"),"client",80);
@@ -43,14 +49,20 @@ export async function GET(request:Request,{params}:{params:Promise<{action:strin
       return await customerProfileData(db,client);
     }
     const actor=await clientActor(db,request);
-    if(action==="profile")return await customerProfileData(db,actor);
-    if(action==="sessions")return await listClientSessions(db,actor);
-    return await clientNotifications(db,actor.id);
+    return await withClientDb(db,actor.id,tx=>{
+      if(action==="profile")return customerProfileData(tx,actor);
+      if(action==="sessions")return listClientSessions(tx,actor);
+      if(action==="mfa")return clientMfaSummary(tx,actor.id);
+      if(action==="locale")return clientLanguages(tx,actor.id).then(result=>json(result));
+      return clientNotifications(tx,actor.id);
+    });
   }catch(error){return handleError(error);}
 }
 
 async function postClient(request:Request,db:Db,action:string,data:Record<string,unknown>) {
   if(action==="verify"||action==="password-reset-confirm"||action==="email-change-verify")return finishClientChallenge(db,request,action,data);
+  if(action==="account-access")return changeClientAccess(db,await profileReviewer(db,request),str(data.id,"client",80),data);
+  if(action==="language-policy")return manageClientLanguages(db,await profileReviewer(db,request),data.enabled);
   if(action==="verification")return requestClientVerification(db,request);
   if(action==="resend")return resendClientChallenge(db,request,data);
   if(action==="password-reset")return requestClientPasswordReset(db,request,data);
@@ -80,6 +92,8 @@ async function postClient(request:Request,db:Db,action:string,data:Record<string
     });
   }
   const actor=await clientActor(db,request,{touch:true});
+  if(action.startsWith("mfa-"))return withClientDb(db,actor.id,tx=>clientMfaAction(request,tx,actor,action,data));
+  if(action==="locale")return withClientDb(db,actor.id,tx=>saveClientLocale(tx,actor.id,data.locale));
   if(action==="session-revoke"||action==="session-revoke-others")return revokeClientSessions(db,request,actor,action==="session-revoke"?str(data.id,"session",80):undefined);
   if(action==="reauthenticate")return reauthenticateClient(db,request,actor,data);
   if(action==="notification-read")return readClientNotification(db,actor.id,data);

@@ -7,6 +7,7 @@ const repository = fileURLToPath(new URL("../../", import.meta.url));
 const schema = "walshken_client_qa";
 const runtime = schema + "_runtime";
 const firstFeatureMigration = "20261127090000";
+const firstEnhancementMigration = "20261128100000";
 const excluded = "20261123181740_staff_e_to_i_production.sql";
 const retiredRoles = ["walshken_preview_app", "walshken_production_app", "walshken_review_app", "walshken_role_qa_runtime"];
 const inertRoles = retiredRoles.map((_, index) => schema + "_unused_legacy_" + index);
@@ -133,15 +134,18 @@ BEGIN
       WHEN relation.relname IN ('client_profile_history','client_security_events','client_case_notes','client_case_messages',
         'client_case_events','client_privacy_policies','client_case_legal_holds','client_case_hold_releases',
         'client_consent_records','client_privacy_decisions','client_document_events','client_document_policies','client_document_versions',
-        'client_finance_activity','client_payment_events','client_agreement_responses','client_agreements','client_call_provider_events')
+        'client_finance_activity','client_payment_events','client_agreement_responses','client_agreements','client_call_provider_events',
+        'client_document_watermark_settings','client_payment_installments','client_appointment_events','client_account_access_history','client_case_message_receipts','client_feedback_responses')
         THEN 'SELECT,INSERT'
       WHEN relation.relname='client_case_assignments' THEN 'SELECT,INSERT,UPDATE (ended_at,ended_by)'
       WHEN relation.relname='client_case_updates' THEN 'SELECT,INSERT,UPDATE (decision,decided_by,decided_at,review_note)'
       WHEN relation.relname='client_documents' THEN 'SELECT,INSERT,UPDATE (review_status,updated_at,deleted_at)'
       WHEN relation.relname='client_document_holds' THEN 'SELECT,INSERT,UPDATE (released_by,release_reason,released_at)'
       WHEN relation.relname='client_document_disposals' THEN 'SELECT,INSERT,UPDATE (status,reviewed_by,reviewed_at,review_reason,disposed_at)'
-      WHEN relation.relname IN ('client_preview_document_objects','client_upload_pending_objects','client_invoice_items')
+      WHEN relation.relname IN ('client_preview_document_objects','client_upload_pending_objects','client_invoice_items','client_mfa_recovery')
         THEN 'SELECT,INSERT,DELETE'
+      WHEN relation.relname='client_feedback_submissions' THEN 'SELECT,INSERT,UPDATE (status,updated_at,revision)'
+      WHEN relation.relname IN ('client_mfa','client_auth_challenges') THEN 'SELECT,INSERT,UPDATE,DELETE'
       WHEN left(relation.relname,7)='client_' THEN 'SELECT,INSERT,UPDATE'
       ELSE 'SELECT,INSERT,UPDATE,DELETE'
     END;
@@ -150,6 +154,12 @@ BEGIN
     EXECUTE format('CREATE POLICY client_qa_runtime_scope ON ${schema}.%I FOR ALL TO ${runtime} USING (%s) WITH CHECK (%s)',
       relation.relname,expression,expression);
   END LOOP;
+  IF EXISTS (SELECT FROM information_schema.columns WHERE table_schema = '${schema}' AND table_name = 'client_documents' AND column_name = 'verified_expiry_on') THEN
+    EXECUTE 'GRANT UPDATE (verified_expiry_on,verified_expiry_version) ON ${schema}.client_documents TO ${runtime}';
+  END IF;
+  IF to_regclass('${schema}.client_auth_challenges') IS NOT NULL THEN
+    EXECUTE 'GRANT DELETE ON ${schema}.client_auth_challenges TO ${runtime}';
+  END IF;
   GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO ${runtime};
   IF to_regprocedure('${schema}.walshken_source_disposal_allowed(text,jsonb,jsonb)') IS NOT NULL THEN
     GRANT EXECUTE ON FUNCTION ${schema}.walshken_source_disposal_allowed(text,jsonb,jsonb) TO ${runtime};
@@ -178,6 +188,7 @@ BEGIN
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname='${schema}' AND c.relkind IN ('r','p')
       AND (c.relname IN ('customers','customer_sessions') OR left(c.relname,7)='client_')
+      AND NOT EXISTS (SELECT FROM pg_policy WHERE polrelid=c.oid AND polname='client_qa_customer_scope')
   LOOP
     relation_name := format('%I',relation.relname);
     check_expression := NULL;
@@ -185,7 +196,7 @@ BEGIN
       WHERE owned.id=%s.case_id AND owned.org_id=%s.org_id AND owned.customer_id=%s)',relation_name,relation_name,identity_expression);
     IF relation.relname = 'customers' THEN
       check_expression := 'id=' || identity_expression;
-    ELSIF relation.relname IN ('client_case_notes','client_case_assignments','client_privacy_decisions','client_call_provider_events') THEN
+    ELSIF relation.relname IN ('client_case_notes','client_case_assignments','client_privacy_decisions','client_call_provider_events','client_account_access_history') THEN
       check_expression := 'false';
     ELSIF relation.relname = 'client_invoices' THEN
       check_expression := 'customer_id=' || identity_expression || ' AND status<>''Draft''';
@@ -222,14 +233,16 @@ $client_qa_customer_policies$;
 `;
 
 export async function buildPreviewSql(mode) {
-  if (!["baseline", "feature"].includes(mode)) throw new Error("Choose baseline or feature");
+  if (!["baseline", "feature", "enhancement"].includes(mode)) throw new Error("Choose baseline, feature, or enhancement");
   const drizzle = await migrations("drizzle");
   const supabase = (await migrations("supabase/migrations")).filter(name => name !== excluded);
   const baseline = supabase.filter(name => name < firstFeatureMigration);
   const feature = supabase.filter(name => name >= firstFeatureMigration);
+  const phaseOne = feature.filter(name => name < firstEnhancementMigration);
+  const phaseTwo = feature.filter(name => name >= firstEnhancementMigration);
   if (mode === "feature" && !feature.length) throw new Error("The client portal migrations are unavailable");
   const output = ["-- Client Portal Preview only. No production records or provider credentials.", "BEGIN;",
-    mode === "baseline" ? startBaseline : startFeature([...drizzle, ...baseline])];
+    mode === "baseline" ? startBaseline : startFeature([...drizzle, ...baseline, ...(mode === "enhancement" ? phaseOne : [])])];
   const append = async (directory, file) => {
     const path = directory + "/" + file;
     const sql = scopeMigration(await readFile(resolve(repository, path), "utf8"), path);
@@ -240,9 +253,9 @@ export async function buildPreviewSql(mode) {
     for (const file of drizzle) await append("drizzle", file);
     output.push("INSERT INTO " + schema + ".organizations (id,name,time_zone) VALUES ('walshken','Walshken','UTC') ON CONFLICT (id) DO NOTHING;");
   }
-  for (const file of mode === "baseline" ? baseline : feature) await append("supabase/migrations", file);
+  for (const file of mode === "baseline" ? baseline : mode === "enhancement" ? phaseTwo : feature) await append("supabase/migrations", file);
   output.push(grants);
-  if (mode === "feature") output.push(customerIsolation);
+  if (mode !== "baseline") output.push(customerIsolation);
   output.push("COMMIT;");
   return output.join("\n") + "\n";
 }
@@ -323,9 +336,9 @@ INSERT INTO storage.objects VALUES ('sentinel');
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const mode = process.argv[2];
   if (mode === "verify") await verifyPreviewSql();
-  else if (mode === "baseline" || mode === "feature") process.stdout.write(await buildPreviewSql(mode));
+  else if (mode === "baseline" || mode === "feature" || mode === "enhancement") process.stdout.write(await buildPreviewSql(mode));
   else {
-    console.error("Usage: node ops/preview/build-client-preview.mjs baseline|feature|verify");
+    console.error("Usage: node ops/preview/build-client-preview.mjs baseline|feature|enhancement|verify");
     process.exitCode = 2;
   }
 }

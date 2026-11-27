@@ -291,3 +291,22 @@
 @media (max-width: 410px) {
   .fields { grid-template-columns: minmax(0, 1fr); }
 }
+
+.planRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+}
+@media (max-width: 430px) {
+  .planRow {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .planRow > label {
+    grid-column: 1;
+  }
+  .planRow > button {
+    grid-column: 2;
+    grid-row: 2;
+  }
+}

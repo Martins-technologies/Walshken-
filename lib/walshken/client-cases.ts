@@ -2,6 +2,7 @@ import { clientPortalEnabled } from "./customer";
 import { notifyClient } from "./client-notifications";
 import { all, canSuper, country, date, digest, fail, id, integer, json, now, one, orgId, pick, requireStaff, run, scope, str, throttle, type Actor, type Db } from "./server";
 import { taskDataset } from "./tasks";
+import { clientDocumentCategories } from "./client-document-types";
 
 export const internalCaseStatuses = ["New", "Assessing", "In progress", "Waiting for client", "Ready to submit", "Submitted to authority", "Complete", "Closed"] as const;
 export const visibleCaseStatuses = ["Received", "Under review", "Action required", "In progress", "Submitted", "Decision available", "Complete", "Closed"] as const;
@@ -67,7 +68,7 @@ export async function assertClientCaseUnheld(db:Db,caseId:string,customerId:stri
   if(row)return fail(409,"A legal hold protects the client account or case records.");
 }
 
-async function canAdministerCase(db:Db, actor:Actor, row:ClientCase) {
+export async function canAdministerCase(db:Db, actor:Actor, row:ClientCase) {
   const allowed = adminCaseScope(actor);
   return Boolean(await one(db,`SELECT c.id FROM client_cases c WHERE c.org_id=? AND c.id=? AND (${allowed.sql})`,row.org_id,row.id,...allowed.args));
 }
@@ -108,7 +109,7 @@ export async function clientCaseView(db:Db,customerId:string, target:string,limi
   const [updates,requests,messages] = await Promise.all([
     all(db,`SELECT id,title,body,proposed_status,submission_date::text AS submission_date,decided_at AS published_at
       FROM client_case_updates WHERE org_id=? AND case_id=? AND decision='Published' ORDER BY decided_at DESC,id DESC LIMIT ?`,orgId,target,limit),
-    all(db,`SELECT id,title,instructions,due_on::text AS due_on,status,created_at,updated_at FROM client_case_document_requests
+    all(db,`SELECT id,title,instructions,due_on::text AS due_on,status,expected_category,created_at,updated_at FROM client_case_document_requests
       WHERE org_id=? AND case_id=? ORDER BY due_on,id LIMIT ?`,orgId,target,limit),
     all(db,`SELECT id,direction,display_name,body,created_at FROM
       (SELECT id,direction,display_name,body,created_at FROM client_case_messages WHERE org_id=? AND case_id=? ORDER BY created_at DESC,id DESC LIMIT ?)
@@ -144,13 +145,13 @@ export async function staffCaseView(db:Db,actor:Actor,target:string,search="") {
       JOIN employees e ON e.id=a.employee_id AND e.org_id=a.org_id WHERE a.org_id=? AND a.case_id=? ORDER BY a.assigned_at DESC,a.id LIMIT 100`,row.org_id,target) : [],
     all(db,`SELECT n.id,n.body,n.created_at,e.name AS author FROM client_case_notes n JOIN employees e ON e.id=n.employee_id AND e.org_id=n.org_id
       WHERE n.org_id=? AND n.case_id=? ORDER BY n.created_at DESC,n.id DESC LIMIT 100`,row.org_id,target),
-    all(db,`SELECT id,title,instructions,due_on::text AS due_on,status,created_at,updated_at FROM client_case_document_requests
+    all(db,`SELECT id,title,instructions,due_on::text AS due_on,status,expected_category,created_at,updated_at FROM client_case_document_requests
       WHERE org_id=? AND case_id=? ORDER BY due_on,id LIMIT 100`,row.org_id,target),
     all(db,`SELECT u.id,u.title,u.body,u.proposed_status,u.submission_date::text AS submission_date,u.created_at,u.created_by,u.decision,u.review_note,u.decided_at,e.name AS author
       FROM client_case_updates u JOIN employees e ON e.id=u.created_by AND e.org_id=u.org_id
       WHERE u.org_id=? AND u.case_id=? ORDER BY u.created_at DESC,u.id DESC LIMIT 100`,row.org_id,target),
     all(db,`SELECT id,direction,display_name,body,created_at FROM
-      (SELECT id,direction,display_name,body,created_at FROM client_case_messages WHERE org_id=? AND case_id=? ORDER BY created_at DESC,id DESC LIMIT 100)
+      (SELECT id,direction,display_name,body,created_at FROM client_case_messages WHERE org_id=? AND case_id=? AND endpoint_id IS NULL ORDER BY created_at DESC,id DESC LIMIT 100)
       m ORDER BY created_at,id`,row.org_id,target),
     all(db,`SELECT history.id,history.event,history.created_at,COALESCE(e.name,customer.name) AS actor
       FROM client_case_events history LEFT JOIN employees e ON e.id=history.employee_id AND e.org_id=history.org_id
@@ -300,14 +301,16 @@ export async function staffCaseAction(db:Db,actor:Actor,action:string,data:Recor
       if(row.client_status==="Closed")return fail(409,"Closed cases do not accept document requests.");
       visibleChange=true;
       const title=str(data.title,"requirement",150),instructions=str(data.instructions,"document instructions",2000),due=date(data.due,"deadline");
+      const expected=data.expectedCategory===""||data.expectedCategory==null?null:pick(data.expectedCategory,clientDocumentCategories,"document category");
       if(action==="request-document"){
-        await run(tx,`INSERT INTO client_case_document_requests(id,org_id,case_id,title,instructions,due_on,created_by,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?)`,key,row.org_id,row.id,title,instructions,due,actor.id,at,at);
+        await run(tx,`INSERT INTO client_case_document_requests(id,org_id,case_id,title,instructions,due_on,expected_category,created_by,created_at,updated_at)
+          VALUES(?,?,?,?,?,?,?,?,?,?)`,key,row.org_id,row.id,title,instructions,due,expected,actor.id,at,at);
         event="Client document request opened";
       }else{
-        const result=await run(tx,`UPDATE client_case_document_requests SET title=?,instructions=?,due_on=?,updated_at=?
+        const result=await run(tx,`UPDATE client_case_document_requests SET title=?,instructions=?,due_on=?,updated_at=?,
+          expected_category=CASE WHEN ?::boolean THEN ?::text ELSE expected_category END
           WHERE org_id=? AND case_id=? AND id=? AND status IN('Open','Replacement requested')`,
-        title,instructions,due,at,row.org_id,row.id,str(data.request,"document request",80));
+        title,instructions,due,at,data.expectedCategory!==undefined,expected,row.org_id,row.id,str(data.request,"document request",80));
         if(!result.count)return fail(409,"Only requirements awaiting the client can be edited.");
         event="Client document request updated";
       }

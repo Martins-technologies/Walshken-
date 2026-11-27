@@ -3,6 +3,12 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowLeft, ArrowRight, BriefcaseBusiness, CalendarDays, ClipboardList, LockKeyhole, MessageSquare, Search, ShieldCheck, UsersRound } from "lucide-react";
 import { countries } from "@/lib/walshken/catalog";
+import { clientDocumentCategories } from "@/lib/walshken/client-document-types";
+import { StaffClientJourney } from "./client-journey";
+import { StaffClientAppointments } from "./client-appointments";
+import { StaffClientConversation, StaffOfficeInbox } from "./client-conversations";
+import { StaffClientFeedback } from "./client-feedback";
+import { ClientAccessControls, ClientLanguagePolicy } from "./client-account-options";
 import { StaffClientFinance } from "./client-finance";
 import { ClientCalls, ClientCallSettings } from "./client-calls";
 import { StaffClientDocuments } from "./client-documents";
@@ -19,7 +25,7 @@ type Registration = {id:string; name:string; email:string; created_at:string};
 type Assignment = {id:string; name:string; assigned_at:string; ended_at:string|null};
 type Update = {id:string; title:string; body:string; proposed_status:string|null; submission_date:string|null; author:string; created_by:string; decision:string; review_note:string|null; created_at:string};
 type Entry = {id:string; body:string; created_at:string; author?:string; direction?:string; display_name?:string};
-type Requirement = {id:string; title:string; instructions:string; due_on:string; status:string};
+type Requirement = {id:string; title:string; instructions:string; due_on:string; status:string; expected_category:string|null};
 type History = {id:string; event:string; created_at:string; actor:string|null};
 type PrivacyRequest = {id:string; type:string; reason:string; status:string; revision:number; public_response:string|null; customer_name:string; reference:string|null; created_at:string};
 type LegalHold = {id:string; customer_name:string; reference:string|null; reason:string; created_at:string; created_by:string; released_at:string|null};
@@ -88,7 +94,7 @@ function CasePrivacy({data,submit}:{data:PrivacyData;submit:Action}){
 }
 
 function CaseDetails({data,submit,refresh}:{data:DetailData;submit:Action;refresh:()=>void}){
-  const [tab,setTab]=useState("activity");
+  const [tab,setTab]=useState(()=>typeof window!=="undefined"&&new URLSearchParams(window.location.search).get("tab")==="communication"?"communication":"activity");
   const row=data.case, additions={case:row.id,revision:row.revision};
   const staffOptions=data.employees.map(person=>[person.id,`${person.name} · ${person.employee_no}`] as const);
   return <div className={styles.details}>
@@ -102,7 +108,7 @@ function CaseDetails({data,submit,refresh}:{data:DetailData;submit:Action;refres
         <div><dt>Application submitted</dt><dd>{row.application_submitted_on?dateText(row.application_submitted_on):"Awaiting published date"}</dd></div>
       </dl>
     </section>
-    <nav className={styles.caseTabs} aria-label="Case work areas">{[["activity","Activity"],["documents","Documents"],["communication","Communication"],["administration","Assignment and controls"]].map(([value,label])=><button type="button" key={value} aria-pressed={tab===value} onClick={()=>setTab(value)}>{label}</button>)}</nav>
+    <nav className={styles.caseTabs} aria-label="Case work areas">{[["activity","Activity"],["journey","Journey & family"],["documents","Documents"],["appointments","Appointments"],["communication","Communication"],["administration","Assignment and controls"]].map(([value,label])=><button type="button" key={value} aria-pressed={tab===value} onClick={()=>setTab(value)}>{label}</button>)}</nav>
     {tab==="activity"&&<div className={styles.detailColumns}>
       <section className={styles.card}><h3><ClipboardList size={18}/> Client-visible progress</h3>
         {row.client_status!=="Closed"&&<Disclosure title="Propose a client update"><Controls fields={[
@@ -130,24 +136,25 @@ function CaseDetails({data,submit,refresh}:{data:DetailData;submit:Action;refres
     {tab==="documents"&&<section className={styles.card}><h3><ClipboardList size={18}/> Document requirements</h3>
       {row.client_status!=="Closed"&&<Disclosure title="Request a document"><Controls fields={[
         {name:"title",label:"Document or requirement",required:true,max:150},{name:"instructions",label:"Client instructions",type:"textarea",required:true,max:2000},
+        {name:"expectedCategory",label:"Required upload category (optional)",options:clientDocumentCategories},
         {name:"due",label:"Deadline",type:"date",required:true},
       ]} initial={additions} submit={submit} action="request-document" label="Send document request"/></Disclosure>}
       {data.requests.length?data.requests.map(item=><article className={styles.entry} key={item.id}>
-        <header><strong>{item.title}</strong><Status>{item.status}</Status></header><p className={styles.copy}>{item.instructions}</p><p className={styles.iconLine}><CalendarDays size={14}/> Due {dateText(item.due_on)}</p>
+        <header><strong>{item.title}</strong><Status>{item.status}</Status></header><p className={styles.copy}>{item.instructions}</p><p className={styles.iconLine}><CalendarDays size={14}/> Due {dateText(item.due_on)}{item.expected_category? ` · ${item.expected_category}`:""}</p>
         {["Open","Replacement requested"].includes(item.status)&&<><Disclosure title="Edit requirement and deadline"><Controls key={row.revision} fields={[
           {name:"title",label:"Document or requirement",required:true,max:150,value:item.title},
           {name:"instructions",label:"Client instructions",type:"textarea",required:true,max:2000,value:item.instructions},
+          {name:"expectedCategory",label:"Required upload category (optional)",options:clientDocumentCategories,value:item.expected_category??undefined},
           {name:"due",label:"Deadline",type:"date",required:true,value:item.due_on},
         ]} initial={{...additions,request:item.id}} submit={submit} action="edit-document" label="Save requirement"/></Disclosure>
           <Disclosure title="Cancel document requirement"><Controls fields={[]} initial={{...additions,request:item.id}} submit={submit} action="cancel-document" label="Cancel requirement"/></Disclosure></>}
       </article>):<p>No document requirements are attached to this case.</p>}
       <StaffClientDocuments caseId={row.id} onChanged={refresh}/>
     </section>}
-    {tab==="communication"&&<section className={styles.card}><h3><MessageSquare size={18}/> Client messages</h3>
-      {data.messages.length?<div className={styles.thread}>{data.messages.map(message=><article key={message.id} data-origin={message.direction} className={styles.message}><strong>{message.display_name}</strong><p>{message.body}</p><small>{dateText(message.created_at,true)}</small></article>)}</div>:<p>No messages have been sent.</p>}
-      {row.assigned_employee_id&&row.communication_enabled&&row.client_status!=="Closed"&&<Controls fields={[
-        {name:"body",label:"Message to the client",type:"textarea",required:true,max:4000},
-      ]} initial={additions} submit={submit} action="message" label="Send message"/>}
+    {tab==="journey"&&<StaffClientJourney caseId={row.id}/>}
+    {tab==="appointments"&&<StaffClientAppointments caseId={row.id}/>}
+    {tab==="communication"&&<section className={styles.card}>
+      <StaffClientConversation caseId={row.id}/>
       <ClientCalls audience="staff" caseId={row.id}/>
     </section>}
     {tab==="administration"&&<div className={styles.detailColumns}>
@@ -180,7 +187,11 @@ export function ClientCasework() {
   const [target,setTarget]=useState("");
   const [query,setQuery]=useState("");
   const [find,setFind]=useState("");
-  const [tab,setTab]=useState("cases");
+  const [tab,setTab]=useState(()=>{
+    if(typeof window==="undefined")return "cases";
+    const params=new URLSearchParams(window.location.search);
+    return params.has("feedback")?"feedback":params.has("supportCase")?"office":"cases";
+  });
   const [version,setVersion]=useState(0);
   const [registry,setRegistry]=useState<Registry|null>(null);
   const [detail,setDetail]=useState<DetailData|null>(null);
@@ -230,8 +241,11 @@ export function ClientCasework() {
       <nav className={styles.caseTabs} aria-label="Casework sections">
         <button type="button" aria-pressed={tab==="cases"} onClick={()=>setTab("cases")}>Case register</button>
         <button type="button" aria-pressed={tab==="calls"} onClick={()=>setTab("calls")}>Client calls</button>
+        <button type="button" aria-pressed={tab==="office"} onClick={()=>setTab("office")}>Office inbox</button>
         {registry?.canCreate&&<><button type="button" aria-pressed={tab==="registrations"} onClick={()=>setTab("registrations")}>Client registrations</button>
-          <button type="button" aria-pressed={tab==="privacy"} onClick={()=>setTab("privacy")}>Privacy and retention</button></>}
+          <button type="button" aria-pressed={tab==="privacy"} onClick={()=>setTab("privacy")}>Privacy and retention</button>
+          <button type="button" aria-pressed={tab==="feedback"} onClick={()=>setTab("feedback")}>Feedback & complaints</button>
+          <button type="button" aria-pressed={tab==="settings"} onClick={()=>setTab("settings")}>Portal settings</button></>}
       </nav>
       {(tab==="cases"||tab==="registrations")&&<form method="post" className={styles.search} onSubmit={event=>{event.preventDefault();setQuery(find.trim());}}>
         <label><Search size={17}/><input value={find} onChange={event=>setFind(event.target.value)} type="search" maxLength={100} aria-label="Search client cases" placeholder={tab==="cases"?"Search by reference, case, or client":"Search registrations by name or email"}/></label>
@@ -253,9 +267,13 @@ export function ClientCasework() {
             {name:"country",label:"Country",required:true,options:countryOptions},{name:"message",label:"Optional internal background",type:"textarea",max:5000},
           ]} initial={{customer:row.id}} submit={submit} action="create" label="Create case"/>
           <Disclosure title="Place an account legal hold"><Controls fields={[{name:"reason",label:"Legal hold reason",type:"textarea",required:true,max:2000}]} initial={{customer:row.id}} submit={submit} action="privacy-hold" label="Place account hold"/></Disclosure>
+          <ClientAccessControls customerId={row.id}/>
           <ClientCompanyControls customerId={row.id}/>
         </Disclosure>):<p>No registrations match the current search.</p>}
       </section>}
+      {tab==="office"&&<StaffOfficeInbox/>}
+      {tab==="feedback"&&registry?.canCreate&&<StaffClientFeedback/>}
+      {tab==="settings"&&registry?.canCreate&&<ClientLanguagePolicy/>}
       {tab==="privacy"&&privacy&&<CasePrivacy data={privacy} submit={submit}/>}
       {tab==="calls"&&<section className={styles.card}><h3><MessageSquare size={18}/> Client communications</h3>
         <ClientCalls audience="staff"/>

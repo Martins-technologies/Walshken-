@@ -15,6 +15,10 @@ export function validateLiveKit(settings:LiveKitSettings){
     !(/^[-a-z0-9]+\.livekit\.cloud$/i.test(url.hostname)||extra.includes(url.hostname)))
     return fail(400,"Use your wss://project.livekit.cloud URL. Self-hosted hosts require the server allowlist.");
   if(!settings.apiKey||!settings.apiSecret)return fail(400,"Enter the LiveKit API key and secret.");
+  if(process.env.VERCEL_ENV==="preview"&&process.env.WALSHKEN_CLIENT_PORTAL_ENABLED==="1"&&
+    url.origin!==process.env.WALSHKEN_CLIENT_PREVIEW_LIVEKIT_URL?.trim().replace(/\/$/,"")) {
+    return fail(409,"Configure the dedicated Preview LiveKit project URL before connecting calls.");
+  }
   return {...settings,url:url.origin};
 }
 export async function liveKitSettings(db:Db){
@@ -47,7 +51,9 @@ export async function participantToken(s:LiveKitSettings,room:string,identity:st
 }
 export function validateStorage(s:RecordingStorage){
   let url:URL;try{url=new URL(s.endpoint);}catch{return fail(400,"Enter the private bucket's S3 endpoint.");}
-  const allowed=url.hostname==="ssggjxyexwkshtcypsaq.storage.supabase.co"||url.hostname==="ssggjxyexwkshtcypsaq.supabase.co"||
+  const supabase=/^[a-z0-9]{20}(?:\.storage)?\.supabase\.co$/.test(url.hostname);
+  const projects=(process.env.WALSHKEN_STORAGE_ALLOWED_HOSTS??"").split(",").map(value=>value.trim().toLowerCase());
+  const allowed= supabase && (url.hostname.startsWith("ssggjxyexwkshtcypsaq.") || projects.includes(url.hostname)) ||
     /^(?:s3[.-][a-z0-9-]+\.amazonaws\.com|[a-z0-9]+\.r2\.cloudflarestorage\.com)$/.test(url.hostname);
   if(!allowed||url.protocol!=="https:"||url.username||url.password||url.port||url.search||url.hash||
     !["/","/storage/v1/s3"].includes(url.pathname))return fail(400,"Use this Supabase project's S3 endpoint, an AWS regional S3 endpoint, or an R2 account endpoint.");
@@ -70,8 +76,10 @@ export async function verifyRecordingStorage(settings:RecordingStorage){
     const publicUrl=new URL(`${s.endpoint}/${s.bucket}/${key}`);
     const response=await fetch(publicUrl,{cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000)});
     if(![401,403,404].includes(response.status))return fail(400,"Recording storage must be private. Public access was not denied.");
-    if(s.endpoint.includes("supabase.co")){
-      const publicResponse=await fetch(`https://ssggjxyexwkshtcypsaq.supabase.co/storage/v1/object/public/${s.bucket}/${key}`,{cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000)});
+    const hostname=new URL(s.endpoint).hostname;
+    if(hostname.endsWith(".supabase.co")){
+      const projectHost=hostname.replace(/\.storage\.supabase\.co$/,".supabase.co");
+      const publicResponse=await fetch(`https://${projectHost}/storage/v1/object/public/${s.bucket}/${key}`,{cache:"no-store",redirect:"error",signal:AbortSignal.timeout(8000)});
       if(publicResponse.ok)return fail(400,"Disable public access for this Supabase bucket before connecting it.");
     }
   }catch(error){if(error instanceof Error&&error.name==="AppError")throw error;return fail(400,"Private storage verification failed. Check the endpoint, bucket and S3 credentials.");}

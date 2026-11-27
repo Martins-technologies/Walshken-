@@ -80,7 +80,7 @@ export async function POST(request: Request, context: Context) {
     if(["tasks","projects","notifications"].includes(area)) return await workAction(db,actor,area,action,data);
     if(area==="messages") return await messageAction(db,actor,action,data);
     if(area==="documents") return await documentAction(db,actor,action,data);
-    if(area==="calls") return await meetingAction(db,actor,action,data);
+    if(area==="calls") return await meetingAction(db,actor,action,data,request.headers.get("Origin")??undefined);
     if(area==="payroll") return await payrollAction(db,actor,action,data);
     return fail(404,"This workspace endpoint is unavailable.");
   } catch(error) { return handleError(error); }

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { countries } from "@/lib/walshken/catalog";
 import { Icon } from "./brand";
 import { clientRequest } from "./client-access";
+import { ClientAuthenticator } from "./client-account-options";
 import { ClientEmpty, dateLabel, type ClientCase } from "./client-ui";
 
 type Profile = Record<string,string|string[]>;
@@ -78,7 +79,7 @@ export function ClientAlerts({onChanged}:{onChanged:()=>void}){
   }
   return <><Feedback error={error} notice={notice}/>
     <section className="client-card"><div className="client-card-heading"><div><h2>Notification center</h2><p>{data?.unread??0} unread updates</p></div>{Boolean(data?.unread)&&<button className="btn btn-outline" type="button" disabled={busy} onClick={()=>void action("notification-read",{all:true})}>Mark all as read</button>}</div>
-      {data?.notifications.length?<ul className="client-list">{data.notifications.map(item=><li key={item.id}><div><Link href={item.href}><strong>{item.title}</strong></Link><p>{item.body}</p><small>{dateLabel(item.createdAt)}{!item.readAt?" · Unread":""}{["Queued","Processing","Accepted","Retry","Failed"].includes(item.delivery)?` · Email ${item.delivery.toLowerCase()}`:""}</small></div>{!item.readAt&&<button className="client-text" type="button" disabled={busy} onClick={()=>void action("notification-read",{id:item.id})}>Mark read</button>}</li>)}</ul>:data?<ClientEmpty icon="bell" title="No notifications yet"/>:!error&&<p className="client-loading" role="status">Loading notifications…</p>}
+      {data?.notifications.length?<ul className="client-list">{data.notifications.map(item=><li key={item.id}><div><Link href={item.href}><strong>{item.title}</strong></Link><p>{item.body}</p><small>{dateLabel(item.createdAt)}{!item.readAt?" · Unread":""}{["Queued","Processing","Accepted","Retry","Failed","Delivered","Delayed","Bounced","Complained"].includes(item.delivery)?` · Email ${item.delivery.toLowerCase()}`:""}</small></div>{!item.readAt&&<button className="client-text" type="button" disabled={busy} onClick={()=>void action("notification-read",{id:item.id})}>Mark read</button>}</li>)}</ul>:data?<ClientEmpty icon="bell" title="No notifications yet"/>:!error&&<p className="client-loading" role="status">Loading notifications…</p>}
     </section>
     {data&&<section className="client-card"><div className="client-card-heading"><div><h2>Email preferences</h2><p>Optional alerts contain a sign-in link without your case details.</p></div></div><label className="client-switch"><input type="checkbox" checked={data.preferences.email} disabled={busy} onChange={e=>void action("notification-preferences",{email:e.target.checked})}/> Email me about new updates</label></section>}
   </>;
@@ -107,6 +108,7 @@ export function ClientSecurity({cases,person}:{cases:ClientCase[];person:{email:
       {sessions?.length?<ul className="client-list">{sessions.map(item=><li key={item.id}><div><strong>{item.device??"Browser"}</strong><p>{item.current?"This session":item.endedAt?"Ended":"Signed in"} · {dateLabel(item.createdAt)}</p>{item.lastSeenAt&&<small>Last activity {dateLabel(item.lastSeenAt)}</small>}</div>{!item.current&&!item.endedAt&&<button className="client-text" type="button" disabled={busy} onClick={()=>void send("/api/customer/session-revoke",{id:item.id})}>End session</button>}</li>)}</ul>:sessions?<ClientEmpty icon="lock" title="No session history"/>:!error&&<p className="client-loading" role="status">Loading session history…</p>}
       {events.length>0&&<details className="client-disclosure"><summary>Recent security activity</summary><ul className="client-list">{events.map(item=><li key={item.id}><strong>{item.event}</strong><small>{dateLabel(item.createdAt)}</small></li>)}</ul></details>}
     </section>
+    <ClientAuthenticator/>
     <section className="client-card"><div className="client-card-heading"><div><h2>Email & password</h2><p>Signed in as {person.email}</p></div></div>
       <div className="client-form-actions"><Link className="client-text" href="/customer/reset">Reset password <Icon name="right" size={16}/></Link></div>
       <details className="client-disclosure"><summary>Confirm your password for sensitive actions</summary><form method="post" className="client-form" onSubmit={event=>form(event,"/api/customer/reauthenticate")}><label>Password<input name="password" type="password" autoComplete="current-password" required/></label><div><button className="btn btn-blue" disabled={busy}>Confirm password</button></div></form></details>

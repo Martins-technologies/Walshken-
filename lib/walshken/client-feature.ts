@@ -4,9 +4,9 @@ export const clientPortalEnabled = () => process.env.WALSHKEN_CLIENT_PORTAL_ENAB
 
 export const clientNavigation = [
   ["overview", "Overview", "layout"], ["cases", "My cases", "project"], ["documents", "Documents", "file"],
-  ["contact", "Messages & calls", "message"], ["payments", "Payments & invoices", "wallet"],
+  ["contact", "Messages & calls", "message"], ["appointments", "Appointments", "calendar"], ["payments", "Payments & invoices", "wallet"],
   ["agreements", "Agreements", "check"], ["notifications", "Notifications", "bell"],
-  ["profile", "My profile", "user"], ["security", "Security & privacy", "shield"],
+  ["profile", "My profile", "user"], ["security", "Security & privacy", "shield"], ["support", "Help & feedback", "help"],
 ] as const;
 export type ClientSection = (typeof clientNavigation)[number][0];
 

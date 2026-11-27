@@ -7,6 +7,8 @@ import {GET,POST} from "../app/api/client-documents/[action]/route.ts";
 import {workspaceDatabase} from "../lib/walshken/database.ts";
 import {createCanvas} from "@napi-rs/canvas";
 import {PDFDocument} from "pdf-lib";
+import {maintainClientDocuments} from "../lib/walshken/client-documents.ts";
+import {documentQualityFlags} from "../lib/walshken/document-render.ts";
 
 assert.equal(process.env.NODE_ENV,"test");
 assert.equal(process.env.DATABASE_URL,undefined);
@@ -15,7 +17,7 @@ process.on("exit",()=>rmSync(sandbox,{recursive:true,force:true}));
 mkdirSync(join(sandbox,"drizzle"));
 for(const name of readdirSync(join(repo,"drizzle")).filter(file=>file.endsWith(".sql")))copyFileSync(join(repo,"drizzle",name),join(sandbox,"drizzle",name));
 writeFileSync(join(sandbox,"drizzle","00000_roles.sql"),"CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;");
-const migrations=["20261122145905_staff_document_security.sql","20261122192455_employee_task_workflow.sql","20261125231710_staff_unit_memberships.sql","20261127090000_client_identity.sql","20261127090200_client_cases.sql","20261127090400_client_documents.sql"];
+const migrations=["20261122145905_staff_document_security.sql","20261122192455_employee_task_workflow.sql","20261125231710_staff_unit_memberships.sql","20261127090000_client_identity.sql","20261127090200_client_cases.sql","20261127090400_client_documents.sql","20261128101000_client_document_intelligence.sql","20261128105000_client_preferences_and_mfa.sql"];
 for(const [i,name] of migrations.entries())copyFileSync(join(repo,"supabase","migrations",name),join(sandbox,"drizzle",String(100+i).padStart(4,"0")+"_"+name));
 symlinkSync(join(repo,"node_modules"),join(sandbox,"node_modules"),"dir");
 symlinkSync(join(repo,"public"),join(sandbox,"public"),"dir");
@@ -51,8 +53,8 @@ for(const [sequence,account,key] of [[1,owner,caseId],[2,stranger,otherCase]]){
   await query(`INSERT INTO client_cases(id,org_id,customer_id,reference,title,service,country,assigned_employee_id,representative_name,created_at,updated_at)
     VALUES(?,'walshken',?,?,'Immigration case','Immigration','CA',?,'Representative',?,?)`,key,account.id,"CASE-DOC-"+sequence,assigned.id,stamp,stamp).run();
 }
-await query(`INSERT INTO client_case_document_requests(id,org_id,case_id,title,instructions,due_on,created_by,created_at,updated_at)
- VALUES(?,'walshken',?,'Passport scan','Provide the photo page.',?,?,?,?)`,requirement,caseId,future.slice(0,10),admin.id,stamp,stamp).run();
+await query(`INSERT INTO client_case_document_requests(id,org_id,case_id,title,instructions,due_on,expected_category,created_by,created_at,updated_at)
+ VALUES(?,'walshken',?,'Passport scan','Provide the photo page.',?,'Passport',?,?,?)`,requirement,caseId,future.slice(0,10),admin.id,stamp,stamp).run();
 async function request(action,actor,expected=200,options={}){
   const params=new URLSearchParams({case:options.case??caseId});
   if(actor?.staff||options.staff)params.set("scope","staff");
@@ -72,24 +74,34 @@ function form(file,name,info={}){
   body.set("case",info.case??caseId);body.set("file",new Blob([file]),name);
   body.set("uploadId",info.nonce??randomUUID());
   if(info.document)body.set("document",info.document);
-  else{body.set("category","Passport");body.set("description","First page");body.set("requirement",info.requirement??requirement);}
+  else{body.set("category",info.category??"Passport");body.set("description","First page");body.set("requirement",info.requirement??requirement);}
+  if(info.expiry)body.set("expiry",info.expiry);
   return body;
 }
 const canvas=createCanvas(640,850),ctx=canvas.getContext("2d");
 ctx.fillStyle="#fff";ctx.fillRect(0,0,640,850);ctx.fillStyle="#334a69";ctx.fillRect(70,100,500,40);ctx.fillRect(70,230,450,13);
 const png=canvas.toBuffer("image/png");
 const pdf=await PDFDocument.create();pdf.addPage();pdf.addPage();const pdfBytes=await pdf.save();
+const passportExpiry=new Date(Date.now()+12*86_400_000).toISOString().slice(0,10);
+const softScan=createCanvas(700,700),softCtx=softScan.getContext("2d"),gradient=softCtx.createLinearGradient(0,0,700,0);
+for(let segment=0;segment<=10;segment++)gradient.addColorStop(segment/10,segment%2?"#ddd":"#333");
+softCtx.fillStyle=gradient;softCtx.fillRect(0,0,700,700);
+assert.ok((await documentQualityFlags("blur.png",softScan.toBuffer("image/png"))).includes("blur"),"soft image detail flagged for review");
 
 await request("list",null,401);
 await request("list",unverified,403);
 await request("list",stranger,404);
 await request("list",outsider,404);
 assert.equal((await data("list",owner,200)).documents.length,0);
+assert.equal((await data("list",owner,200)).requests[0].needs_submission,true);
+assert.equal((await data("list",owner,200)).watermark,null);
+assert.equal((await data("list",admin,200)).watermark.enabled,false);
 await request("upload",owner,403,{body:form(png,"valid.png"),origin:"https://untrusted.example"});
 await request("upload",assigned,403,{body:form(png,"valid.png")});
 await request("upload",owner,404,{body:form(png,"valid.png",{case:otherCase})});
 await request("upload",owner,400,{body:form(Buffer.from("not a JPEG"),"bad.jpg")});
 await request("upload",owner,413,{body:form(Buffer.alloc(3*1024*1024+1),"big.png")});
+await request("upload",owner,400,{body:form(png,"wrong-category.png",{category:"Supporting evidence"})});
 process.env.WALSHKEN_CLIENT_MALWARE_SCANNING_REQUIRED="1";
 await request("upload",owner,503,{body:form(png,"valid.png")});
 process.env.WALSHKEN_CLIENT_MALWARE_SCANNING_REQUIRED="0";
@@ -109,6 +121,19 @@ assert.equal(preview.headers.get("cross-origin-resource-policy"),"same-origin");
 const image=Buffer.from(await preview.arrayBuffer());
 assert.deepEqual([...image.subarray(0,2)],[255,216]);
 assert.notDeepEqual(image,png);
+const watermark={enabled:true,label:"Internal only · QA watermark",opacity:42,position:"bottom",repeat_mark:false,show_client:true,show_time:false,categories:["Passport"],revision:0};
+await request("watermark",assigned,403,{body:watermark});
+await request("watermark",owner,403,{body:watermark});
+await request("watermark-sample",admin,200,{body:watermark});
+assert.equal((await data("list",admin,200)).watermark.enabled,false);
+await request("watermark",admin,400,{body:{...watermark,opacity:400}});
+await request("watermark",admin,200,{body:watermark});
+await request("watermark",admin,409,{body:watermark});
+const marked=Buffer.from(await (await request("preview",owner,200,{document,version:old})).arrayBuffer());
+assert.notDeepEqual(marked,image,"server policy changes rendered preview");
+assert.deepEqual(Buffer.from(await (await request("download",admin,200,{document,version:old})).arrayBuffer()),png,"watermark does not alter the downloadable original");
+await request("watermark",admin,200,{body:{...watermark,revision:1,enabled:false}});
+assert.deepEqual(Buffer.from(await (await request("preview",owner,200,{document,version:old})).arrayBuffer()),image,"default raster restored when admin disables marks");
 await request("preview",stranger,404,{document});
 await request("preview",outsider,404,{document});
 await request("preview",assigned,200,{document});
@@ -119,15 +144,20 @@ assert.deepEqual(Buffer.from(await original.arrayBuffer()),png);
 await request("review",outsider,404,{body:{document,version:old,decision:"Accepted"}});
 await request("review",assigned,200,{body:{document,version:old,decision:"Replacement requested",reason:"Include a complete photo page."}});
 assert.equal((await data("list",owner,200)).requests[0].status,"Replacement requested");
-await request("upload",owner,201,{body:form(pdfBytes,"passport.pdf",{document})});
+await request("upload",owner,201,{body:form(pdfBytes,"passport.pdf",{document,expiry:passportExpiry})});
 documents=await data("list",owner,200,{document});
 assert.deepEqual(documents.history.map(item=>item.version),[2,1]);
 assert.equal(documents.history[0].page_count,2);
+assert.ok(documents.history[0].quality_flags.includes("blank"));
+assert.equal(documents.history[0].submitted_expiry_on,passportExpiry);
 const latest=documents.documents[0].current_version_id;
 await request("preview",owner,200,{document,version:latest,page:2});
 await request("review",assigned,409,{body:{document,version:old,decision:"Accepted"}});
-await request("review",assigned,200,{body:{document,version:latest,decision:"Accepted"}});
+await request("review",assigned,200,{body:{document,version:latest,decision:"Accepted",expiry:passportExpiry}});
 assert.equal((await data("list",owner,200)).requests[0].status,"Accepted");
+assert.equal((await data("list",owner,200)).documents[0].verified_expiry_on,passportExpiry);
+assert.equal((await maintainClientDocuments(db,"walshken")).reminders,1);
+assert.equal((await maintainClientDocuments(db,"walshken")).reminders,0);
 assert.equal((await data("list",owner,200,{document})).events.length,0);
 assert.ok((await data("list",assigned,200,{document})).events.some(event=>event.action==="Replaced"));
 const originals=await query("SELECT count(*)::int AS n FROM client_preview_document_objects").first();
@@ -137,7 +167,8 @@ await request("policy",admin,200,{body:{retention:365,basis:"Reviewed fixture",d
 await request("download",owner,200,{document,version:latest});
 await query("UPDATE customer_sessions SET reauthenticated_at=? WHERE id=?",new Date(Date.now()-16*60_000).toISOString(),owner.sessionHash).run();
 await request("download",owner,403,{document});
-await request("upload",owner,201,{body:form(png,"passport-addendum.png",{requirement:""})});
+const repeated=await data("upload",owner,201,{body:form(png,"passport-addendum.png",{requirement:""})});
+assert.ok((await data("list",owner,200)).documents.find(row=>row.id===repeated.id).quality_flags.includes("duplicate"));
 await request("hold",admin,200,{body:{document,reason:"Fixture hold reference"}});
 await request("request-deletion",owner,200,{body:{document,reason:"Review disposal under the privacy policy"}});
 let staffData=await data("list",admin,200,{document});
@@ -154,4 +185,4 @@ await request("preview",owner,404,{document,version:old});
 assert.equal((await query("SELECT count(*)::int AS n FROM client_preview_document_objects").first()).n,1);
 await query("UPDATE customer_sessions SET ended_at=? WHERE id=?",stamp,owner.sessionHash).run();
 await request("list",owner,401);
-console.log("PASS client documents: scoped case access, immutable versions, malware configuration, private watermarked previews, staff approvals, protected disposal and session revocation");
+console.log("PASS client documents: scoped case access, immutable versions, quality and category checks, deduplicated expiry reminders, optional watermark, staff approvals, protected disposal and session revocation");

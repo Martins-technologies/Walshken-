@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import { createCanvas, loadImage, GlobalFonts, DOMMatrix, ImageData, Path2D } from "@napi-rs/canvas";
+import { createCanvas, loadImage, GlobalFonts, DOMMatrix, ImageData, Path2D, type Canvas } from "@napi-rs/canvas";
 import mammoth from "mammoth";
 import ExcelJS from "exceljs";
 import yauzl from "yauzl";
 import { fail } from "./server";
 import { documentLimits } from "./document-types";
+import type { ClientDocumentQualityFlag } from "./client-document-types";
 
 GlobalFonts.registerFromPath(join(process.cwd(),"public/inter-latin.woff2"),"Walshken");
 Object.assign(globalThis,{DOMMatrix,ImageData,Path2D});
@@ -101,7 +102,35 @@ export async function inspectDocument(filename:string,bytes:Buffer):Promise<Insp
  }catch(error){fail(400,error instanceof Error&&/password/i.test(error.message)?"Remove the document password before uploading.":`This file cannot be safely previewed. ${error instanceof Error?error.message.slice(0,160):"Check the file format."}`);}
  return {mime,pages,sha256:createHash("sha256").update(bytes).digest("hex"),filename:name};
 }
-export async function renderDocumentPage(filename:string,bytes:Buffer,pageNumber:number,watermark:string|readonly [string,string]){
+export type DocumentWatermarkOverlay={label:string;detail:string;alpha:number;position:"top"|"center"|"bottom";repeat:boolean};
+
+export function applyDocumentWatermark(canvas:Canvas,watermark:DocumentWatermarkOverlay) {
+ const context=canvas.getContext("2d");
+ const textSize=Math.max(13,Math.min(27,Math.round(canvas.width/32)));
+ const anchor={top:.20,center:.50,bottom:.80}[watermark.position];
+ const step=canvas.height*.275;
+ const centers=watermark.repeat?[-2,-1,0,1,2].map(offset=>Math.round(canvas.height*anchor+step*offset))
+   .filter(y=>y>canvas.height*.10&&y<canvas.height*.90):[canvas.height*anchor];
+ context.save();
+ context.globalAlpha=watermark.alpha;
+ context.fillStyle="#17294c";
+ context.textAlign="center";
+ for(const y of centers){
+  context.save();
+  context.translate(canvas.width/2,y);
+  context.rotate(watermark.repeat?-Math.PI/14:0);
+  context.font=`bold ${textSize}px Walshken, sans-serif`;
+  context.fillText(watermark.label,0,0,canvas.width*.87);
+  if(watermark.detail){
+   context.font=`${Math.max(11,textSize-3)}px Walshken, sans-serif`;
+   context.fillText(watermark.detail,0,textSize+4,canvas.width*.87);
+  }
+  context.restore();
+ }
+ context.restore();
+}
+
+export async function renderDocumentPage(filename:string,bytes:Buffer,pageNumber:number,watermark:string|DocumentWatermarkOverlay){
  const extension=filename.split(".").pop()?.toLowerCase();let canvas=createCanvas(1200,1600),context=canvas.getContext("2d");
  context.fillStyle="#fff";context.fillRect(0,0,canvas.width,canvas.height);
  if(extension==="pdf"){
@@ -121,29 +150,56 @@ export async function renderDocumentPage(filename:string,bytes:Buffer,pageNumber
   canvas=createCanvas(Math.max(300,Math.ceil(image.width*scale)),Math.max(150,Math.ceil(image.height*scale)));context=canvas.getContext("2d");context.fillStyle="#fff";context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0,image.width*scale,image.height*scale);
  }
  if(typeof watermark!=="string"){
-  const [label,identity]=watermark;
-  const from=canvas,footerHeight=44;
-  canvas=createCanvas(from.width,from.height+footerHeight);
-  context=canvas.getContext("2d");
-  context.fillStyle="#fff";context.fillRect(0,0,canvas.width,canvas.height);
-  context.drawImage(from,0,0);
-  context.save();context.beginPath();context.rect(0,0,from.width,from.height);context.clip();
-  context.globalAlpha=.17;context.fillStyle="#17294c";
-  const textSize=Math.max(12,Math.min(24,Math.round(from.width/36)));
-  context.textAlign="center";
-  for(let y=from.height*.14;y<from.height;y+=Math.min(250,from.height*.27)){
-   context.save();context.translate(from.width/2,y);context.rotate(-Math.PI/14);
-   context.font=`bold ${textSize}px Walshken, sans-serif`;context.fillText(label,0,0,from.width*.87);
-   context.font=`${Math.max(11,textSize-3)}px Walshken, sans-serif`;context.fillText(identity,0,textSize+5,from.width*.86);
-   context.restore();
-  }
-  context.restore();
-  context.fillStyle="#32445f";context.font="bold 11px Walshken, sans-serif";context.fillText(label,10,from.height+17,from.width-20);
-  context.font="11px Walshken, sans-serif";context.fillText(identity,10,from.height+33,from.width-20);
+  applyDocumentWatermark(canvas,watermark);
  }else if(watermark){
   context.save();context.globalAlpha=0.15;context.fillStyle="#17294c";context.font=`bold ${Math.max(14,Math.min(23,canvas.width/36))}px Walshken, sans-serif`;
   for(let y=80;y<canvas.height;y+=230){context.save();context.translate(12,y);context.rotate(-Math.PI/12);context.fillText(watermark,0,0);context.restore();}context.restore();
   context.fillStyle="#fff";context.fillRect(0,canvas.height-35,canvas.width,35);context.fillStyle="#32445f";context.font=`${Math.max(10,Math.min(13,canvas.width/70))}px Walshken, sans-serif`;context.fillText(watermark,10,canvas.height-12);
  }
  return canvas.toBuffer("image/jpeg",85);
+}
+
+export async function documentQualityFlags(filename:string,bytes:Buffer):Promise<ClientDocumentQualityFlag[]> {
+ const isPdf=filename.toLowerCase().endsWith(".pdf");
+ try{
+  const image=isPdf?await loadImage(await renderDocumentPage(filename,bytes,1,"")):await validImage(bytes);
+  const scale=280/Math.max(image.width,image.height);
+  const width=Math.max(1,Math.round(image.width*scale)),height=Math.max(1,Math.round(image.height*scale));
+  const ctx=createCanvas(width,height).getContext("2d");
+  ctx.fillStyle="#fff";
+  ctx.fillRect(0,0,width,height);
+  ctx.drawImage(image,0,0,width,height);
+  const {data}=ctx.getImageData(0,0,width,height),tones=new Uint8Array(width*height);
+  const histogram=new Uint32Array(256),flags:ClientDocumentQualityFlag[]=[];
+  for(let index=0;index<tones.length;index++){
+   const offset=index*4;
+   const tone=Math.round(.213*data[offset]+.715*data[offset+1]+.072*data[offset+2]);
+   tones[index]=tone;
+   histogram[tone]++;
+  }
+  const percentile=(fraction:number)=>{
+   let seen=0;
+   for(let tone=0;tone<256;tone++){seen+=histogram[tone];if(seen>=tones.length*fraction)return tone;}
+   return 255;
+  };
+  if(!isPdf&&Math.min(image.width,image.height)<600)flags.push("low-resolution");
+  const contrast=percentile(.995)-percentile(.005);
+  if(contrast<6)flags.push("blank");
+  else if(contrast<42)flags.push("low-contrast");
+  else{
+   let soft=0,sharp=0;
+   for(let y=1;y<height-1;y++){
+    for(let x=1;x<width-1;x++){
+     const index=y*width+x;
+     const gradient=Math.abs(tones[index+1]-tones[index-1])+Math.abs(tones[index+width]-tones[index-width]);
+     if(gradient>=35)sharp++;
+     else if(gradient>=7)soft++;
+    }
+   }
+   if(soft>tones.length*.012&&sharp<(soft+sharp)*.085)flags.push("blur");
+  }
+  return flags;
+ }catch{
+  return ["unable-to-assess"];
+ }
 }

@@ -1,5 +1,6 @@
 import { assertClientCaseUnheld, clientCaseFor, clientCaseView, requireClientCases, type CaseCustomer } from "./client-cases";
 import { clientProfileSnapshot } from "./client-profile";
+import { exportClientJourney } from "./client-journey";
 import { clientSecurityEvent } from "./client-sessions";
 import { notifyClient } from "./client-notifications";
 import { all, audit, canSuper, fail, id, integer, json, now, one, orgId, pick, run, str, throttle, type Actor, type Db } from "./server";
@@ -93,10 +94,10 @@ export async function clientPrivacyExport(db:Db,customerId:string,requestId:stri
     const data=await clientCaseView(db,customerId,target.id,501);
     if([data.updates,data.requests,data.messages].some(items=>(items?.length??0)>500))
       return fail(409,"Contact the privacy team for a complete export of this case history.");
-    cases.push(data);
+    cases.push({...data,journey:await exportClientJourney(db,customerId,target.id)});
   }
   const caseFilter=[orgId,customerId,row.case_id??"",row.case_id??""];
-  const [privacy,profile,documentMetadata,calls,invoices,invoiceItems,payments,agreements]=await Promise.all([
+  const [privacy,profile,documentMetadata,calls,invoices,invoiceItems,payments,agreements,feedback,feedbackResponses]=await Promise.all([
     clientPrivacyView(db,customerId,row.case_id??"",1001),
     row.case_id?null:clientProfileSnapshot(db,account),
     all(db,`SELECT d.id,d.case_id,d.request_id,d.category,d.description,d.review_status,d.created_at,d.updated_at,d.deleted_at,
@@ -122,11 +123,17 @@ export async function clientPrivacyExport(db:Db,customerId:string,requestId:stri
       LEFT JOIN client_agreement_responses r ON r.org_id=a.org_id AND r.version_id=v.id AND r.customer_id=a.customer_id
       WHERE a.org_id=? AND a.customer_id=? AND (?='' OR a.case_id=?) AND v.published_at IS NOT NULL
       ORDER BY v.published_at,v.id LIMIT 1001`,...caseFilter),
+    all(db,`SELECT f.id,f.case_id,f.appointment_id,f.kind,f.title,f.body,f.rating,f.status,f.created_at,f.updated_at
+      FROM client_feedback_submissions f WHERE f.org_id=? AND f.customer_id=? AND (?='' OR f.case_id=?)
+      ORDER BY f.created_at,f.id LIMIT 1001`,...caseFilter),
+    all(db,`SELECT r.submission_id,r.body,r.status,r.created_at FROM client_feedback_responses r
+      JOIN client_feedback_submissions f ON f.org_id=r.org_id AND f.id=r.submission_id AND f.customer_id=r.customer_id
+      WHERE f.org_id=? AND f.customer_id=? AND (?='' OR f.case_id=?) ORDER BY r.created_at,r.id LIMIT 1001`,...caseFilter),
   ]);
-  if([documentMetadata,calls,invoices,invoiceItems,payments,agreements,privacy.consents,privacy.privacyRequests].some(items=>items.length>1000))
+  if([documentMetadata,calls,invoices,invoiceItems,payments,agreements,feedback,feedbackResponses,privacy.consents,privacy.privacyRequests].some(items=>items.length>1000))
     return fail(409,"Contact the privacy team for an export covering all matching records.");
   const body={
-    request:row.id,scope:row.case_id?"Selected case":"Account and cases",account,profile,cases,documentMetadata,calls,invoices,invoiceItems,payments,agreements,
+    request:row.id,scope:row.case_id?"Selected case":"Account and cases",account,profile,cases,documentMetadata,calls,invoices,invoiceItems,payments,agreements,feedback,feedbackResponses,
     consents:privacy.consents,privacyRequests:privacy.privacyRequests,
   };
   if(Buffer.byteLength(JSON.stringify(body))>3_000_000)return fail(409,"Contact the privacy team for a complete export of these records.");

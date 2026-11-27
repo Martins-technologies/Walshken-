@@ -1,6 +1,7 @@
 import { ParticipantInfo_Kind } from "@livekit/protocol";
 import { clientCallWebhook, isClientCallRoom } from "./client-calls";
 import { clientPortalEnabled } from "./client-feature";
+import { guardClientAppointmentsForStaff } from "./client-appointment-conflicts";
 import { EgressStatus, EncodedFileType, FileOutput, Output, S3Upload, StartEgressRequest, StorageConfig, TemplateSource, WebhookReceiver, type EgressInfo } from "livekit-server-sdk";
 import { teamOptions } from "./collaboration";
 import { deleteRecordingObject, egressClient, isMissing, liveKitSettings, participantToken, providerCall, publishSources, recordingStorage, roomClient, signedRecording } from "./livekit";
@@ -8,7 +9,7 @@ import { dispatchMeetingInvitationEmails, meetingInvitationEmailConfigured, proc
 import { canConfigureMeetingGuests, canInviteMeetingGuests, closeGuestPresence, disconnectMeetingGuest, externalGuestPolicy, guestAttendance, guestMeetingFields, guestMeetingIdentityAllowed, guestRoster, inviteMeetingGuests, manageExternalMeetingGuest, meetingGuestAddresses, meetingInvitesEnabled, parseGuestIdentity, recordGuestPresence, rescheduleGuestMeeting, scheduledMeetingTime, updateMeetingGuestSchedule, type GuestMeeting } from "./meeting-invitations";
 import {integrationSettings} from './integration-settings';
 import { canManageRecordingPolicy, currentRecordingRequest, managementRecordingEnabled, organizationRecordingPolicy, permittedRecordingCategory, recordRequestAction, saveRecordingPolicy, type RecordingCategory, type RecordingPolicy, type RecordingRole } from "./meeting-recording-policy";
-import { declinedGuestRecordingConsent, missingGuestRecordingConsent } from "./meeting-invitations";
+import { declinedGuestRecordingConsent, missingGuestRecordingConsent, shareMeetingGuestLink } from "./meeting-invitations";
 import { all, audit, canManage, colleague, datetime, fail, id, integer, json, notify, now, one, pick, requireStaff, requireSuper, run, stmt, str, throttle, type Actor, type Db, type Row } from "./server";
 
 type Meeting=GuestMeeting & {id:string;org_id:string;organizer_id:string;title:string;starts_at:string;ends_at:string;cancelled_at:string|null;
@@ -87,7 +88,7 @@ export async function meetings(db:Db,actor:Actor){
 export async function meetingViews(db:Db,actor:Actor){
   const p=await policy(db,actor.org_id),staff=await teamOptions(db,actor);
   if(isAdmin(actor)&&p.external_meetings)staff.push(...await all<Row>(db,"SELECT id,name || ' (guest)' AS name FROM employees WHERE org_id=? AND status='Active' AND employment_status<>'Ended' AND role='guest' ORDER BY name",actor.org_id));
-  const [rows,provider,storage]=await Promise.all([meetings(db,actor),integrationSettings(db,'livekit'),integrationSettings(db,'recording-storage')]);
+  const [rows,provider,storage]=await Promise.all([meetings(db,actor),liveKitSettings(db).then(()=>true,()=>false),integrationSettings(db,'recording-storage')]);
   const recording=managementRecordingEnabled()?await organizationRecordingPolicy(db,actor.org_id,p):null;
   const mayConfigure=!!recording&&canManageRecordingPolicy(actor);
   const guestPolicy=meetingInvitesEnabled()?await externalGuestPolicy(db,actor.org_id):null;
@@ -159,7 +160,7 @@ export async function attendanceReport(db:Db,actor:Actor,target:string){
   await audit(db,actor,"Meeting attendance exported","meeting",target).run();
   return new Response(csv,{headers:{"Content-Type":"text/csv; charset=utf-8","Content-Disposition":'attachment; filename="meeting-attendance.csv"',"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}});
 }
-export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<string,unknown>){
+export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<string,unknown>,requestOrigin?:string){
   await throttle(db,`calls:${actor.id}`,120,60000);
   if(action==="recording-policy"){
     const affected=await saveRecordingPolicy(db,actor,data);
@@ -223,6 +224,7 @@ export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<
     const target=id(),title=str(data.title,"meeting title",100);
     await db.transaction(async tx=>{
       if(addresses.length)await one(tx,"SELECT id FROM organizations WHERE id=? FOR SHARE",actor.org_id);
+      await guardClientAppointmentsForStaff(tx,actor.org_id,[actor.id,...participants],start,end);
       await tx.batch([stmt(tx,`INSERT INTO meetings (id,org_id,organizer_id,title,starts_at,ends_at,mode,waiting_room,screen_sharing,provider,recording_enabled,recording_retention_days) VALUES (?,?,?,?,?,?,?,?,?,'livekit',?,?)`,target,actor.org_id,actor.id,title,start,end,mode,waiting,sharing,record,recordingSettings.retention_days),
       ...(managementRecordingEnabled()?[stmt(tx,"UPDATE meetings SET recording_category=? WHERE id=?",recordingCategory,target)]:[]),
       ...[actor.id,...participants].map(person=>stmt(tx,"INSERT INTO meeting_members (id,meeting_id,employee_id) VALUES (?,?,?)",id(),target,person)),
@@ -248,15 +250,16 @@ export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<
   if(managementRecordingEnabled()&&action==="consent")return saveMeetingConsent(db,actor,target,data);
   if(managementRecordingEnabled()&&action==="record-stop")return stopManagedRecording(db,actor,target);
   const response=await db.transaction(async tx=>{
-    if(meetingInvitesEnabled()&&(action==="guest-invite"||action==="guest-resend"))await one(tx,"SELECT id FROM organizations WHERE id=? FOR SHARE",actor.org_id);
+    if(meetingInvitesEnabled()&&["guest-invite","guest-resend","guest-link"].includes(action))await one(tx,"SELECT id FROM organizations WHERE id=? FOR SHARE",actor.org_id);
     const m=await meetingFor(tx,actor,target,true),p=await policy(tx,actor.org_id),host=hostFor(actor,m);
     if(meetingInvitesEnabled()&&action==="reschedule"){
       if(!host||actor.role==="guest")return fail(403,"Only an internal host can reschedule a meeting.");
       return rescheduleGuestMeeting(tx,actor,m,data);
     }
-    if(meetingInvitesEnabled()&&["guest-invite","guest-admit","guest-revoke","guest-permissions","guest-resend"].includes(action)){
+    if(meetingInvitesEnabled()&&["guest-invite","guest-admit","guest-revoke","guest-permissions","guest-resend","guest-link"].includes(action)){
       if(!host||actor.role==="guest")return fail(403,"Only an internal meeting host can manage external invitations.");
       if(m.ended_at||m.cancelled_at||m.ends_at<=now())return fail(409,"This meeting has ended or was cancelled.");
+      if(action==="guest-link")return shareMeetingGuestLink(tx,actor,m,data,requestOrigin);
       if(action==="guest-invite"){
         if(await activeRecording(tx,target))return fail(409,"Stop recording before inviting new guests.");
         const addresses=meetingGuestAddresses(data.externalEmails);
@@ -318,6 +321,7 @@ export async function meetingAction(db:Db,actor:Actor,action:string,data:Record<
       if(!host||actor.role==="guest")return fail(403,"Only an internal host can invite participants.");
       if(await activeRecording(tx,target))return fail(409,"Stop recording before changing the participant list. New participants must give their own consent.");
       const person=str(data.employee,"participant",80);await permittedParticipant(tx,actor,person,p);
+      await guardClientAppointmentsForStaff(tx,actor.org_id,[person],m.starts_at,m.ends_at);
       const count=await one<{n:number}>(tx,"SELECT count(*)::int AS n FROM meeting_members WHERE meeting_id=? AND removed_at IS NULL",target);
       const external=meetingInvitesEnabled()?await one<{n:number}>(tx,"SELECT count(*)::int AS n FROM staff_meeting_guests WHERE meeting_id=? AND org_id=? AND revoked_at IS NULL AND rsvp<>'Declined'",target,m.org_id):null;
       if((count?.n??0)+(external?.n??0)>=100)return fail(409,"This meeting supports up to 100 invited participants.");

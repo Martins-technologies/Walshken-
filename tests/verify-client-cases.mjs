@@ -16,6 +16,12 @@ for(const name of [
   "20261127090400_client_documents.sql",
   "20261127090600_client_finance.sql",
   "20261127090700_client_calls.sql",
+  "20261128101000_client_document_intelligence.sql",
+  "20261128100000_client_journey.sql",
+  "20261128105000_client_preferences_and_mfa.sql",
+  "20261128102000_client_appointments.sql",
+  "20261128103000_client_message_feedback.sql",
+  "20261128105000_client_preferences_and_mfa.sql",
 ]){
   copyFileSync(join(repo,"supabase","migrations",name),join(sandbox,"supabase","migrations",name));
 }

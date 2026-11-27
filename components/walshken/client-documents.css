@@ -24,6 +24,7 @@
   min-width: 0;
   flex: 1;
 }
+.client-doc-card header > .client-doc-row-actions { flex: 0 1 auto; margin-left: auto; }
 .client-doc-card h3,
 .client-doc-dialog h2 {
   margin: 0;
@@ -53,6 +54,7 @@
 }
 .client-doc-upload-fields > label:last-child { grid-column: 1/-1; }
 .client-doc-upload-fields label,
+.client-doc-expiry-input,
 .client-doc-decision label {
   display: grid;
   gap: 5px;
@@ -61,8 +63,11 @@
   font-size: 13px;
 }
 .client-doc-upload-fields label > span { font-weight: 450; color: #586982; }
+.client-doc-expiry-input { width: min(100%, 285px); }
+.client-doc-expiry-input > span { color: #586982; font-weight: 450; }
 .client-doc-upload-fields select,
 .client-doc-upload-fields textarea,
+.client-doc-expiry-input input,
 .client-doc-decision select,
 .client-doc-decision textarea,
 .client-doc-decision input:not([type=checkbox]),
@@ -127,6 +132,10 @@
 .client-doc-queue .client-doc-file-error { color: #a1283b; }
 .client-doc-queue progress { display: block; width: min(230px,100%); accent-color: #2458df; margin-top: 4px; }
 .client-doc-tag { display: inline-block; border-radius: 999px; padding: 4px 8px; font-size: 11px; font-weight: 650; line-height: 1.35; background: #edf3ff; color: #214589; }
+.client-doc-list .client-doc-attention { color: #8c480e; background: #fff2db; }
+.client-doc-expiry { justify-self: start; border-radius: 7px; padding: 3px 6px; }
+.client-doc-quality { margin: 0; border-radius: 8px; padding: 9px 12px 9px 25px; background: #fff6e8; color: #673c16; font-size: 12px; }
+.client-doc-quality li + li { margin-top: 4px; }
 .client-doc-list > .client-doc-record {
   display: grid;
   gap: 8px;
@@ -186,12 +195,23 @@
 .client-scan-shade { position: absolute; inset: 0; background: #4278fb2a; pointer-events: none; }
 .client-scan-corner { position: absolute; inline-size: 28px; block-size: 28px; transform: translate(-50%,-50%); border-radius: 50%; border: 3px solid #fff; background: #2054ce; box-shadow: 0 1px 6px #11274e80; touch-action: none; }
 .client-doc-dialog input[type=checkbox] { accent-color: #2458df; }
+.client-watermark-fields, .client-watermark-categories { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
+.client-watermark-fields > label:first-child { grid-column: 1/-1; }
+.client-watermark-fields input[type=range] { padding: 0; border: 0; background: transparent; accent-color: #2458df; }
+.client-watermark-categories { border: 1px solid #dde6f3; border-radius: 9px; margin: 0; padding: 10px 12px 13px; }
+.client-watermark-categories legend { padding: 0 5px; font-weight: 650; }
+.client-watermark-sample { margin: 0; padding: 9px; border: 1px solid #dde6f3; border-radius: 8px; background: #f5f8ff; }
+.client-watermark-sample img { display: block; width: 100%; }
+.client-watermark-sample figcaption { margin-top: 5px; color: #52617a; font-size: 12px; }
 @media (max-width: 540px) {
   .client-doc-card header { flex-wrap: wrap; }
   .client-doc-card header > button { margin-left: 58px; }
   .client-doc-upload-fields { grid-template-columns: minmax(0,1fr); }
+  .client-watermark-fields, .client-watermark-categories { grid-template-columns: minmax(0,1fr); }
+  .client-doc-card header > .client-doc-row-actions { flex: 1 0 100%; margin: 0; }
   .client-doc-upload-fields select,
   .client-doc-upload-fields textarea,
+  .client-doc-expiry-input input,
   .client-doc-decision select,
   .client-doc-decision textarea,
   .client-doc-decision input:not([type=checkbox]) { font-size: 16px; }

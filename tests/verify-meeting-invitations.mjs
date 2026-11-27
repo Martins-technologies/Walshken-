@@ -22,6 +22,10 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     }
     return body;
   };
+  const calendar=(guest,browser={})=>guestRoute(new Request(origin+"/api/meeting-guest/calendar",{
+    method:"POST",headers:{origin,"content-type":"application/json",...(browser.cookie?{cookie:browser.cookie}:{})},
+    body:JSON.stringify({guest}),
+  }),{params:Promise.resolve({action:"calendar"})});
   const future=ms=>new Date(Date.now()+ms).toISOString();
   const options={...values,title:"External video meeting",type:"Group",mode:"Video",waiting:"0",members:[staffId],
     description:"Project meeting",instructions:"Bring the agenda",timeZone:"Asia/Karachi",
@@ -47,6 +51,8 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     process.env.VERCEL_BRANCH_URL="stable-preview.vercel.app";
     process.env.VERCEL_URL="deployment-preview.vercel.app";
     assert.equal(new URL(meetingGuestLink(external)).host,"stable-preview.vercel.app");
+    assert.equal(new URL(meetingGuestLink(external,"https://deployment-preview.vercel.app")).host,"deployment-preview.vercel.app");
+    assert.equal(new URL(meetingGuestLink(external,"https://other.vercel.app")).host,"stable-preview.vercel.app");
     delete process.env.VERCEL_BRANCH_URL;
     assert.equal(new URL(meetingGuestLink(external)).host,"deployment-preview.vercel.app");
     delete process.env.VERCEL_URL;
@@ -61,6 +67,12 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
   const participantDetails=await request("meeting/"+id,200,staff);
   assert.equal(organizerDetails.externalGuests.find(g=>g.id===external.id).email,"guest@partner.test");
   assert.equal(participantDetails.externalGuests.find(g=>g.id===external.id).email,null);
+  assert.equal(participantDetails.externalGuests.find(g=>g.id===external.id).opened,null);
+  assert.equal(participantDetails.externalGuests.some(g=>g.url||g.session_hash||g.token_nonce),false);
+  await request("calls/guest-link",401,{cookie:""},{id,guest:external.id});
+  await request("calls/guest-link",403,staff,{id,guest:external.id});
+  assert.equal((await request("calls/guest-link",200,admin,{id,guest:external.id})).url,meetingGuestLink(external));
+  assert.equal((await calendar(external.id)).status,401);
   assert.equal((await request("view/calls",200,admin)).guestInvites.emailConfigured,false);
   assert.equal((await request("view/integrations",200,admin)).meetingInviteEmail,true);
   await request("calls/guest-delivery",503,admin,{id});
@@ -102,6 +114,16 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     await requestGuest("exchange",404,guest,{token:"A".repeat(43)});
     const browser={};
     assert.equal((await requestGuest("exchange",200,guest,{token},browser)).status,"Invited");
+    await request("calls/guest-link",409,admin,{id,guest});
+    const event=await calendar(guest,browser);
+    assert.equal(event.status,200);
+    assert.match(event.headers.get("content-type"),/^text\/calendar/);
+    assert.match(event.headers.get("content-disposition"),/walshken-meeting\.ics/);
+    assert.match(event.headers.get("cache-control"),/no-store/);
+    const eventText=await event.text();
+    assert.ok(eventText.split("\r\n").every(line=>Buffer.byteLength(line)<=75),"Fold calendar data at 75 UTF-8 octets");
+    assert.match(eventText,/BEGIN:VCALENDAR\r\n.*DTSTART:\d{8}T\d{6}Z\r\n.*SUMMARY:External video meeting/s);
+    assert.doesNotMatch(eventText,new RegExp(`${token}|${guest}|guest@partner|roomAdmin|livekit`));
     await requestGuest("exchange",409,guest,{token},{});
     await requestGuest("join",403,guest,{},browser);
     await request("view/profile",401,{cookie:browser.cookie});
@@ -115,6 +137,7 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     await requestGuest("exchange",200,declined.id,{token:declineToken},declineBrowser);
     await requestGuest("decline",200,declined.id,{},declineBrowser);
     await requestGuest("join",403,declined.id,{},declineBrowser);
+    assert.equal((await calendar(declined.id,declineBrowser)).status,403);
     await requestGuest("join",202,guest,{},browser);
     await request("calls/guest-admit",403,staff,{id,guest});
     await request("calls/guest-admit",200,admin,{id,guest});
@@ -140,6 +163,7 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     await request("calls/guest-revoke",200,admin,{id,guest});
     assert.equal(participants.get(claims.video.room).length,0);
     await requestGuest("join",404,guest,{},browser);
+    assert.equal((await calendar(guest,browser)).status,404);
     await requestGuest("exchange",404,guest,{token},{});
     await request("calls/guest-invite",200,admin,{id,externalEmails:[declined.email]});
     const reinvited=await read("SELECT * FROM staff_meeting_guests WHERE id=?",declined.id);
@@ -153,6 +177,7 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     const initialBrowser={};
     await requestGuest("exchange",200,scheduledGuest.id,{token:initialToken},initialBrowser);
     await requestGuest("accept",200,scheduledGuest.id,{name:"External tester"},initialBrowser);
+    const originalCalendar=(await (await calendar(scheduledGuest.id,initialBrowser)).text()).replace(/\r\n /g,"");
     await request("calls/reschedule",404,staff,{id:scheduled,startsAt:future(3_600_000),endsAt:future(7_200_000)});
     await request("calls/reschedule",200,admin,{id:scheduled,startsAt:future(3_600_000),endsAt:future(7_200_000),timeZone:"America/Toronto"});
     await requestGuest("status",401,scheduledGuest.id,{},initialBrowser);
@@ -163,6 +188,11 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     const newToken=new URL(rescheduled[0].text.match(/https:\/\/[^\s]+\/meeting-access#[^\s]+/)[0]).hash.split(".")[1];
     assert.notEqual(newToken,initialToken);
     assert.equal((await requestGuest("exchange",200,scheduledGuest.id,{token:newToken},initialBrowser)).status,"Accepted");
+    const changedCalendar=(await (await calendar(scheduledGuest.id,initialBrowser)).text()).replace(/\r\n /g,"");
+    assert.equal(originalCalendar.match(/^UID:.+$/m)[0],changedCalendar.match(/^UID:.+$/m)[0]);
+    assert.notEqual(originalCalendar.match(/^DTSTART:.+$/m)[0],changedCalendar.match(/^DTSTART:.+$/m)[0]);
+    const sequence=value=>Number(value.match(/^SEQUENCE:(\d+)\r?$/m)[1]);
+    assert.equal(sequence(changedCalendar),sequence(originalCalendar)+1);
     await run("UPDATE staff_meeting_guest_emails SET available_at=? WHERE guest_id=? AND status='Queued' AND event_type='Reminder'",future(-10),scheduledGuest.id);
     await processMeetingInvitationEmails(db);
     await processMeetingInvitationEmails(db);
@@ -180,5 +210,5 @@ export async function verifyExternalMeetingInvitations({db,request,admin,staff,s
     delete process.env.WALSHKEN_MANAGEMENT_INVITES_ENABLED;
     delete process.env.WALSHKEN_STAFF_EMAIL_ORIGIN;
   }
-  console.log("PASS external invitations through configured sender, exact idempotent retries, host admission, restricted guest tokens, revocation, expiry, RSVP, rescheduling and reminders");
+  console.log("PASS external invitation sharing, private calendar files, provider-contract retries, RSVP, host admission, restricted guest tokens, revocation, expiry, rescheduling and reminders");
 }

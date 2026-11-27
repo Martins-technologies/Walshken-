@@ -34,7 +34,7 @@ export async function POST(request:Request) {
     const data=await payload(request),action=pick(data.action,["checkout","agreement-sign","agreement-decline"],"finance action");
     const db=database(),actor=await clientActor(db,request,{touch:true,recent:action!=="checkout"});
     await throttle(db,"client-finance-action:"+actor.id,18,60_000);
-    if(action==="checkout")return json(await createCheckout(db,request,actor.id,str(data.id,"invoice",80)));
+    if(action==="checkout")return json(await createCheckout(db,request,actor.id,str(data.id,"invoice",80),{amountMinor:data.amountMinor,payNext:data.payNext}));
     return json(await withClientDb(db,actor.id,tx=>clientAgreementAction(tx,actor,{orgId,customerId:actor.id},data)));
   }catch(error){return handleError(error);}
 }

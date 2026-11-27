@@ -13,7 +13,7 @@ const root=process.cwd(), sandbox=mkdtempSync(join(tmpdir(),"walshken-client-ide
 symlinkSync(join(root,"drizzle"),join(sandbox,"drizzle"),"dir");
 const migrations=join(sandbox,"supabase","migrations");
 mkdirSync(migrations,{recursive:true});
-for(const migration of ["20261125231710_staff_unit_memberships.sql","20261127090000_client_identity.sql","20261127090200_client_cases.sql"]){
+for(const migration of ["20261125231710_staff_unit_memberships.sql","20261127090000_client_identity.sql","20261127090200_client_cases.sql","20261128105000_client_preferences_and_mfa.sql"]){
  copyFileSync(join(root,"supabase","migrations",migration),join(migrations,migration));
 }
 process.chdir(sandbox);

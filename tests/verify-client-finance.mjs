@@ -27,6 +27,8 @@ const files=[
  "20261127090000_client_identity.sql",
  "20261127090200_client_cases.sql",
  "20261127090600_client_finance.sql",
+ "20261128104000_client_payment_plans.sql",
+ "20261128105000_client_preferences_and_mfa.sql",
 ];
 for(const [index,file] of files.entries())copyFileSync(join(repo,"supabase","migrations",file),join(sandbox,"drizzle",String(100+index).padStart(4,"0")+"_"+file));
 copyFileSync(join(repo,"public","payroll-font.ttf"),join(sandbox,"public","payroll-font.ttf"));
@@ -119,6 +121,7 @@ let sessionCounter=0,checkoutRequests=[];
 globalThis.fetch=async(url,params)=>{
  assert.equal(url,"https://api.stripe.com/v1/checkout/sessions");
  const form=params.body;
+ assert.equal(new URL(form.get("success_url")).origin,site);
  assert.equal(form.get("line_items[0][price_data][unit_amount]"),"21525");
  assert.equal(form.get("mode"),"payment");
  checkoutRequests.push(params);
@@ -238,4 +241,123 @@ await query("SET ROLE anon").run();
 await assert.rejects(query("SELECT * FROM client_agreement_responses").run(),/permission denied/);
 await query("RESET ROLE").run();
 console.log("PASS case-scoped agreement versions, current consent, password confirmation, declines, immutable signed original, and closed anonymous access");
+
+const installmentClient=await customer("Installment client"),installmentCase=randomUUID();
+await query(`INSERT INTO client_cases(id,org_id,customer_id,reference,title,service,country,assigned_employee_id,representative_name,created_at,updated_at)
+  VALUES(?,'walshken',?,'CASE-INSTALLMENTS','Installment QA case','Immigration','CA',?,'Representative',?,?)`,installmentCase,installmentClient.id,assigned.id,stamp,stamp).run();
+const issuedPlanInvoice=await post("/staff",seller,{...base,caseId:installmentCase,
+  items:[{description:"Client services",quantity:1,unitMinor:10000,taxBps:0}]});
+await post("/staff",seller,{caseId:installmentCase,action:"invoice-issue",id:issuedPlanInvoice.id});
+const planInvoice=issuedPlanInvoice.id, planActor=installmentClient, tomorrow=future.slice(0,10);
+const nextWeek=new Date(Date.now()+7*86_400_000).toISOString().slice(0,10);
+const planInput={action:"payment-plan",caseId:installmentCase,id:planInvoice,mode:"Installments",
+  installments:[{dueOn:tomorrow,amountMinor:3000},{dueOn:nextWeek,amountMinor:7000}]};
+await post("/staff",assigned,planInput,403);
+await post("/staff",seller,{...planInput,installments:[{dueOn:tomorrow,amountMinor:3000},{dueOn:tomorrow,amountMinor:7000}]},400);
+await post("/staff",seller,{...planInput,installments:[{dueOn:tomorrow,amountMinor:3000},{dueOn:nextWeek,amountMinor:6900}]},400);
+await post("/staff",seller,planInput);
+const planBefore=await get("",planActor);
+assert.equal(planBefore.invoices[0].payment_plan.mode,"Installments");
+assert.equal(planBefore.invoices[0].balance_minor,10000);
+assert.deepEqual(planBefore.invoices[0].payment_plan.installments.map(row=>row.balance_minor),[3000,7000]);
+assert.equal((await get("",stranger)).invoices.some(row=>row.id===planInvoice),false);
+await assert.rejects(query("UPDATE client_payment_installments SET amount_minor=30 WHERE invoice_id=?",planInvoice).run(),/immutable/);
+const {remindClientPayments}=await import("../lib/walshken/client-payment-plans.ts");
+assert.ok((await remindClientPayments(db)).queued>=1);
+assert.equal((await remindClientPayments(db)).queued,0);
+assert.equal((await query("SELECT count(*)::int AS n FROM client_notifications WHERE customer_id=? AND type='payment-reminder'",planActor.id).first()).n,1);
+
+const providerSessions=new Map();
+let haveFullRefund=false,checkoutCalls=0;
+globalThis.fetch=async(url,options)=>{
+ if(String(url).startsWith("https://api.stripe.com/v1/payment_intents/")){
+   const intent=new URL(url).pathname.split("/").at(-1), checkout=[...providerSessions.values()][Number(intent.at(-1))-1];
+   return Response.json({object:"payment_intent",id:intent,status:"succeeded",livemode:false,currency:"cad",amount_received:3000,
+     metadata:{walshken_payment_id:checkout.attempt,walshken_invoice_id:checkout.invoice},
+     latest_charge:{object:"charge",id:"ch_TestPlan",payment_intent:intent,currency:"cad",livemode:false,
+       amount:3000,refunded:true,amount_refunded:3000}});
+ }
+ if(String(url).startsWith("https://api.stripe.com/v1/refunds?")){
+   return Response.json({object:"list",has_more:false,data:[{object:"refund",payment_intent:new URL(url).searchParams.get("payment_intent"),
+     charge:"ch_TestPlan",currency:"cad",amount:3000,status:haveFullRefund?"succeeded":"pending"}]});
+ }
+ assert.equal(url,"https://api.stripe.com/v1/checkout/sessions");
+ checkoutCalls++;
+ const key=options.headers["Idempotency-Key"],form=options.body;
+ if(!providerSessions.has(key)){
+  const number=providerSessions.size+1,session="cs_test_Installment"+number,attempt=form.get("metadata[walshken_payment_id]");
+  providerSessions.set(key,{id:session,attempt,invoice:form.get("metadata[walshken_invoice_id]"),
+    amount:Number(form.get("line_items[0][price_data][unit_amount]")),url:"https://checkout.stripe.com/c/pay/plan"+number,
+    expires_at:Math.floor(Date.now()/1000)+3600,livemode:false});
+ }
+ return Response.json(providerSessions.get(key));
+};
+async function planWebhook(checkout,type,id,paid,expected=200) {
+  const timestamp=Math.floor(Date.now()/1000);
+  const body=JSON.stringify({id,type,created:timestamp,livemode:false,data:{object:{id:checkout.id,object:"checkout.session",mode:"payment",
+    livemode:false,payment_status:paid?"paid":"unpaid",currency:"cad",amount_total:checkout.amount,payment_intent:"pi_Plan"+checkout.id.at(-1),
+    client_reference_id:checkout.attempt,metadata:{walshken_payment_id:checkout.attempt,walshken_invoice_id:checkout.invoice}}}});
+  const tag=createHmac("sha256",process.env.WALSHKEN_STRIPE_WEBHOOK_SECRET).update(timestamp+"."+body).digest("hex");
+  return (await request("/stripe",null,body,expected,{headers:{"Stripe-Signature":`t=${timestamp},v1=${tag}`}})).json();
+}
+try {
+ await post("",planActor,{action:"checkout",id:planInvoice,amountMinor:2000},403);
+ const [first,repeat]=await Promise.all([
+  post("",planActor,{action:"checkout",id:planInvoice,payNext:true}),
+  post("",planActor,{action:"checkout",id:planInvoice,payNext:true}),
+ ]);
+ assert.equal(first.url,repeat.url);
+ assert.equal(providerSessions.size,1);
+ const [stale]=providerSessions.values();
+ assert.equal(stale.amount,3000);
+ await post("/staff",seller,{...planInput,mode:"Full"},409);
+ await planWebhook(stale,"checkout.session.async_payment_failed","evt_InstallmentFailed",false);
+ await post("",planActor,{action:"checkout",id:planInvoice,payNext:true});
+ const next=[...providerSessions.values()][1];
+ assert.equal(next.amount,3000);
+ await planWebhook(next,"checkout.session.completed","evt_InstallmentPaid",true);
+ assert.equal((await planWebhook(next,"checkout.session.completed","evt_InstallmentPaid",true)).duplicate,true);
+ const partly=(await get("",planActor)).invoices[0];
+ assert.equal(partly.balance_minor,7000);
+ assert.equal(partly.status,"Open");
+ assert.equal(partly.paid_minor,3000);
+ assert.equal(partly.payment_plan.installments[0].balance_minor,0);
+ assert.match((await get("",planActor)).payments.find(row=>row.id===next.attempt).receipt_number,/-01$/);
+ assert.deepEqual(await get("?summary=1",planActor),{outstandingInvoices:1,pendingAgreements:0,balances:[{currency:"CAD",amount_minor:"7000",invoices:1}]});
+ await post("/staff",seller,{...planInput,mode:"Partial"},409);
+ await post("/staff",seller,{action:"invoice-void",caseId:installmentCase,id:planInvoice,reason:"Already partly paid"},409);
+ await post("",planActor,{action:"checkout",id:planInvoice});
+ const final=[...providerSessions.values()][2];
+ assert.equal(final.amount,7000);
+ await planWebhook(final,"checkout.session.async_payment_succeeded","evt_InstallmentSettled",true);
+ assert.equal((await get("",planActor)).invoices[0].status,"Paid");
+ assert.equal((await get("",planActor)).invoices[0].balance_minor,0);
+ assert.match((await get("",planActor)).payments.find(row=>row.id===final.attempt).receipt_number,/-02$/);
+ const late=await planWebhook(stale,"checkout.session.completed","evt_InstallmentLate",true);
+ assert.equal(late.review,true);
+ assert.equal((await get("",planActor)).invoices[0].payment_blocked,true);
+ await post("/staff",assigned,{action:"payment-reconcile",caseId:installmentCase,id:stale.attempt},403);
+ await post("/staff",seller,{action:"payment-reconcile",caseId:installmentCase,id:stale.attempt},409);
+ haveFullRefund=true;
+ await post("/staff",seller,{action:"payment-reconcile",caseId:installmentCase,id:stale.attempt});
+ const resolved=await get("",planActor);
+ assert.equal(resolved.invoices[0].payment_blocked,false);
+ assert.equal(resolved.payments.find(row=>row.id===stale.attempt).status,"Refunded");
+ assert.equal(resolved.invoices[0].paid_minor,10000);
+
+ const partial=await post("/staff",seller,{...base,caseId:installmentCase,
+   items:[{description:"Partial QA",quantity:1,unitMinor:8001,taxBps:0}]});
+ await post("/staff",seller,{caseId:installmentCase,action:"invoice-issue",id:partial.id});
+ await post("",planActor,{action:"checkout",id:partial.id,amountMinor:1100},403);
+ await post("/staff",seller,{...planInput,id:partial.id,mode:"Partial"});
+ await post("",planActor,{action:"checkout",id:partial.id,amountMinor:8002},400);
+ await post("",planActor,{action:"checkout",id:partial.id,amountMinor:1234});
+ const partialCheckout=[...providerSessions.values()][3];
+ assert.equal(partialCheckout.amount,1234);
+ await post("",planActor,{action:"checkout",id:partial.id,amountMinor:1000},409);
+ await planWebhook(partialCheckout,"checkout.session.completed","evt_PartialPaid",true);
+ assert.equal((await get("",planActor)).invoices.find(row=>row.id===partial.id).balance_minor,6767);
+ assert.equal(checkoutCalls>=4,true);
+} finally {globalThis.fetch=actualFetch;}
+console.log("PASS installment plans, reminders, custom partials, concurrent checkout, exact balance, sequential receipts and authorized Stripe refund reconciliation");
 process.exit(0);

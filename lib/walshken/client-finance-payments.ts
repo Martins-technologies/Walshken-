@@ -1,8 +1,10 @@
 import {createHmac,timingSafeEqual} from "node:crypto";
 import {withClientDb} from "./client-feature";
 import {integrationSettings} from "./integration-settings";
-import {AppError,fail,id,now,one,orgId,run,type Db} from "./server";
+import {AppError,fail,id,integer,now,one,orgId,run,type Db} from "./server";
 import {notifyClient} from "./client-notifications";
+import {notifyCaseStaff} from "./client-cases";
+import {clientPaymentSchedules,paidOnInvoice} from "./client-payment-plans";
 import {digestFinance,financeActivity,invoiceColumns,type CaseFinance,type Invoice,type Payment} from "./client-finance-records";
 
 type CheckoutConfig={apiKey:string;webhookSecret:string;sandbox:boolean};
@@ -49,8 +51,10 @@ export async function checkoutMode(db:Db) {
 }
 
 function checkoutOrigin(request:Request) {
-  const configured=process.env.VERCEL_ENV==="preview" && process.env.VERCEL_BRANCH_URL
-    ? "https://"+process.env.VERCEL_BRANCH_URL
+  const previewOrigins=[process.env.VERCEL_URL,process.env.VERCEL_BRANCH_URL].filter(Boolean).map(host=>"https://"+host);
+  const caller=request.headers.get("origin");
+  const configured=process.env.VERCEL_ENV==="preview"
+    ? caller&&previewOrigins.includes(caller)?caller:previewOrigins[0]
     : process.env.WALSHKEN_CLIENT_ORIGIN??process.env.WALSHKEN_STAFF_EMAIL_ORIGIN;
   let base:URL;
   try { base=new URL(configured||request.url); } catch { return fail(503,"The secure payment return address is unavailable."); }
@@ -68,7 +72,7 @@ async function createStripe(config:CheckoutConfig,attempt:Payment,invoice:Invoic
     client_reference_id:attempt.id,"payment_method_types[0]":"card",
     "line_items[0][price_data][currency]":invoice.currency.toLowerCase(),
     "line_items[0][price_data][product_data][name]":"Walshken invoice "+invoice.invoice_number,
-    "line_items[0][price_data][unit_amount]":String(invoice.total_minor),
+    "line_items[0][price_data][unit_amount]":String(attempt.amount_minor),
     "line_items[0][quantity]":"1",
   });
   for(const [key,value] of Object.entries(metadata)){
@@ -105,7 +109,7 @@ function caseEvidence(invoice:Invoice):CaseFinance {
 }
 const invoiceJoin=`FROM client_invoices i JOIN client_cases c ON c.id=i.case_id AND c.org_id=i.org_id AND c.customer_id=i.customer_id`;
 
-export async function createCheckout(db:Db,request:Request,customerId:string,invoiceId:string) {
+export async function createCheckout(db:Db,request:Request,customerId:string,invoiceId:string,choice:{amountMinor?:unknown;payNext?:unknown}={}) {
   const config=await stripeConfig(db);
   if(!config)return fail(503,"Online payment is awaiting company configuration.");
   const origin=checkoutOrigin(request);
@@ -113,13 +117,35 @@ export async function createCheckout(db:Db,request:Request,customerId:string,inv
     const invoice=await one<Invoice>(tx,`SELECT ${invoiceColumns} ${invoiceJoin} WHERE i.id=? AND i.org_id=? AND i.customer_id=? AND i.status<>'Draft' FOR UPDATE OF i`,invoiceId,orgId,customerId);
     if(!invoice)return fail(404,"Invoice unavailable.");
     if(invoice.status!=="Open")return fail(409,"This invoice is not currently payable. Refresh to see its latest status.");
-    let attempt=await one<Payment>(tx,`SELECT * FROM client_payments WHERE org_id=? AND invoice_id=? AND status IN ('Creating','Pending','Processing','Paid')`,invoice.org_id,invoice.id);
-    if(attempt&&(attempt.sandbox!==config.sandbox||!["Creating","Pending"].includes(attempt.status)))return fail(409,"Another payment for this invoice is already in progress.");
+    if(await one(tx,"SELECT id FROM client_payments WHERE org_id=? AND invoice_id=? AND status='Review' LIMIT 1",invoice.org_id,invoice.id)){
+      return fail(409,"A payment needs review. Contact Walshken before making another payment.");
+    }
+    const paid=await paidOnInvoice(tx,invoice),balance=invoice.total_minor-paid.amount;
+    if(balance<=0)return fail(409,"This invoice already has a verified full payment.");
+    let amount=balance;
+    const explicit=choice.amountMinor!==undefined||choice.payNext===true;
+    if(explicit){
+      const schedule=(await clientPaymentSchedules(tx,[invoice.id],new Map([[invoice.id,paid.amount]]))).get(invoice.id);
+      if(choice.payNext===true){
+        if(choice.amountMinor!==undefined||schedule?.mode!=="Installments")return fail(400,"This invoice does not have a payable installment.");
+        const next=schedule.installments.find(item=>item.balance_minor>0);
+        if(!next)return fail(409,"Every installment has been paid.");
+        amount=next.balance_minor;
+      }else{
+        if(schedule?.mode!=="Partial")return fail(403,"The company has not enabled custom partial payments for this invoice.");
+        amount=integer(choice.amountMinor,"payment amount in minor currency units",1,balance);
+      }
+    }
+    let attempt=await one<Payment>(tx,`SELECT * FROM client_payments WHERE org_id=? AND invoice_id=? AND status IN ('Creating','Pending','Processing')`,invoice.org_id,invoice.id);
+    if(attempt&&(attempt.sandbox!==config.sandbox||!["Creating","Pending"].includes(attempt.status))){
+      return fail(409,"Another payment for this invoice is already in progress.");
+    }
+    if(attempt&&explicit&&attempt.amount_minor!==amount)return fail(409,"Continue the existing checkout before choosing another payment amount.");
     if(!attempt){
       const key=id(),at=now();
       attempt=(await one<Payment>(tx,`INSERT INTO client_payments
         (id,org_id,invoice_id,amount_minor,currency,provider,sandbox,status,created_at,updated_at)
-        VALUES (?,?,?,?,?,'stripe',?,'Creating',?,?) RETURNING *`,key,invoice.org_id,invoice.id,invoice.total_minor,invoice.currency,config.sandbox,at,at))!;
+        VALUES (?,?,?,?,?,'stripe',?,'Creating',?,?) RETURNING *`,key,invoice.org_id,invoice.id,amount,invoice.currency,config.sandbox,at,at))!;
       await financeActivity(tx,caseEvidence(invoice),null,"Checkout requested",attempt.id,"Requested secure payment for "+invoice.invoice_number+".");
     }
     return {attempt,invoice};
@@ -218,28 +244,88 @@ export async function applyCheckoutWebhook(db:Db,request:Request) {
       if(existing?.payload_hash!==event.digest||existing.payment_id!==attempt.id)return fail(409,"A different payload already uses this Stripe event identifier.");
       return {received:true,duplicate:true};
     }
-    if(attempt.status==="Paid"||invoice.status==="Paid")return {received:true};
-    if(invoice.status==="Void")return fail(409,"A Stripe event arrived for a void invoice. Reconcile in Stripe before proceeding.");
+    if(["Paid","Review","Refunded"].includes(attempt.status))return {received:true};
     const successType=event.type==="checkout.session.completed"||event.type==="checkout.session.async_payment_succeeded";
     const paid=successType&&session.payment_status==="paid";
     if(event.type==="checkout.session.async_payment_succeeded"&&!paid)return fail(400,"Stripe did not confirm that the invoice was paid.");
     if(paid){
       if(typeof reference!=="string")return fail(400,"The confirmed payment reference is missing.");
-      const receipt="RCP-"+invoice.invoice_number;
+      const settled=await paidOnInvoice(tx,invoice);
+      if(invoice.status==="Void"||settled.amount+attempt.amount_minor>invoice.total_minor){
+        await run(tx,`UPDATE client_payments SET status='Review',provider_session=?,provider_reference=?,confirmed_at=?,updated_at=? WHERE id=?`,
+          sessionId,reference,event.createdAt,now(),attempt.id);
+        await financeActivity(tx,caseEvidence(invoice),null,"Payment requires reconciliation",attempt.id,
+          "Stripe confirmed a charge that exceeds the outstanding invoice balance or belongs to a void invoice.");
+        await notifyClient(tx,invoice.customer_id,{type:"payment",title:"Payment is under review",
+          body:`A payment for ${invoice.invoice_number} requires reconciliation. Do not pay again while the company reviews it.`,
+          href:"/customer/payments",dedupeKey:"payment-review:"+attempt.id});
+        const caseOwner=await one<{assigned_employee_id:string|null}>(tx,"SELECT assigned_employee_id FROM client_cases WHERE id=? AND org_id=?",invoice.case_id,invoice.org_id);
+        if(caseOwner)await notifyCaseStaff(tx,{...caseEvidence(invoice),...caseOwner},"Client payment needs finance review",
+          "Contact an authorized finance administrator to reconcile the Stripe charge.","payment-review:"+attempt.id);
+        return {received:true,review:true};
+      }
+      const receipt="RCP-"+invoice.invoice_number+(attempt.amount_minor===invoice.total_minor
+        ? "" : "-"+String(settled.count+1).padStart(2,"0"));
       await run(tx,`UPDATE client_payments SET status='Paid',provider_session=?,provider_reference=?,receipt_number=?,confirmed_at=?,updated_at=? WHERE id=?`,
         sessionId,reference,receipt,event.createdAt,now(),attempt.id);
-      await run(tx,"UPDATE client_invoices SET status='Paid',updated_at=? WHERE id=?",now(),invoice.id);
-      await financeActivity(tx,caseEvidence(invoice),null,"Payment verified",attempt.id,"Signed Stripe webhook verified the payment and receipt.");
+      const complete=settled.amount+attempt.amount_minor===invoice.total_minor;
+      const stillProcessing=await one(tx,"SELECT id FROM client_payments WHERE invoice_id=? AND status='Processing' LIMIT 1",invoice.id);
+      await run(tx,"UPDATE client_invoices SET status=?,updated_at=? WHERE id=?",
+        complete?"Paid":stillProcessing?"Processing":"Open",now(),invoice.id);
+      await financeActivity(tx,caseEvidence(invoice),null,"Payment verified",attempt.id,complete
+        ?"Signed Stripe webhook verified the payment and settled the invoice."
+        :"Signed Stripe webhook verified a partial payment and its receipt.");
       await notifyClient(tx,invoice.customer_id,{type:"payment",title:event.sandbox?"Sandbox payment verified":"Payment confirmed",
-        body:`${invoice.invoice_number} has a verified receipt${event.sandbox?" in Stripe test mode":""}.`,href:"/customer/payments",dedupeKey:"payment-confirmed:"+attempt.id});
-    }else if(attempt.status!=="Failed"&&attempt.status!=="Expired"){
+        body:`${invoice.invoice_number} has a verified receipt${event.sandbox?" in Stripe test mode":""}.`,
+        href:"/customer/payments",dedupeKey:"payment-confirmed:"+attempt.id});
+    }else if(!["Failed","Expired"].includes(attempt.status)){
       const status=event.type==="checkout.session.expired"?"Expired":event.type==="checkout.session.async_payment_failed"?"Failed":"Processing";
-      await run(tx,"UPDATE client_payments SET status=?,provider_session=?,provider_reference=COALESCE(?,provider_reference),updated_at=? WHERE id=?",
+      await run(tx,`UPDATE client_payments SET status=?,provider_session=?,provider_reference=COALESCE(?,provider_reference),updated_at=? WHERE id=?`,
         status,sessionId,reference,now(),attempt.id);
-      await run(tx,"UPDATE client_invoices SET status=?,updated_at=? WHERE id=?",status==="Processing"?"Processing":"Open",now(),invoice.id);
+      if(invoice.status==="Open"||invoice.status==="Processing"){
+        const active=await one(tx,"SELECT id FROM client_payments WHERE invoice_id=? AND status='Processing' LIMIT 1",invoice.id);
+        await run(tx,"UPDATE client_invoices SET status=?,updated_at=? WHERE id=?",active?"Processing":"Open",now(),invoice.id);
+      }
       if(status==="Failed")await notifyClient(tx,invoice.customer_id,{type:"payment",title:"Payment unsuccessful",
         body:"Stripe could not complete the payment for "+invoice.invoice_number+". Review your invoice to retry.",href:"/customer/payments",dedupeKey:"payment-failed:"+attempt.id});
     }
     return {received:true};
   });
+}
+
+export async function verifyStripeRefund(db:Db,payment:Payment) {
+  const config=await stripeConfig(db),reference=payment.provider_reference;
+  if(!config||config.sandbox!==payment.sandbox)return fail(503,"Connect Stripe in the correct payment mode before verifying a refund.");
+  if(!reference||!/^pi_[A-Za-z0-9]+$/.test(reference))return fail(409,"This payment has no Stripe reference to verify.");
+  const endpoint=new URL("https://api.stripe.com/v1/payment_intents/"+reference);
+  endpoint.searchParams.set("expand[]","latest_charge");
+  const refundsEndpoint=new URL("https://api.stripe.com/v1/refunds");
+  refundsEndpoint.searchParams.set("payment_intent",reference);
+  refundsEndpoint.searchParams.set("limit","100");
+  async function stripeRead(url:URL) {
+    const response=await fetch(url,{
+      headers:{authorization:"Bearer "+config!.apiKey},redirect:"error",cache:"no-store",signal:AbortSignal.timeout(8_000),
+    }).catch(()=>null);
+    if(!response?.ok)return fail(503,"Stripe did not verify the payment status. Try again shortly.");
+    return response.json().catch(()=>null);
+  }
+  const [intent,refunds]=await Promise.all([stripeRead(endpoint),stripeRead(refundsEndpoint)]),charge=intent?.latest_charge;
+  const currency=payment.currency.toLowerCase();
+  const totalSucceeded=refunds?.object==="list"&&refunds.has_more===false&&Array.isArray(refunds.data)
+    ? refunds.data.reduce((total:number,current:unknown)=>{
+      if(!current||typeof current!=="object")return total;
+      const refund=current as Record<string,unknown>;
+      if(refund.object!=="refund"||refund.payment_intent!==reference||refund.charge!==charge?.id||
+        refund.currency!==currency||refund.status!=="succeeded"||typeof refund.amount!=="number"||
+        !Number.isSafeInteger(refund.amount)||refund.amount<=0)return total;
+      return total+refund.amount;
+    },0)
+    : 0;
+  if(intent?.object!=="payment_intent"||intent.id!==reference||intent.status!=="succeeded"||intent.livemode!==!payment.sandbox||
+    intent.currency!==currency||intent.amount_received!==payment.amount_minor||intent.metadata?.walshken_payment_id!==payment.id||
+    intent.metadata?.walshken_invoice_id!==payment.invoice_id||charge?.object!=="charge"||typeof charge.id!=="string"||
+    charge.payment_intent!==reference||charge.currency!==currency||charge.livemode!==intent.livemode||charge.amount!==payment.amount_minor||
+    charge.refunded!==true||charge.amount_refunded!==payment.amount_minor||totalSucceeded!==payment.amount_minor){
+    return fail(409,"Stripe has not confirmed a full refund. Review the charge in the Stripe Dashboard before trying again.");
+  }
 }

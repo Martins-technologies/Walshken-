@@ -1,7 +1,8 @@
 import {all,audit,canSuper,date,fail,id,integer,now,one,pick,run,str,type Actor,type Db} from "./server";
 import {clientCaseFor,staffCaseFor,notifyCaseStaff,type ClientCase} from "./client-cases";
 import {notifyClient} from "./client-notifications";
-import {checkoutMode} from "./client-finance-payments";
+import {checkoutMode,verifyStripeRefund} from "./client-finance-payments";
+import {clientPaymentSchedules,setClientPaymentPlan} from "./client-payment-plans";
 import {
   agreementColumns,agreementHash,agreementJoins,digestFinance,electronicConsentVersion,financeActivity,financeItemRows,financeTerms,
   invoiceColumns,invoiceCurrencies,type AgreementVersion,type Invoice,type InvoiceItem,type Payment,type SignatureEvidence,
@@ -11,6 +12,7 @@ type FinanceScope={customerId:string;orgId:string;caseId?:string};
 type FinanceClient={id:string;name:string;email:string;sessionId:string};
 const issuerLabel="issuer legal name";
 const invoiceJoins="FROM client_invoices i JOIN client_cases c ON c.id=i.case_id AND c.org_id=i.org_id AND c.customer_id=i.customer_id";
+const verifiedPaid=`COALESCE((SELECT SUM(p.amount_minor) FROM client_payments p WHERE p.org_id=i.org_id AND p.invoice_id=i.id AND p.status='Paid'),0)`;
 const financeKinds=["invoice","receipt","agreement"] as const;
 
 function canManageFinance(actor:Actor) {
@@ -25,7 +27,7 @@ function scopeArgs(scope:FinanceScope) {
 
 export async function clientFinanceSummary(db:Db,scope:FinanceScope) {
   const [balances,agreements]=await Promise.all([
-    all<{currency:Invoice["currency"];amount_minor:string;invoices:number}>(db,`SELECT i.currency,SUM(i.total_minor)::text AS amount_minor,COUNT(*)::int AS invoices
+    all<{currency:Invoice["currency"];amount_minor:string;invoices:number}>(db,`SELECT i.currency,SUM(i.total_minor-${verifiedPaid})::text AS amount_minor,COUNT(*)::int AS invoices
       FROM client_invoices i WHERE i.org_id=? AND i.customer_id=? AND (?='' OR i.case_id=?) AND i.status IN ('Open','Processing')
       GROUP BY i.currency ORDER BY i.currency`,...scopeArgs(scope)),
     one<{pending_agreements:number}>(db,`SELECT COUNT(*)::int AS pending_agreements
@@ -39,8 +41,11 @@ export async function clientFinanceSummary(db:Db,scope:FinanceScope) {
 
 export async function financeView(db:Db,scope:FinanceScope,actor?:Actor) {
   const [invoices,payments,agreements,mode,activity]=await Promise.all([
-    all<Invoice>(db,`SELECT ${invoiceColumns} ${invoiceJoins}
-      WHERE i.org_id=? AND i.customer_id=? AND (?='' OR i.case_id=?) ${actor?"":"AND i.status<>'Draft'"}
+    all<Invoice & {paid_minor:number;payment_blocked:boolean;active_payment:boolean}>(db,`SELECT ${invoiceColumns},
+      ${verifiedPaid}::int AS paid_minor,
+      EXISTS(SELECT 1 FROM client_payments p WHERE p.org_id=i.org_id AND p.invoice_id=i.id AND p.status='Review') AS payment_blocked,
+      EXISTS(SELECT 1 FROM client_payments p WHERE p.org_id=i.org_id AND p.invoice_id=i.id AND p.status IN ('Creating','Pending','Processing')) AS active_payment
+      ${invoiceJoins} WHERE i.org_id=? AND i.customer_id=? AND (?='' OR i.case_id=?) ${actor?"":"AND i.status<>'Draft'"}
       ORDER BY i.created_at DESC,i.id DESC LIMIT 100`,...scopeArgs(scope)),
     all<Payment>(db,`SELECT p.id,p.invoice_id,i.invoice_number,p.amount_minor,p.currency,p.sandbox,p.status,
       p.provider_reference,p.receipt_number,p.created_at,p.confirmed_at
@@ -55,10 +60,17 @@ export async function financeView(db:Db,scope:FinanceScope,actor?:Actor) {
       WHERE org_id=? AND customer_id=? AND case_id=? ORDER BY created_at DESC,id DESC LIMIT 100`,scope.orgId,scope.customerId,scope.caseId):[],
   ]);
   const byInvoice=new Map<string,InvoiceItem[]>();
-  for(const {invoice_id,...item} of await financeItemRows(db,invoices.map(row=>row.id))){
+  const invoiceIds=invoices.map(row=>row.id);
+  const [items,schedules]=await Promise.all([
+    financeItemRows(db,invoiceIds),
+    clientPaymentSchedules(db,invoiceIds,new Map(invoices.map(row=>[row.id,row.paid_minor]))),
+  ]);
+  for(const {invoice_id,...item} of items){
     const list=byInvoice.get(invoice_id)??[];list.push(item);byInvoice.set(invoice_id,list);
   }
-  return {invoices:invoices.map(row=>({...row,items:byInvoice.get(row.id)??[]})),payments,agreements,checkoutMode:mode,activity,
+  return {invoices:invoices.map(row=>({...row,items:byInvoice.get(row.id)??[],
+    balance_minor:row.status==="Void"?0:row.total_minor-row.paid_minor,
+    payment_plan:schedules.get(row.id)??{mode:"Full",installments:[]}})),payments,agreements,checkoutMode:mode,activity,
     ...(actor?{canManage:canManageFinance(actor)}:{})};
 }
 
@@ -99,12 +111,40 @@ async function writeFinanceAudit(db:Db,actor:Actor,c:ClientCase,action:string,ta
   await audit(db,actor,action,"client finance",target).run();
 }
 
+async function reconcilePayment(db:Db,actor:Actor,caseId:string,paymentId:string) {
+  const c=await staffCaseFor(db,actor,caseId);
+  const payment=await one<Payment>(db,`SELECT p.*,i.invoice_number FROM client_payments p JOIN client_invoices i
+    ON i.id=p.invoice_id AND i.org_id=p.org_id WHERE p.id=? AND i.org_id=? AND i.case_id=? AND i.customer_id=? AND p.status='Review'`,
+    paymentId,c.org_id,c.id,c.customer_id);
+  if(!payment)return fail(404,"Payment reconciliation is unavailable for this case.");
+  await verifyStripeRefund(db,payment);
+  return db.transaction(async tx=>{
+    const current=await staffCaseFor(tx,actor,caseId,true);
+    const invoice=await invoiceFor(tx,caseScope(current),payment.invoice_id,true);
+    const changed=await run(tx,`UPDATE client_payments SET status='Refunded',updated_at=?
+      WHERE id=? AND org_id=? AND invoice_id=? AND status='Review' AND provider_reference=?`,
+      now(),payment.id,current.org_id,invoice.id,payment.provider_reference);
+    if(!changed.count)return fail(409,"The payment changed during reconciliation. Refresh to see its latest status.");
+    await writeFinanceAudit(tx,actor,current,"Stripe refund reconciled",payment.id,"Verified in Stripe that the reviewed charge was fully refunded.");
+    await notifyClient(tx,current.customer_id,{type:"payment",title:"Refund verified",body:invoice.invoice_number+" has a verified refund. See payment history for details.",
+      href:"/customer/payments",dedupeKey:"payment-refund:"+payment.id});
+    return {id:payment.id,message:"Full refund verified through Stripe."};
+  });
+}
+
 export async function staffFinanceAction(db:Db,actor:Actor,data:Record<string,unknown>) {
   if(!canManageFinance(actor))return fail(403,"Only an authorized case administrator can manage invoices or agreements.");
   const caseId=str(data.caseId,"case",80);
+  const action=pick(data.action,["invoice-save","invoice-issue","invoice-void","payment-plan","payment-reconcile","agreement-save","agreement-publish","agreement-withdraw"] as const,"finance action");
+  if(action==="payment-reconcile")return reconcilePayment(db,actor,caseId,str(data.id,"payment attempt",80));
   return db.transaction(async tx=>{
     const c=await staffCaseFor(tx,actor,caseId,true),scope=caseScope(c),at=now();
-    const action=pick(data.action,["invoice-save","invoice-issue","invoice-void","agreement-save","agreement-publish","agreement-withdraw"] as const,"finance action");
+    if(action==="payment-plan"){
+      const invoice=await invoiceFor(tx,scope,str(data.id,"invoice",80),true);
+      const result=await setClientPaymentPlan(tx,invoice,actor.id,data);
+      await audit(tx,actor,"Client payment options updated","client finance",invoice.id).run();
+      return result;
+    }
     if(action==="invoice-save"){
       const {items,subtotal,tax,total}=invoiceItems(data.items);
       const due=date(data.dueOn,"invoice due date")!, currency=pick(data.currency,invoiceCurrencies,"invoice currency");
@@ -146,7 +186,7 @@ export async function staffFinanceAction(db:Db,actor:Actor,data:Record<string,un
           href:"/customer/payments",dedupeKey:"invoice-issued:"+invoice.id});
         return {id:invoice.id,message:"Invoice issued and the client was notified."};
       }
-      if(invoice.status!=="Open"||await one(tx,"SELECT id FROM client_payments WHERE invoice_id=? AND status IN ('Creating','Pending','Processing','Paid')",invoice.id)){
+      if(invoice.status!=="Open"||await one(tx,"SELECT id FROM client_payments WHERE invoice_id=? AND status IN ('Creating','Pending','Processing','Paid','Review')",invoice.id)){
         return fail(409,"Only an unpaid invoice with no active checkout can be voided.");
       }
       const reason=financeTerms(data.reason,"void reason",500);

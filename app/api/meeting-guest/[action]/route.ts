@@ -1,7 +1,7 @@
 import {guestMeetingAction, meetingInvitesEnabled} from "@/lib/walshken/meeting-invitations";
 import {checkOrigin, database, digest, fail, handleError, payload, throttle} from "@/lib/walshken/server";
 export const runtime = "nodejs";
-const actions = ["exchange","status","accept","decline","join","leave","consent"];
+const actions = ["exchange","status","accept","decline","join","leave","consent","calendar"];
 export async function POST(request:Request, context:{params:Promise<{action:string}>}) {
   try {
     if(!meetingInvitesEnabled())return fail(404,"External meeting invitations are unavailable.");
