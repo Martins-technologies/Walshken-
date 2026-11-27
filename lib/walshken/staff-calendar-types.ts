@@ -1,6 +1,7 @@
 export const calendarTypes = {
   shift: "Shifts",
   task: "Tasks and deadlines",
+  project: "Project deadlines",
   meeting: "Meetings and calls",
   leave: "Approved leave",
   absence: "Absences",

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { mkdtempSync, rmSync, symlinkSync, mkdirSync, copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GET, POST } from "../app/api/workspace/[...parts]/route.ts";
@@ -7,6 +7,15 @@ import { createHmac, randomBytes } from "node:crypto";
 
 const sandbox = mkdtempSync(join(tmpdir(), "walshken-route-test-"));
 symlinkSync(join(process.cwd(), "drizzle"), join(sandbox, "drizzle"), "dir");
+const testGovernance=process.env.WALSHKEN_TEST_COMMUNICATION_GOVERNANCE==="1";
+if(testGovernance){
+  mkdirSync(join(sandbox,"supabase","migrations"),{recursive:true});
+  for(const migration of [
+    "20261124192707_staff_readiness.sql",
+    "20261125231710_staff_unit_memberships.sql",
+    "20261125232141_communication_directory_governance.sql",
+  ]) copyFileSync(join("supabase","migrations",migration),join(sandbox,"supabase","migrations",migration));
+}
 process.chdir(sandbox);
 process.on("exit", () => rmSync(sandbox, { recursive: true, force: true }));
 process.env.WALSHKEN_ADMIN_EMAIL="admin@walshken.test";
@@ -277,3 +286,11 @@ console.log("PASS archived direct conversation reopening and preventing new mess
 console.log("PASS company, department, project, country and management group scopes, with immediate revocation when assignments change");
 console.log("PASS earlier-history edits and removal refresh, pinned-only search, inline mentions, Super Admin global policy and retention, scoped administrator approvals without cross-department purge");
 console.log("PASS messaging, scoped groups, membership controls, approvals, logged changes, guest access and revocation, replies, forwarding, mentions, read receipts, reactions, pins, archiving, retention and paginated search");
+
+if(testGovernance){
+  offset+=61_000;
+  process.env.WALSHKEN_STAFF_READINESS_ENABLED="1";
+  process.env.WALSHKEN_MANAGEMENT_COMMS_ENABLED="1";
+  const {verifyCommunicationGovernance}=await import("./verify-communication-governance.mjs");
+  await verifyCommunicationGovernance({db,request,admin,adminId,staff,staffId,guest,scopedAdmin,scopedAdminId,department,scopedDirect,employee,secret,enroll});
+}

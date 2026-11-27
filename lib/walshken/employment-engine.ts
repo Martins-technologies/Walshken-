@@ -50,28 +50,58 @@ function isPredecessor(target:string,current:EmploymentPolicy,rows:EmploymentPol
  return false;
 }
 
+export async function employmentBoundaries(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string,categories:EmploymentCategory[]) {
+ const assignments=await all<{day:string}>(db,`SELECT effective_on AS day FROM staff_employment_terms
+  WHERE org_id=? AND employee_id=? AND effective_on>? AND effective_on<=?`,employee.org_id,employee.id,from,to);
+ const versions=await all<{effective_from:string;effective_through:string}>(db,`SELECT effective_from,effective_through FROM staff_jurisdiction_versions v
+  WHERE v.org_id=? AND v.effective_from<=? AND v.effective_through>=?
+  AND (SELECT decision FROM staff_jurisdiction_decisions WHERE version_id=v.id ORDER BY created_at DESC,id DESC LIMIT 1)='Verified'
+  AND EXISTS (SELECT 1 FROM staff_employment_terms t WHERE t.employee_id=? AND t.org_id=v.org_id AND t.effective_on<=?
+    AND t.country=v.country AND t.jurisdiction=v.jurisdiction AND t.classification=v.classification)
+  AND v.category IN (${categories.map(()=>"?").join(",")})`,employee.org_id,to,from,employee.id,to,...categories);
+ const after=(day:string)=>new Date(Date.parse(day+"T12:00Z")+86400000).toISOString().slice(0,10);
+ return [...new Set([from,to,...assignments.map(row=>row.day),...versions.flatMap(row=>[row.effective_from,after(row.effective_through)])])]
+  .filter(day=>day>=from&&day<=to).sort();
+}
+
+export async function employmentPolicySegments(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string,category:EmploymentCategory) {
+ const boundaries=await employmentBoundaries(db,employee,from,to,[category]);
+ const segments: {from:string;through:string;policy:NonNullable<Awaited<ReturnType<typeof applicablePolicy>>>}[]=[];
+ for(const [index,start] of boundaries.entries()){
+  const policy=await applicablePolicy(db,employee,start,category);
+  const end=boundaries[index+1];
+  const through=end?new Date(Date.parse(end+"T12:00Z")-86400000).toISOString().slice(0,10):to;
+  const previous=segments.at(-1);
+  if(previous?.policy.row.id===policy!.row.id&&previous.policy.terms.id===policy!.terms.id)previous.through=through;
+  else segments.push({from:start,through,policy:policy!});
+ }
+ return segments;
+}
+
+export async function policyForPeriod(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string,category:EmploymentCategory) {
+ const segments=await employmentPolicySegments(db,employee,from,to,category);
+ if(segments.length!==1)return fail(409,`${category} or the employment assignment changes inside this interval. Split at the effective date.`);
+ return segments[0].policy;
+}
+
 export async function policyDates(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string) {
  const dates=new Map<string,{day:string;name:string;required:boolean;policyId:string}>();
- if(!employmentEngineEnabled())return {dates:[],configured:false};
+ if(!employmentEngineEnabled())return {dates:[],configured:false,startsOn:null};
  const terms=await employmentTermsOn(db,employee,to);
- if(!terms)return {dates:[],configured:false};
- const changes=await all<{day:string}>(db,`SELECT effective_on AS day FROM staff_employment_terms
-  WHERE employee_id=? AND effective_on>? AND effective_on<=?
-  UNION SELECT effective_from AS day FROM staff_jurisdiction_versions WHERE org_id=? AND category='Holiday calendar'
-  AND effective_from>? AND effective_from<=?`,employee.id,from,to,employee.org_id,from,to);
- let pending=false;
- const boundaries=[...new Set([from,...changes.map(row=>row.day)])].sort();
- for(const boundary of boundaries){
+ if(!terms)return {dates:[],configured:false,startsOn:null};
+ const boundaries=await employmentBoundaries(db,employee,from,to,["Holiday calendar"]);
+ let pending=false,startsOn:string|null=null;
+ for(const [index,boundary] of boundaries.entries()){
   const rule=await applicablePolicy(db,employee,boundary,"Holiday calendar",false);
-  if(!rule){if(await employmentTermsOn(db,employee,boundary))pending=true;continue;}
+  if(!rule){if(await employmentTermsOn(db,employee,boundary)){pending=true;startsOn??=boundary;}continue;}
+  startsOn??=boundary;
+  const next=boundaries[index+1];
   for(const holiday of (rule.settings as HolidaySettings).dates){
-   if(holiday.date<from||holiday.date>to)continue;
-   const actual=await applicablePolicy(db,employee,holiday.date,"Holiday calendar",false);
-   if(actual?.row.id!==rule.row.id)continue;
+   if(holiday.date<boundary||holiday.date>to||next&&holiday.date>=next)continue;
    dates.set(holiday.date,{day:holiday.date,name:holiday.name,required:holiday.required,policyId:rule.row.id});
   }
  }
- return {dates:[...dates.values()].sort((a,b)=>a.day.localeCompare(b.day)),configured:true,pending};
+ return {dates:[...dates.values()].sort((a,b)=>a.day.localeCompare(b.day)),configured:true,pending,startsOn};
 }
 
 export async function assertEmploymentPeriod(db:Db,employee:Pick<Actor,"id"|"org_id">,from:string,to:string) {

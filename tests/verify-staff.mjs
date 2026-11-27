@@ -6,12 +6,18 @@ import { GET, POST } from "../app/api/workspace/[...parts]/route.ts";
 import { createHmac, randomBytes } from "node:crypto";
 
 const sandbox = mkdtempSync(join(tmpdir(), "walshken-route-test-"));
+const testTeams = process.env.WALSHKEN_TEST_MANAGEMENT_TEAMS === "1";
 if (process.env.WALSHKEN_TEST_NOTIFICATIONS === "1") {
   mkdirSync(join(sandbox, "drizzle"));
   for (const file of readdirSync("drizzle").filter(name => name.endsWith(".sql"))) copyFileSync(join("drizzle", file), join(sandbox, "drizzle", file));
   writeFileSync(join(sandbox, "drizzle/0010a_notification_stage.sql"), "ALTER TABLE notifications ADD COLUMN release_stage text NOT NULL DEFAULT 'production';");
   copyFileSync("supabase/migrations/20261125075353_notification_email_outbox.sql", join(sandbox, "drizzle/0010b_notification_email.sql"));
 } else symlinkSync(join(process.cwd(), "drizzle"), join(sandbox, "drizzle"), "dir");
+if (testTeams) {
+  mkdirSync(join(sandbox, "supabase", "migrations"), {recursive:true});
+  for (const migration of ["20261124192707_staff_readiness.sql","20261125231710_staff_unit_memberships.sql"])
+    copyFileSync(join("supabase", "migrations", migration), join(sandbox, "supabase", "migrations", migration));
+}
 process.chdir(sandbox);
 process.on("exit", () => rmSync(sandbox, { recursive: true, force: true }));
 process.env.WALSHKEN_ADMIN_EMAIL="admin@walshken.test";
@@ -111,6 +117,37 @@ const {rows}=await request("view/employees",200,admin);
 const staffId=rows.find(row=>row.email===staff.email).id;
 const manager=rows.find(row=>row.email===admin.email).id;
 const access=await enroll(staff);
+if(testTeams) {
+  process.env.WALSHKEN_STAFF_READINESS_ENABLED='1';
+  process.env.WALSHKEN_MANAGEMENT_TEAMS_ENABLED='1';
+  await request('organization/add',201,admin,{kind:'Team',name:'QA Service Team'});
+  await request('organization/add',201,admin,{kind:'Department',name:'QA Secondary Department'});
+  const initial=await request('view/departments',200,admin);
+  const team=initial.rows.find(row=>row.name==='QA Service Team').id;
+  const secondary=initial.rows.find(row=>row.name==='QA Secondary Department').id;
+  assert.ok(initial.unitMemberships.some(row=>row.unit_id===department&&row.employee_id===staffId&&row.primary_department===1));
+  await request('organization/membership-add',403,staff,{unit:team,employee:staffId});
+  await request('organization/membership-add',201,admin,{unit:team,employee:staffId});
+  await request('organization/membership-add',200,admin,{unit:team,employee:staffId});
+  await request('organization/membership-add',201,admin,{unit:secondary,employee:staffId});
+  await request('organization/membership-remove',409,admin,{unit:department,employee:staffId});
+  await request('organization/delete-unused',409,admin,{id:team,confirmation:'DELETE'});
+  const roster=await request('view/departments',200,admin);
+  assert.equal(roster.unitMemberships.filter(row=>row.employee_id===staffId).length,3);
+  const {workspaceDatabase}=await import('../lib/walshken/database.ts');
+  const db=workspaceDatabase();
+  await db.prepare("INSERT INTO organizations(id,name,time_zone) VALUES ('qa-other-org','Synthetic other organization','UTC')",[]).run();
+  await db.prepare("INSERT INTO units(id,org_id,kind,name) VALUES ('qa-other-team','qa-other-org','Team','Synthetic other team')",[]).run();
+  await request('organization/membership-add',404,admin,{unit:'qa-other-team',employee:staffId});
+  await assert.rejects(()=>db.prepare('INSERT INTO staff_unit_memberships VALUES(?,?,?,?,?)',['walshken',staffId,'qa-other-team',manager,new Date().toISOString()]).run(),/foreign key/i);
+  await request('organization/membership-remove',200,admin,{unit:team,employee:staffId});
+  await request('organization/membership-remove',200,admin,{unit:team,employee:staffId});
+  const history=await db.prepare("SELECT count(*)::int AS n FROM audit WHERE entity='unit membership' AND target_id=?",[team]).first();
+  assert.equal(history.n,2);
+  assert.ok((await request('view/departments',200,admin)).unitMemberships.some(row=>row.unit_id===secondary&&row.employee_id===staffId));
+  console.log('PASS primary, secondary and team membership, authorization, tenant foreign keys, idempotent changes and audit history');
+  process.exit(0);
+}
 if (process.env.WALSHKEN_TEST_NOTIFICATIONS === "1") {
   globalThis.Date=RealDate;
   const {workspaceDatabase}=await import("../lib/walshken/database.ts");

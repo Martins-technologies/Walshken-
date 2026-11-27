@@ -163,6 +163,13 @@ export function StaffCalendar({ data, refresh, setQuery }: { data: StaffCalendar
           <button type="button" className="sc-btn sc-icon-btn" aria-label="Previous calendar period" onClick={() => step(-1)}><ChevronLeft size={18} /></button>
           <button type="button" className="sc-btn sc-icon-btn" aria-label="Next calendar period" onClick={() => step(1)}><ChevronRight size={18} /></button>
           <button type="button" className="sc-btn" onClick={() => setView(view, today)}>Today</button>
+          <form key={focusDay} className="sc-jump" onSubmit={event => {
+            event.preventDefault();
+            setView(view,String(new FormData(event.currentTarget).get("day")));
+          }}>
+            <input type="date" aria-label="Calendar date" name="day" min="1900-01-01" max="2199-12-31" defaultValue={focusDay} required/>
+            <button type="submit" className="sc-btn sc-icon-btn" aria-label="Jump to date"><ArrowUpRight size={16}/></button>
+          </form>
         </div>
         <h3 aria-live="polite">{heading}</h3>
         <div className="sc-segment" aria-label="Calendar layout">
@@ -225,7 +232,9 @@ export function StaffCalendar({ data, refresh, setQuery }: { data: StaffCalendar
             {focusedEntry.location && <p><MapPin size={15} /> {focusedEntry.location}</p>}
             {data.mode !== "employee" && <p><Users size={15} /> {focusedEntry.people.map(id => staffNames.get(id)).filter(Boolean).join(", ")}</p>}
             {focusedEntry.status && <p className="sc-detail-status">{focusedEntry.status}</p>}
-            {focusedEntry.href && <a className="sc-btn sc-primary" href={focusedEntry.href}>Open source <ArrowUpRight size={15} /></a>}
+            {focusedEntry.href && <a className="sc-btn sc-primary" href={focusedEntry.href}>{
+              focusedEntry.kind === "project" ? "Open project" : focusedEntry.kind === "task" ? "Open task" : focusedEntry.kind === "meeting" ? "Open meeting" : "View record"
+            } <ArrowUpRight size={15} aria-hidden="true"/></a>}
           </div>}
           {focusEvents.length ? <ul className="sc-agenda">{focusEvents.map(agendaEvent)}</ul> : <p className="sc-empty">No events match this day.</p>}
         </section>

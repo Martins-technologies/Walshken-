@@ -1,3 +1,4 @@
+import { projectLifecycleEnabled, projectScope } from "./project-authority";
 import { all,canManage,canSuper,date,fail,id,integer,json,now,one,pick,requireStaff,run,scope,str,throttle,type Actor,type Db } from "./server";
 import { localDate } from "./work";
 import { activeTaskStatuses,taskPriorities,type TaskItem,type TaskTimeEntry } from "./task-types";
@@ -34,8 +35,12 @@ async function eligibleReviewer(db:Db,actor:Actor,employee:Actor,target:string){
 }
 async function validProject(db:Db,actor:Actor,target:string){
  if(!target)return null;
- const project=await one(db,`SELECT p.id FROM projects p WHERE p.id=? AND p.org_id=? AND p.status='Active'
- AND (?=1 OR p.owner_id=? OR (p.department_id IS NOT NULL AND p.department_id=?) OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=? AND t.release_stage=?))`,target,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,taskDataset());
+ const authority=projectLifecycleEnabled()?projectScope(actor,"read",taskDataset()):null;
+ const project=authority
+  ?await one(db,`SELECT p.id FROM projects p JOIN employees owner ON owner.id=p.owner_id AND owner.org_id=p.org_id
+    WHERE p.id=? AND p.org_id=? AND p.status='Active' AND (${authority.sql})`,target,actor.org_id,...authority.args)
+  :await one(db,`SELECT p.id FROM projects p WHERE p.id=? AND p.org_id=? AND p.status='Active'
+    AND (?=1 OR p.owner_id=? OR (p.department_id IS NOT NULL AND p.department_id=?) OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=? AND t.release_stage=?))`,target,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,taskDataset());
  if(!project)return fail(403,"That project reference is outside your authorized scope.");return target;
 }
 export async function taskTotals(db:Db,target:string){
@@ -121,6 +126,9 @@ export async function taskAction(db:Db,actor:Actor,action:string,data:Record<str
    await run(tx,"INSERT INTO task_reviews(id,org_id,task_id,actor_id,decision,note,task_revision,created_at) VALUES(?,?,?,?,?,?,?,?)",id(),actor.org_id,task.id,actor.id,decision,note,task.revision,now());await taskEvent(tx,actor,task.id,decision,note);await taskNotify(tx,actor,task.id,task.employee_id,decision==="Approved"?"Task approved":"Task changes requested",task.title);return json({ok:true,message:decision==="Approved"?"Task approved and completed.":"Task returned for changes."});
   }
   if(action==="cancel"||action==="reopen"){
+   if(action==="reopen"&&process.env.WALSHKEN_PROJECT_LIFECYCLE_ENABLED==="1"&&task.project_id&&
+      !await one(tx,"SELECT id FROM projects WHERE id=? AND org_id=? AND status='Active'",task.project_id,actor.org_id))
+     return fail(409,"Return the project to active work before reopening its task.");
    if(!manager)return fail(403,"An authorized manager must change task closure.");checkRevision(task,data.revision);const note=str(data.note,"reason",1500);
    if(action==="reopen"&&!['Completed','Cancelled'].includes(task.status))return fail(409,"This task is not closed.");if(action==="cancel"&&['Completed','Cancelled'].includes(task.status))return fail(409,"This task is already closed.");
    await stopTaskTimer(tx,actor,task,action==="cancel"?"Task cancelled":"Task reopened");
@@ -184,22 +192,31 @@ export async function taskDashboard(db:Db,actor:Actor,params=new URLSearchParams
  const pageSize=30,pages=Math.max(1,Math.ceil(filtered.length/pageSize)),page=Math.min(pages,Math.max(1,Math.floor(Number(params.get('page'))||1)));
  const people=canManage(actor)?await all(db,`SELECT e.id,e.name,e.role,e.department_id,e.division_id,e.manager_id,d.name AS department,v.name AS division FROM employees e LEFT JOIN units d ON d.id=e.department_id LEFT JOIN units v ON v.id=e.division_id WHERE e.org_id=? AND e.status='Active' AND e.employment_status<>'Ended' AND e.role<>'guest' AND ${scope(actor,'e').sql} ORDER BY e.name`,actor.org_id,...scope(actor,'e').args):[];
  const reviewers=canManage(actor)?await all(db,"SELECT id,name,role,department_id,division_id,manager_id FROM employees WHERE org_id=? AND status='Active' AND employment_status<>'Ended' AND role IN('super_admin','admin','manager','hr') ORDER BY name",actor.org_id):[];
- const projects=canManage(actor)?await all(db,`SELECT p.id,p.name FROM projects p WHERE p.org_id=? AND p.status='Active' AND (?=1 OR p.owner_id=? OR p.department_id=? OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=? AND t.release_stage=?)) ORDER BY p.name`,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,taskDataset()):[];
+ const projectRead=projectLifecycleEnabled()?projectScope(actor,"read",taskDataset()):null;
+ const projects=!canManage(actor)?[]:projectRead
+  ?await all(db,`SELECT p.id,p.name FROM projects p JOIN employees owner ON owner.id=p.owner_id AND owner.org_id=p.org_id
+   WHERE p.org_id=? AND p.status='Active' AND (${projectRead.sql}) ORDER BY p.name`,actor.org_id,...projectRead.args)
+  :await all(db,`SELECT p.id,p.name FROM projects p WHERE p.org_id=? AND p.status='Active' AND (?=1 OR p.owner_id=? OR p.department_id=? OR EXISTS(SELECT 1 FROM tasks t WHERE t.project_id=p.id AND t.employee_id=? AND t.release_stage=?)) ORDER BY p.name`,actor.org_id,canSuper(actor)?1:0,actor.id,actor.department_id,actor.id,taskDataset());
  const running=await one(db,`SELECT l.id,l.task_id,l.starts_at,t.title FROM task_time_entries l JOIN tasks t ON t.id=l.task_id WHERE l.employee_id=? AND l.org_id=? AND t.release_stage=? AND l.kind='Timer' AND l.ends_at IS NULL AND l.voided_at IS NULL`,actor.id,actor.org_id,taskDataset());
  const teamRows=team?people.map(person=>{const tasks=mapped.filter(t=>t.employee_id===person.id),planned=tasks.filter(t=>t.status!=='Cancelled');return {...person,open:tasks.filter(t=>!['Completed','Cancelled'].includes(t.status)).length,overdue:tasks.filter(t=>t.overdue).length,pending:tasks.filter(t=>t.approval_status==='Pending').length,completed:tasks.filter(t=>t.status==='Completed').length,estimatedSeconds:planned.reduce((n,t)=>n+t.estimate_minutes*60,0),actualSeconds:tasks.reduce((n,t)=>n+t.actual_seconds,0),progress:planned.length?Math.round(planned.reduce((n,t)=>n+t.progress,0)/planned.length):0};}):[];
  return json({managedTasks:true,rows:filtered.slice((page-1)*pageSize,page*pageSize),stats,team,manager:canManage(actor),staff:people,reviewers,projects,teamRows,running,serverTime:now(),today:localDate(now(),actor.time_zone),registry:{page,pages,total:filtered.length},query:{q,bucket,status,priority,employee}});
 }
 export async function taskDetail(db:Db,actor:Actor,target:string,commentPage=1){
- const task=await taskFor(db,actor,target),[people,notes,time,files,links,reviews,events]=await Promise.all([
+ const task=await taskFor(db,actor,target);
+ const projectRead=task.project_id&&projectLifecycleEnabled()?projectScope(actor,"read",taskDataset()):null;
+ const [people,notes,time,files,links,reviews,events,project]=await Promise.all([
   one(db,`SELECT e.name AS employee,e.employee_no,a.name AS assigner,r.name AS reviewer,d.name AS department,v.name AS division,p.name AS project FROM employees e LEFT JOIN employees a ON a.id=? LEFT JOIN employees r ON r.id=? LEFT JOIN units d ON d.id=? LEFT JOIN units v ON v.id=? LEFT JOIN projects p ON p.id=? WHERE e.id=?`,task.assigned_by,task.reviewer_id,task.department_id,task.division_id,task.project_id,task.employee_id),
   all(db,"SELECT n.id,n.body,n.created_at,e.name AS author FROM task_notes n JOIN employees e ON e.id=n.author_id WHERE n.task_id=? ORDER BY n.created_at DESC,n.id DESC LIMIT 51 OFFSET ?",target,(Math.min(10000,Math.max(1,Math.floor(commentPage)))-1)*50),
   all(db,"SELECT l.*,e.name AS employee FROM task_time_entries l JOIN employees e ON e.id=l.employee_id WHERE l.task_id=? ORDER BY l.created_at DESC LIMIT 500",target),
   all(db,"SELECT f.id,f.filename,f.mime,f.bytes,f.page_count,f.created_at,f.uploaded_by,e.name AS uploader FROM task_files f JOIN employees e ON e.id=f.uploaded_by WHERE f.task_id=? AND f.deleted_at IS NULL ORDER BY f.created_at DESC",target),
   all<{id:string;document_id:string}>(db,"SELECT id,document_id FROM task_document_links WHERE task_id=? ORDER BY created_at",target),
   all(db,"SELECT r.id,r.decision,r.note,r.created_at,r.task_revision,e.name AS actor FROM task_reviews r JOIN employees e ON e.id=r.actor_id WHERE r.task_id=? ORDER BY r.created_at DESC",target),
-  all(db,"SELECT a.id,a.action,a.detail,a.created_at,e.name AS actor FROM task_events a LEFT JOIN employees e ON e.id=a.actor_id WHERE a.task_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 200",target)
+  all(db,"SELECT a.id,a.action,a.detail,a.created_at,e.name AS actor FROM task_events a LEFT JOIN employees e ON e.id=a.actor_id WHERE a.task_id=? ORDER BY a.created_at DESC,a.id DESC LIMIT 200",target),
+  projectRead ? one<{id:string}>(db,`SELECT p.id FROM projects p JOIN employees owner ON owner.id=p.owner_id AND owner.org_id=p.org_id
+    WHERE p.org_id=? AND p.id=? AND (${projectRead.sql})`,actor.org_id,task.project_id,...projectRead.args) : null
  ]);
  const documents=[];for(const link of links){try{const context=await documentContext(db,actor,link.document_id);if(await documentMask(db,actor,context)&permissionBit('view'))documents.push({id:link.id,documentId:link.document_id,name:context.document!.name,available:true});else documents.push({id:link.id,available:false});}catch{documents.push({id:link.id,available:false});}}
  const actual=await one<{seconds:number}>(db,"SELECT COALESCE(SUM(seconds),0)::int AS seconds FROM task_time_entries WHERE task_id=? AND voided_at IS NULL",target);
- return json({row:{...task,...people},notes:notes.slice(0,50),moreComments:notes.length>50,commentPage,time,files,documents,reviews,events,actualSeconds:actual?.seconds??0,owns:task.employee_id===actor.id,manager:canManage(actor),canReview:canManage(actor)&&task.employee_id!==actor.id&&(canSuper(actor)||task.reviewer_id===actor.id),serverTime:now()});
+ return json({row:{...task,...people},projectHref:project?"/staff/projects?"+new URLSearchParams({project:project.id}):null,
+  notes:notes.slice(0,50),moreComments:notes.length>50,commentPage,time,files,documents,reviews,events,actualSeconds:actual?.seconds??0,owns:task.employee_id===actor.id,manager:canManage(actor),canReview:canManage(actor)&&task.employee_id!==actor.id&&(canSuper(actor)||task.reviewer_id===actor.id),serverTime:now()});
 }

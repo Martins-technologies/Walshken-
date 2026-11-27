@@ -7,9 +7,14 @@ import type {EmploymentCategory} from "./employment-catalog";
 export type WorkSettings = {
  maxShiftMinutes:number; minRestMinutes:number; changeNoticeMinutes:number; restHoursPerWeek:number;
  firstBreakAfterMinutes:number; secondBreakFromMinutes:number; minimumBreakMinutes:number; minimumSplitMinutes:number;
+ continuousWorkMinutes?:number;
 };
 export type OvertimeSettings = {dailyHours:number;weeklyHours:number;multiplier:string;weekStart:number};
-export type LeaveSettings = {workdays:number[];dayMinutes:number;yearStartMonth:number;proration:"None"|"Daily";categories:{code:string;name:string;paid:boolean;annualMinutes:number;carryMinutes:number;accrual:"Annual"|"Monthly";minimumServiceDays:number}[]};
+export type LeaveCategory = {
+ code:string;name:string;paid:boolean;annualMinutes:number;carryMinutes:number;accrual:"Annual"|"Monthly"|"Daily earned"|"Approved workdays";minimumServiceDays:number;
+ daysPerCredit?:number; minimumApprovedDays?:number; reviewCarry?:true;
+};
+export type LeaveSettings = {workdays:number[];dayMinutes:number;yearStartMonth:number;proration:"None"|"Daily";categories:LeaveCategory[]};
 export type PayStandards={companyConfigured?:true;currency:string;minimumHourly:string;minimumMonthly:string;vacationPercent:string;longServiceYears:number;longServiceVacationPercent:string;paymentDeadlineDays:number;holidayPremiumMultiplier:string;holidayMethod:'Normal day'|'Average worked day'|'Percent of earnings';holidayWindowDays:number;holidayWindowBasis:'Before holiday'|'Complete workweeks';holidayDivisor:number;holidayPayOnNonWorkday:boolean;holidayPercent:string;minimumServiceDays:number;minimumWorkedDays:number;eligibilityLookbackMonths?:number;regularDayLookbackWeeks?:number;regularDayMinimumOccurrences?:number;reportingHours:number;reportingRate:'Minimum wage'|'Ordinary wage'};
 export type HolidaySettings = {dates:{date:string;name:string;required:boolean}[]};
 export type PolicySettings = (WorkSettings|OvertimeSettings|LeaveSettings|HolidaySettings|CanadaAlbertaParameters|NationalTaxPackage|PayStandards)&{companyConfigured?:true};
@@ -38,6 +43,10 @@ function validatePolicySettings(category:EmploymentCategory,input:unknown):Polic
    minimumSplitMinutes:integer(v.minimumSplitMinutes,"minimum split break minutes",1,120),
   };
   if(settings.secondBreakFromMinutes<settings.firstBreakAfterMinutes||settings.minimumSplitMinutes>settings.minimumBreakMinutes)return fail(400,"Check the ordered break thresholds and split-break duration.");
+  if(v.continuousWorkMinutes!==undefined&&v.continuousWorkMinutes!==null&&v.continuousWorkMinutes!==""){
+   settings.continuousWorkMinutes=integer(v.continuousWorkMinutes,"maximum uninterrupted work minutes",1,1440);
+   if(settings.minimumSplitMinutes!==settings.minimumBreakMinutes)return fail(400,"An uninterrupted-break policy must use the full qualifying break duration.");
+  }
   return settings;
  }
  if(category==="Overtime") {
@@ -61,11 +70,13 @@ function validatePolicySettings(category:EmploymentCategory,input:unknown):Polic
  const codes=new Set<string>();
  if(!Array.isArray(v.workdays)||!v.workdays.length||v.workdays.length>7||v.workdays.some(day=>!Number.isInteger(day)||day<0||day>6)||!["None","Daily"].includes(String(v.proration)))return fail(400,"Configure working weekdays and the explicit leave proration method.");
  return {workdays:[...new Set(v.workdays)],dayMinutes:integer(v.dayMinutes,"normal leave day minutes",1,1440),yearStartMonth:integer(v.yearStartMonth,"leave year start month",1,12),proration:v.proration as 'None'|'Daily',categories:v.categories.map(c=>{
-  if(!c||typeof c!=="object"||!/^[-A-Z0-9_]{2,30}$/.test(c.code)||codes.has(c.code)||typeof c.paid!=="boolean"||!["Annual","Monthly"].includes(c.accrual))return fail(400,"Enter unique leave codes and valid paid/accrual settings.");
+  if(!c||typeof c!=="object"||!/^[-A-Z0-9_]{2,30}$/.test(c.code)||codes.has(c.code)||typeof c.paid!=="boolean"||!["Annual","Monthly","Daily earned","Approved workdays"].includes(c.accrual))return fail(400,"Enter unique leave codes and valid paid/accrual settings.");
   codes.add(c.code);
   return {code:c.code,name:str(c.name,"leave category name",100),paid:c.paid,
    annualMinutes:integer(c.annualMinutes,"annual leave minutes",0,525600),carryMinutes:integer(c.carryMinutes,"carry-forward minutes",0,525600),
-   accrual:c.accrual,minimumServiceDays:integer(c.minimumServiceDays,"minimum service days",0,3650)};
+   accrual:c.accrual,minimumServiceDays:integer(c.minimumServiceDays,"minimum service days",0,3650),
+   ...(c.accrual==="Approved workdays"?{daysPerCredit:integer(c.daysPerCredit,"approved workdays per day of leave",1,366),minimumApprovedDays:integer(c.minimumApprovedDays,"minimum approved days for annual eligibility",0,366)}:{}),
+   ...(c.reviewCarry===true?{reviewCarry:true as const}:{})};
  })};
 }
 

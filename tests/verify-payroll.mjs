@@ -13,6 +13,7 @@ copyFileSync(join(process.cwd(),"supabase/migrations/20261122192455_employee_tas
 copyFileSync(join(process.cwd(),"supabase/migrations/20261122203136_employee_attendance_shifts_timesheets.sql"),join(sandbox,"drizzle/0012_workforce.sql"));
 writeFileSync(join(sandbox,"drizzle/00000_test_roles.sql"),"CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE walshken_production_app;");
 copyFileSync(join(process.cwd(),'supabase/migrations/20261123114028_employee_salary_payroll.sql'),join(sandbox,'drizzle/0013_payroll.sql'));
+copyFileSync(join(process.cwd(),'supabase/migrations/20261124192707_staff_readiness.sql'),join(sandbox,'drizzle/0014_readiness.sql'));
 mkdirSync(join(sandbox,'public'));copyFileSync(join(process.cwd(),'public/payroll-font.ttf'),join(sandbox,'public/payroll-font.ttf'));
 const repository=process.cwd();
 process.chdir(sandbox);
@@ -164,6 +165,26 @@ const pdf=await endpoint('payroll','payslip',200,staff,undefined,'?id='+row.id);
 await assert.rejects(()=>db.prepare("UPDATE payroll SET net_minor=1 WHERE id=?",[row.id]).run(),/immutable/i);await assert.rejects(()=>db.prepare("UPDATE payroll_periods SET label='changed' WHERE id=?",[period1]).run(),/immutable/i);await assert.rejects(()=>db.prepare("DELETE FROM payroll_sources WHERE payroll_id=?",[row.id]).run(),/immutable/i);await post('period-reopen',{id:period1,revision:d.selected.revision,note:'Forbidden silent rewrite'},409);
 let payment=await post('payment-record',{id:row.id,amount:(row.net_minor/100).toFixed(2),paidOn:'2026-02-09',method:'Bank transfer',reference:'LOCAL-PAID-1',note:'Confirmed completed transfer'},201);assert.equal((await list(staff,period1)).rows[0].paymentStatus,'Paid');await post('payment-record',{id:row.id,amount:'1',paidOn:'2026-02-09',method:'Bank transfer',reference:'OVERPAY',note:'Must reject'},400);await post('payment-reverse',{id:row.id,payment:payment.id,paidOn:'2026-02-10',reference:'LOCAL-REVERSE-1',note:'Original payment record corrected'},201);assert.equal((await list(staff,period1)).rows[0].paymentStatus,'Ready for payment');await post('payment-reverse',{id:row.id,payment:payment.id,paidOn:'2026-02-10',reference:'LOCAL-REVERSE-2',note:'Must reject duplicate'},409);
 console.log('PASS real approved-work calculation, daily overtime, breaks, vacation, bonus approval, effective rate changes, stale-approval rejection, immutable finalized rows, private PDF/CSV and append-only payment reversals');
+process.env.WALSHKEN_STAFF_READINESS_ENABLED='1';
+assert.equal((await list(staff,period1)).rows[0].canDownload,true);
+async function denyOwnPayroll(action) {
+ await db.prepare(`INSERT INTO staff_action_permissions(id,org_id,principal_type,principal_id,action,scope_type,scope_id,effect,created_by,created_at)
+  VALUES(?,'walshken','employee',?,?,'organization','','deny',?,?)`,[action,staffId,action,adminId,new Date().toISOString()]).run();
+}
+await denyOwnPayroll('payroll.payslips');
+assert.equal((await list(staff,period1)).rows[0].canDownload,false);
+await endpoint('payroll','payslip',403,staff,undefined,'?id='+row.id);
+await denyOwnPayroll('payroll.read');
+const restricted=await list(staff);
+assert.equal(restricted.rows.length,0);
+assert.equal(restricted.periods.length,0);
+assert(!(await endpoint('payroll','export',200,staff)).includes('First verified weekly pay'));
+await denyOwnPayroll('payroll.export');
+assert.equal((await list(staff)).canExport,false);
+await endpoint('payroll','export',403,staff);
+await db.prepare("DELETE FROM staff_action_permissions WHERE principal_id=?",[staffId]).run();
+process.env.WALSHKEN_STAFF_READINESS_ENABLED='0';
+console.log('PASS payroll read and separate download permissions respect explicit denials in the portal, CSV and payslip APIs');
 // Salaried employees may not approve themselves.
 const salaryPeriod=(await period('Salaried weekly pay','2026-02-02','2026-02-08',[adminId])).id;await post('calculate',{period:salaryPeriod,employee:adminId});d=await list(admin,salaryPeriod);assert.equal(d.rows[0].gross_cents,104000,'The explicitly saved company rate of 4% must remain 4%, including after five years of service');await post('period-submit',{id:salaryPeriod,revision:d.selected.revision});d=await list(admin,salaryPeriod);await post('payroll-review',{id:d.rows[0].id,revision:d.rows[0].revision,decision:'Approved',note:'Self approval rejected',acknowledge:true},403);await post('payroll-review',{id:d.rows[0].id,revision:d.rows[0].revision,decision:'Approved',note:'Independent verified salary review',acknowledge:true},200,hr);
 // Duplicate finalized work cannot be paid twice, and unsupported setup cannot yield a false zero.
@@ -184,6 +205,13 @@ const unpaidPeriod=(await period('Reviewed salary time off','2026-09-14','2026-0
 const contractor=await person('employee','Independent contractor','PAY-C-'+runId);await db.prepare("UPDATE employees SET employment_type='Contractor' WHERE id=?",[contractor.id]).run();const contractPolicy={...policy,currency:'USD',classification:'Contractor',frequency:'Monthly',taxEngine:'Contractor gross',contractorMethod:'Period fee',overtime:'Verified exemption',exemptionReason:'Verified independent supplier agreement and payment rules',vacationPercent:'0'};await setupEmployee(contractor.id,'1200.50','Period',contractPolicy);const cp=(await period('Monthly contractor payment','2026-10-01','2026-10-31',[contractor.id],'Monthly')).id;await post('calculate',{period:cp,employee:contractor.id});const contractRow=(await list(admin,cp)).rows[0];assert.equal(contractRow.currency,'USD');assert.equal(contractRow.gross_cents,120050);assert.equal(contractRow.deductions_minor,0);assert.equal(contractRow.net_minor,120050);assert.equal(contractRow.calculation.tax.engine,'Contractor gross');
 const {periodDates}=await import('../lib/walshken/payroll-access.ts');assert.equal(periodDates({frequency:'Semimonthly',startsOn:'2026-02-16',endsOn:'2026-02-28',payDate:'2026-03-02'}).periods,24);assert.throws(()=>periodDates({frequency:'Monthly',startsOn:'2026-02-02',endsOn:'2026-02-28',payDate:'2026-03-02'}));
 const {assignOvertime}=await import('../lib/walshken/payroll-engine.ts');const days=['2026-05-04','2026-05-05','2026-05-06','2026-05-07','2026-05-08'].map(day=>({day,paid:9*3600,regular:9*3600,ot:0,holiday:false,sheet:{status:'Approved'}}));assignOvertime(days,policy);assert.equal(days.reduce((n,d)=>n+d.ot,0),5*3600,'Greater-of daily/weekly overtime must not double count');
+const annualOpening=await post('opening-add',{employee:adminId,year:2027,asOf:'2026-12-31',balances:Object.fromEntries(Object.keys(zeroBalance()).map(key=>[key,'0'])),reference:'Isolated next-year native withholding case'},201);
+await post('opening-review',{id:annualOpening.id,revision:1,decision:'Approved',note:'Verified fixture balances'},200,hr);
+const nextYear=(await period('Alberta payroll awaiting a reviewed package','2027-01-11','2027-01-17',[adminId])).id;
+const missingPackage=await post('calculate',{period:nextYear,employee:adminId},409);
+assert.match(missingPackage.error,/verified tax-year|reviewed Canadian Alberta tax-year package/);
+assert.equal((await list(admin,nextYear)).rows.length,0);
+console.log('PASS legacy Alberta payroll requires a reviewed package for an unsupported pay date');
 console.log('PASS cross-period 44-hour weekly overtime, holiday-only pay and eligibility, explicit unpaid salary leave, real contractor period fees, USD separation and all four period frequencies');
 const {verifyAlbertaCompanyPolicies}=await import('./verify-finance-policies.mjs');
 await verifyAlbertaCompanyPolicies({db,post,list,person,setupEmployee,approvedWork,period,policy,admin,hr,staff,managerUser,adminId,runId});

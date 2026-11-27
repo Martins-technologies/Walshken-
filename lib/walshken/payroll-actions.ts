@@ -4,7 +4,7 @@ import {statutoryContext,nativeEngines,enterpriseEnabled} from "./payroll-statut
 import {fiscalYear} from "./payroll-fiscal";
 import {validateNationalElection} from "./payroll-tax-national";
 import {nationalTaxPackages} from "./payroll-national-packages";
-import {applicablePolicy} from "./employment-engine";
+import {applicablePolicy,employmentTermsOn} from "./employment-engine";
 import {staffReadinessEnabled,type StaffAction} from "./staff-permissions";
 import {holidaysEnabled} from './holiday-access';
 import {finalizeHolidayAllocations,validateHolidayAdjustment} from './holiday-payroll';
@@ -65,10 +65,31 @@ export async function payrollAction(db:Db,actor:Actor,action:string,input:Record
    await run(tx,'INSERT INTO staff_statutory_input_reviews(id,input_id,decision,actor_id,reason,created_at) VALUES(?,?,?,?,?,?)',id(),record.id,decision,actor.id,reason,now());await payEvent(tx,actor,record.employee_id,'statutory-input',record.id,'Statutory inputs '+decision.toLowerCase(),reason);return json({ok:true,message:'Statutory-input review recorded.'});
   }
   if(action==='profile-save'){
-   const employee=await payEmployee(tx,actor,str(input.employee,'employee',80)),effective=date(input.effectiveOn,'policy effective date')!,policy=validatePayPolicy({...input.policy as Record<string,unknown>,companyConfigured:true},employee),note=str(input.note,'policy change reason',1000);const current=await one<{id:string}>(tx,'SELECT id FROM payroll_profiles WHERE employee_id=? AND release_stage=? ORDER BY effective_on DESC,created_at DESC,id DESC LIMIT 1',employee.id,payrollDataset());if(String(input.currentId??'')!==(current?.id??''))return fail(409,'The payroll policy changed. Refresh before adding another version.');const target=id();await run(tx,'INSERT INTO payroll_profiles(id,org_id,release_stage,employee_id,effective_on,settings,created_by,created_at,note) VALUES(?,?,?,?,?,?,?,?,?)',target,actor.org_id,payrollDataset(),employee.id,effective,JSON.stringify(policy),actor.id,now(),note);await payEvent(tx,actor,employee.id,'payroll-profile',target,'Payroll policy version recorded',{effective,policy,note});return json({ok:true,id:target,message:'Reviewed payroll policy saved as a new historical version.'},201);
+   const employee=await payEmployee(tx,actor,str(input.employee,'employee',80)),effective=date(input.effectiveOn,'policy effective date')!;
+   const assignment=await employmentTermsOn(tx,employee,effective);
+   const person=assignment?{...employee,country:assignment.country,jurisdiction:assignment.jurisdiction,employment_type:assignment.employment_type}:employee;
+   const policy=validatePayPolicy({...input.policy as Record<string,unknown>,companyConfigured:true},person),note=str(input.note,'policy change reason',1000);
+   if(assignment&&(assignment.currency!==policy.currency||assignment.frequency!==policy.frequency))return fail(409,'Payroll currency and frequency must match the employment assignment on the effective date.');
+   const current=await one<{id:string}>(tx,'SELECT id FROM payroll_profiles WHERE employee_id=? AND release_stage=? ORDER BY effective_on DESC,created_at DESC,id DESC LIMIT 1',employee.id,payrollDataset());
+   if(String(input.currentId??'')!==(current?.id??''))return fail(409,'The payroll policy changed. Refresh before adding another version.');
+   const target=id();
+   await run(tx,'INSERT INTO payroll_profiles(id,org_id,release_stage,employee_id,effective_on,settings,created_by,created_at,note) VALUES(?,?,?,?,?,?,?,?,?)',target,actor.org_id,payrollDataset(),employee.id,effective,JSON.stringify(policy),actor.id,now(),note);
+   await payEvent(tx,actor,employee.id,'payroll-profile',target,'Payroll policy version recorded',{effective,policy,note});
+   return json({ok:true,id:target,message:'Reviewed payroll policy saved as a new historical version.'},201);
   }
   if(action==='rate-add'){
-   const employee=await payEmployee(tx,actor,str(input.employee,'employee',80)),currency=str(input.currency,'currency',3).toUpperCase(),digits=currencyDigits(currency),amount=minor(input.amount,digits),effective=date(input.effectiveOn,'rate effective date')!,unit=pick(input.unit,['Hour','Year','Period'] as const,'rate unit'),note=str(input.note,'rate authorization',1000);if(amount<=0)return fail(400,'The verified pay rate must be positive.');if(unit==='Period'&&employee.employment_type!=='Contractor')return fail(400,'Fixed period fees are for separately configured contractors.');const target=id();if(await one(tx,'SELECT id FROM compensation WHERE employee_id=? AND release_stage=? AND effective_on=? AND voided_at IS NULL',employee.id,payrollDataset(),effective))return fail(409,'A rate already takes effect on that date. Void an unused future mistake or add an auditable later rate/adjustment.');await run(tx,'INSERT INTO compensation(id,employee_id,kind,amount_cents,currency,effective_on,created_by,release_stage,minor_unit,rate_unit,note,workflow_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)',target,employee.id,unit==='Hour'?'Hourly':unit==='Year'?'Salaried':'Contract fee',amount,currency,effective,actor.id,payrollDataset(),digits,unit,note);await payEvent(tx,actor,employee.id,'compensation',target,'Effective salary rate added',{amount,currency,unit,effective,note});return json({ok:true,id:target,message:'Effective rate added. Prior rates and finalized statements are preserved.'},201);
+   const employee=await payEmployee(tx,actor,str(input.employee,'employee',80)),currency=str(input.currency,'currency',3).toUpperCase();
+   const digits=currencyDigits(currency),amount=minor(input.amount,digits),effective=date(input.effectiveOn,'rate effective date')!;
+   const unit=pick(input.unit,['Hour','Year','Period'] as const,'rate unit'),note=str(input.note,'rate authorization',1000);
+   if(amount<=0)return fail(400,'The verified pay rate must be positive.');
+   const assignment=await employmentTermsOn(tx,employee,effective);
+   if(assignment&&assignment.currency!==currency)return fail(409,'The rate currency must match the employment assignment on the effective date.');
+   if(unit==='Period'&&(assignment?.employment_type??employee.employment_type)!=='Contractor')return fail(400,'Fixed period fees are for separately configured contractors.');
+   const target=id();
+   if(await one(tx,'SELECT id FROM compensation WHERE employee_id=? AND release_stage=? AND effective_on=? AND voided_at IS NULL',employee.id,payrollDataset(),effective))return fail(409,'A rate already takes effect on that date. Void an unused future mistake or add an auditable later rate/adjustment.');
+   await run(tx,'INSERT INTO compensation(id,employee_id,kind,amount_cents,currency,effective_on,created_by,release_stage,minor_unit,rate_unit,note,workflow_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,1)',target,employee.id,unit==='Hour'?'Hourly':unit==='Year'?'Salaried':'Contract fee',amount,currency,effective,actor.id,payrollDataset(),digits,unit,note);
+   await payEvent(tx,actor,employee.id,'compensation',target,'Effective salary rate added',{amount,currency,unit,effective,note});
+   return json({ok:true,id:target,message:'Effective rate added. Prior rates and finalized statements are preserved.'},201);
   }
   if(action==='rate-void'){
    const rate=await one<{id:string;employee_id:string;effective_on:string}>(tx,'SELECT id,employee_id,effective_on FROM compensation WHERE id=? AND release_stage=? AND voided_at IS NULL',str(input.id,'rate',80),payrollDataset());if(!rate)return fail(404,'Rate unavailable.');await payEmployee(tx,actor,rate.employee_id);if(rate.effective_on<=localDate(now(),actor.time_zone))return fail(409,'Historical/current rates cannot be erased. Record a new effective rate and an authorized payroll adjustment.');if(await one(tx,"SELECT id FROM payroll WHERE employee_id=? AND release_stage=? AND status='Finalized' AND ends_on>=?",rate.employee_id,payrollDataset(),rate.effective_on))return fail(409,'A finalized payroll references this rate period.');await run(tx,'UPDATE compensation SET voided_at=? WHERE id=?',now(),rate.id);await payEvent(tx,actor,rate.employee_id,'compensation',rate.id,'Unused future rate voided',str(input.note,'reason',1000));return json({ok:true,message:'Unused future rate voided with history retained.'});

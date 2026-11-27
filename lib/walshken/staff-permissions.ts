@@ -17,6 +17,7 @@ export const staffActions = {
   "leave.manage": "Manage leave requests",
   "leave.approve": "Approve leave",
   "attendance.read": "View attendance",
+  "attendance.export": "Export attendance reports",
   "attendance.edit": "Edit attendance and submit corrections",
   "attendance.approve": "Approve timesheets",
   "attendance.corrections": "Approve attendance corrections",
@@ -45,7 +46,26 @@ export const staffActions = {
   "privacy.dispose": "Approve record disposal",
   "audit.read": "View authorized audit history",
   "audit.export": "Export authorized audit history",
+  "projects.read": "View project records",
+  "projects.export": "Export project reports",
+  "projects.manage": "Manage project plans and milestones",
+  "projects.review": "Independently approve projects",
+  "performance.read": "View scoped monthly performance and arrival reports",
+  "performance.export": "Export scoped performance reports",
+  "performance.manage": "Manage performance scoring and documented reviews",
+  "performance.finalize": "Finalize historical performance reports",
+  "calls.recording.policy": "Manage organization meeting recording policy",
+  "calls.external.invite": "Invite external participants to hosted meetings",
+  "calls.external.configure": "Manage organization-wide external meeting access",
   "security.scans": "Review and retry upload scans",
+  "communication.direct": "Start and send scoped direct messages",
+  "communication.direct.silent": "Skip cross-department confirmation for permitted direct recipients",
+  "communication.directory": "View employee communication directory",
+  "communication.metadata": "View scoped conversation metadata",
+  "communication.content": "Review scoped private conversation content",
+  "communication.reports": "View communication activity reports",
+  "communication.visibility.employee": "Manage employee communication visibility",
+  "communication.visibility.team": "Manage department and team communication visibility",
 } as const;
 export const legacyPreparationActions = new Set<StaffAction>([
  'payroll.compensation','payroll.rules','payroll.periods','payroll.calculate','payroll.adjustments'
@@ -61,7 +81,7 @@ export type StaffPermission = {
 };
 type Clause = { sql: string; args: unknown[] };
 
-function matchingScopes(rules: StaffPermission[], alias: string): Clause {
+function matchingScopes(rules: StaffPermission[], alias: string, additionalDepartments = false): Clause {
   const scopes = { division: "division_id", department: "department_id", employee: "id",country:"country",office:"office_id" } as const;
   if (rules.some(rule => rule.scope_type === "organization")) return {sql:"1=1", args:[]};
   if (!rules.length) return {sql:"1=0", args:[]};
@@ -69,16 +89,20 @@ function matchingScopes(rules: StaffPermission[], alias: string): Clause {
     sql: rules.map(rule => {
       const column=scopes[rule.scope_type as keyof typeof scopes];
       if(employmentEngineEnabled()&&(rule.scope_type==='country'||rule.scope_type==='office'))return `COALESCE((SELECT t.${column} FROM staff_employment_terms t WHERE t.org_id=${alias}.org_id AND t.employee_id=${alias}.id AND t.effective_on<=to_char(now() AT TIME ZONE ${alias}.time_zone,'YYYY-MM-DD') ORDER BY t.effective_on DESC LIMIT 1),${alias}.${column})=?`;
+      if (additionalDepartments && rule.scope_type === "department") return `(?::text IN (
+        SELECT ${alias}.department_id UNION SELECT r.unit_id FROM staff_unit_memberships r
+        WHERE r.org_id=${alias}.org_id AND r.employee_id=${alias}.id
+      ))`;
       return `${alias}.${column}=?`;
     }).join(" OR "),
     args: rules.map(rule => rule.scope_id),
   };
 }
 
-export function permissionScope(rules: StaffPermission[], action: StaffAction, alias: string, fallback: Clause): Clause {
+export function permissionScope(rules: StaffPermission[], action: StaffAction, alias: string, fallback: Clause, additionalDepartments = false): Clause {
   const matching = rules.filter(rule => rule.action === action || action==='payroll.compensation'&&rule.action==='people.compensation' || legacyPreparationActions.has(action) && rule.action === "payroll.prepare");
-  const grants = matchingScopes(matching.filter(rule => rule.effect === "allow"), alias);
-  const bans = matchingScopes(matching.filter(rule => rule.effect === "deny"), alias);
+  const grants = matchingScopes(matching.filter(rule => rule.effect === "allow"), alias, additionalDepartments);
+  const bans = matchingScopes(matching.filter(rule => rule.effect === "deny"), alias, additionalDepartments);
   return {
     sql: `((${fallback.sql}) OR (${grants.sql})) AND NOT COALESCE((${bans.sql}),false)`,
     args: [...fallback.args, ...grants.args, ...bans.args],

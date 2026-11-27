@@ -3,6 +3,7 @@ import {StaffGovernance} from "./staff-governance";
 import {HolidayWorkspace} from "./holidays";
 import {PayrollWorkspace} from "./payroll";
 import {WorkforceWorkspace} from "./workforce";
+import {StaffPerformance} from "./staff-performance";
 import { useState, type FormEvent } from "react";
 import { inquiryStatuses } from "@/lib/walshken/customer-status";
 import { countries, countryName, divisions, providers, roleNames, roles, type Role } from "@/lib/walshken/catalog";
@@ -183,9 +184,10 @@ function Integrations({data,refresh}:{data:ViewData;refresh:()=>void}){
     {data.encryptionMigrationReady&&<Panel title="Move preview access securely" note="Re-encrypts stored authenticator data inside this server so the main review project can use the same passwords and authenticator codes. No encryption key or authenticator secret is returned.">
       <Disclosure title="Complete encryption migration"><ActionForm path="integrations/migrate-encryption" fields={[{name:"password",label:"Current password",type:"password",required:true,autoComplete:"current-password"},{name:"code",label:"Fresh authenticator or saved recovery code",required:true,autoComplete:"one-time-code"}]} submit="Migrate encrypted access data" refresh={refresh}/></Disclosure>
     </Panel>}
-    <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage","payroll-calculator-review",...(data.readiness?["resend","malware-scanner"]:[]),...(data.documentStorageEnabled?["document-storage-review"]:[])].includes(provider.id)).map((provider)=>{
+    <div className="integration-grid">{providers.filter(provider=>["livekit","recording-storage","payroll-calculator-review",...(data.readiness||data.meetingInviteEmail?["resend"]:[]),...(data.readiness?["malware-scanner"]:[]),...(data.documentStorageEnabled?["document-storage-review"]:[])].includes(provider.id)).map((provider)=>{
       const current=data.rows?.find((row)=>row.id===(provider.id==="payroll-calculator-review"?data.calculatorId:provider.id));
-      return <Panel key={provider.id} title={provider.name} note={provider.description} action={<Status>{current?.source==='server'?"Server configuration":current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
+      const description=provider.id==="resend"&&data.meetingInviteEmail?"Send external meeting invitations, reminders and schedule updates from a verified address. This connection also serves staff email workflows.":provider.description;
+      return <Panel key={provider.id} title={provider.name} note={description} action={<Status>{current?.source==='server'?"Server configuration":current?.enabled?"Enabled":current?"Saved":"Setup pending"}</Status>}>
         <div className="integration-label"><Icon name="plug" size={17}/>{provider.category}</div>
         {provider.id==="document-storage-review"&&!current&&data.documentBucket&&<p className="form-note">Using the existing encrypted storage connection with the separate private bucket {data.documentBucket}. Dedicated document credentials can be configured here.</p>}
         {data.secureStorage&&<Disclosure title={current?"Update credentials":"Add credentials"}>
@@ -227,6 +229,7 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
   const rows=data.rows??[];
   if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
+  if(section==="reports"&&data.performanceOnly)return <StaffPerformance/>;
   if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
   if(section==="employees"||section==="roles")return <Employees actor={actor} data={data} refresh={refresh} rolesOnly={section==="roles"} setQuery={setQuery}/>;
   if(section==="scheduling"||section==="approvals")return <TimeViews section={section} actor={actor} data={data} refresh={refresh}/>;
@@ -237,8 +240,8 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
   if(section==="integrations")return <Integrations data={data} refresh={refresh}/>;
   if(section==="payroll")return <Payroll data={data} refresh={refresh}/>;
   if(section==="departments")return <Panel title="Organization units">
-    <Disclosure title="Add a department, division or office"><ActionForm path="organization/add" fields={[
-      {name:"kind",label:"Unit type",options:["Department","Division","Office"],required:true},field("name","Name"),
+    <Disclosure title={data.managementTeams?"Add an organization unit":"Add a department, division or office"}><ActionForm path="organization/add" fields={[
+      {name:"kind",label:"Unit type",options:data.managementTeams?["Department","Division","Office","Team"]:["Department","Division","Office"],required:true},field("name","Name"),
       {name:"country",label:"Office country",options:countryChoices},{name:"timeZone",label:"Office time zone",placeholder:"For example, Europe/London"},field("region","Province or region","text",false),
     ]} submit="Create unit" refresh={refresh}/></Disclosure>
     <Table rows={rows} columns={[column("name","Name"),column("kind","Type"),column("country","Country"),column("region","Region"),column("time_zone","Time zone")]}/>
@@ -251,6 +254,17 @@ export function AdminViews({section,actor,data,refresh,setQuery}:{section:string
           {...field("region","Province or region","text",false),value:row.region},
         ]:[]),
       ]} submit="Save unit" refresh={refresh}/>
+      {data.managementTeams&&["Team","Department"].includes(value(row,"kind"))&&<>
+        <ActionForm path="organization/membership-add" extra={{unit:row.id}}
+          fields={[employeeField((data.staff??[]).filter(employee=>employee.department_id!==row.id
+            && !data.unitMemberships?.some(member=>member.unit_id===row.id&&member.employee_id===employee.id)),"employee","Add employee")]}
+          submit="Add member" refresh={refresh}/>
+        <Table rows={(data.unitMemberships??[]).filter(member=>member.unit_id===row.id)} columns={[
+          column("name","Employee"),column("employee_no","Employee number"),
+          {key:"primary_department",title:"Membership",render:member=>member.primary_department?"Primary department":
+            <Quick path="organization/membership-remove" data={{unit:row.id,employee:member.employee_id}} refresh={refresh}>Remove member</Quick>},
+        ]} empty="No assigned employees"/>
+      </>}
       <ActionForm path="organization/delete-unused" extra={{id:row.id}} fields={[field("confirmation","Type DELETE to remove this unused unit")]} submit="Delete unused unit" refresh={refresh}/>
     </Disclosure>)}
 

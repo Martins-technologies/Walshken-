@@ -10,7 +10,7 @@ Open the corporate homepage at `/`, the service directory at `/services`, countr
 
 1. Run `npm ci` using Node.js 22.
 2. Copy `.env.example` to `.env.local`. Set a local administrator email, a unique random setup code of at least 24 characters, and an integration encryption key if you want to test credential storage.
-3. Run `npm run dev`. The app creates an isolated PostgreSQL database under `.walshken-data` if `DATABASE_URL` is unset in development.
+3. Set `DATABASE_URL` to the dedicated Supabase development database and run `npm run dev`. Automated tests use disposable in-memory fixtures.
 4. Open `/staff` and set up the first administrator. Use Employees to issue staff activation codes. Use separate browser sessions for role checks.
 
 ## Vercel and Supabase

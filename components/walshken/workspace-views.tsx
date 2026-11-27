@@ -1,10 +1,12 @@
 "use client";
+import {ProjectsWorkspace,type ProjectsData} from "./projects";
 import {StaffPrivacy,type PrivacyData} from "./staff-privacy";
 import {StaffCalendar} from "./staff-calendar";
 import type {StaffCalendarData} from "@/lib/walshken/staff-calendar-types";
 import {HolidayWorkspace} from "./holidays";
 import {PayrollWorkspace} from "./payroll";
 import { Calls } from "./calls";
+import type { RecordingCategory, RecordingPolicy } from "@/lib/walshken/meeting-recording-policy";
 import { Messages } from "./messages";
 import { DocumentWorkspace } from "./documents";
 import {WorkforceWorkspace} from "./workforce";
@@ -19,6 +21,9 @@ import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
 export type ViewData = {
+  managedProjects?:boolean;
+  unreadUpdates?:number; managedWorktime?:boolean;
+  management?:{people?:RecordRow|null;attendance?:RecordRow|null;work?:RecordRow|null;security?:RecordRow|null}|null;
   notificationEmail?:{enabled:boolean;revision:number;providerConfigured:boolean;deliveries:RecordRow[]}|null;
   privacy?:boolean;events?:RecordRow[];categories?:readonly string[];actorId?:string;canManage?:boolean;canExport?:boolean;canDispose?:boolean;
   retention?:import("./retention-management").RetentionData|null;
@@ -26,6 +31,7 @@ export type ViewData = {
   scans?:RecordRow[];
   employment?:import("./employment-management").EmploymentManagementData|null;
   readiness?:boolean;
+  meetingInviteEmail?:boolean;
   personnelControls?:boolean;
   privacyNotice?:RecordRow|null;
   acknowledgements?:RecordRow[];
@@ -34,13 +40,17 @@ export type ViewData = {
   calculatorId?:string;
   managedCalendar?: boolean; calendar?: StaffCalendarData;
   managedHolidays?:boolean;managedPayroll?:boolean;managedWorkforce?:boolean;managedTasks?:boolean;taskSummary?:{today:number;overdue:number;pending:number;open:number};
+  performanceOnly?:boolean;
+  managementTeams?:boolean; unitMemberships?:RecordRow[];
   managedDocuments?:boolean;documentStorageEnabled?:boolean;documentBucket?:string;
   collaborationOverview?:boolean; conversations?:RecordRow[];
   rows?:RecordRow[]; row?:RecordRow; staff?:RecordRow[]; projects?:RecordRow[]; shifts?:RecordRow[]; tasks?:RecordRow[];
   alerts?:RecordRow[]; corrections?:RecordRow[]; meetings?:RecordRow[]; leave?:RecordRow[]; holidays?:RecordRow[];
   sessions?:RecordRow[]; units?:RecordRow[]; rates?:RecordRow[]; availability?:RecordRow[]; inquiries?:RecordRow[];
   registry?: { query: string; page: number; pages: number; total: number };
+  guestInvites?:{canInvite:boolean;canConfigure:boolean;admission:"Host approval"|"Invitation only";emailConfigured:boolean};
   pendingAttendees?:RecordRow[]; guestMeetings?:boolean; recordingStorage?:boolean; meetingPolicy?:RecordRow;
+  recordingCategories?:RecordingCategory[]; recordingSettings?:RecordingPolicy;
   messageDocumentsEnabled?:boolean;
   groups?:string[]; departments?:RecordRow[]; canForwardMessages?:boolean; messageChanges?:string;
   memberManagement?:string; pendingGroups?:RecordRow[]; removedGroups?:RecordRow[]; communicationPolicy?:RecordRow;
@@ -55,36 +65,71 @@ const statusColumn={key:"status",title:"Status",render:(row:RecordRow)=><Status>
 export const dateColumn=(key:string,title:string,withTime=false,zone?:string)=>({key,title,render:(row:RecordRow)=>dateText(row[key],withTime,zone)});
 const durationColumn=(key:string,title:string)=>({key,title,render:(row:RecordRow)=>hours(row[key])});
 
-function Overview({actor,data,refresh}:{actor:Viewer;data:ViewData;refresh:()=>void}){
-  if(data.collaborationOverview){
-    const conversations=data.conversations??[],meetings=data.meetings??[],alerts=data.alerts??[];
-    const stats=[["message","Conversations",conversations.length,"/staff/messages"],["video","Upcoming meetings",meetings.length,"/staff/calls"],["bell","Unread updates",alerts.filter(row=>!row.read_at).length,"/staff/notifications"],...(data.taskSummary?[["check","Open tasks",data.taskSummary.open,"/staff/tasks"]]:[])];
-    return <><div className="dashboard-banner"><div><div className="section-kicker"><span/> YOUR TEAM WORKSPACE</div><h2>Connect with your team.</h2><p>Keep conversations, meetings and work profiles in one secure place.</p><a className="btn btn-white btn-small" href="/staff/messages">Open messages <Icon name="right" size={16}/></a></div><div className="dashboard-motif" aria-hidden="true"><Icon name="message" size={98}/></div></div>
-      <div className="stats-grid">{stats.map(([icon,label,count,href])=><a className="stat-card" href={String(href)} key={String(label)}><span className="icon-tile"><Icon name={String(icon)} size={19}/></span><strong>{count}</strong><span>{label}</span><Icon name="external" className="stat-arrow" size={16}/></a>)}</div>
-      <div className="panel-grid"><Panel title="Upcoming meetings" action={<a className="text-link" href="/staff/calls">Open calls <Icon name="right" size={15}/></a>}><Table rows={meetings.slice(0,5)} columns={[column("title","Meeting"),dateColumn("starts_at","Starts",true,actor.timeZone),column("mode","Mode")]} empty="No upcoming meetings"/></Panel>
-      <Panel title="Recent updates" action={<a className="text-link" href="/staff/notifications">View updates <Icon name="right" size={15}/></a>}>{alerts.length?<div className="notification-list">{alerts.slice(0,5).map(row=><a href={value(row,"href")} key={value(row,"id")}><span className="icon-tile"><Icon name="bell" size={16}/></span><div><strong>{row.title}</strong><small>{row.body}</small></div><Icon name="next" size={16}/></a>)}</div>:<Empty title="You’re all caught up" body="Your team invitations and updates will appear here." icon="bell"/>}</Panel></div></>;
-  }
-  const tasks=(data.tasks??[]).filter((task)=>!["Completed","Cancelled"].includes(value(task,"status")));
-  const alerts=(data.alerts??[]).filter((notice)=>!notice.read_at);
-  const stats=actor.role==="guest"?[["bell","Unread notifications",alerts.length,"/staff/notifications"]]:
-    [["check","Open tasks",tasks.length,"/staff/tasks"],["shift","Upcoming shifts",data.shifts?.length??0,"/staff/shifts"],
-      ["list","Draft timesheets",data.drafts??0,"/staff/timesheets"],["bell","Unread notifications",alerts.length,"/staff/notifications"]];
-  return <>
-    <div className="dashboard-banner"><div><div className="section-kicker"><span/> YOUR WORKDAY</div><h2>{data.active?data.active.break_started?"You’re on a break.":"You’re clocked in.":"Your workday at a glance."}</h2>
-      <p>{data.active?"Manage your active shift from attendance.":"Check your tasks, shifts and recent updates."}</p>
-      {actor.role!=="guest"&&(data.active?<a href={"/staff/attendance"} className="btn btn-white btn-small">Open attendance <Icon name="right" size={16}/></a>
-        :<Quick path="attendance/in" refresh={refresh} variant="white"><Icon name="clock" size={16}/> Clock in</Quick>)}</div><div className="dashboard-motif" aria-hidden="true"><Icon name="layout" size={98}/></div></div>
-    <div className="stats-grid">{stats.map(([icon,label,number,href])=><a className="stat-card" href={String(href)} key={label}><span className="icon-tile"><Icon name={String(icon)} size={19}/></span><strong>{number}</strong><span>{label}</span><Icon name="external" className="stat-arrow" size={16}/></a>)}</div>
-    <div className="panel-grid">
-      {actor.role!=="guest"&&<Panel title="Upcoming tasks" action={<a className="text-link" href={"/staff/tasks"}>View tasks <Icon name="right" size={15}/></a>}>
-        <Table rows={tasks.slice(0,5)} columns={[column("title","Task"),dateColumn("due_date","Due"),statusColumn]} empty="No open tasks"/>
+function Overview({actor,allowed,data,refresh}:{actor:Viewer;allowed:readonly string[];data:ViewData;refresh:()=>void}){
+  const can=(key:string)=>allowed.includes(key);
+  const alerts=data.alerts??[];
+  const meetings=[...(data.meetings??[])].sort((one,two)=>value(one,"starts_at").localeCompare(value(two,"starts_at")));
+  const tasks=(data.tasks??[]).filter(task=>!["Completed","Cancelled"].includes(value(task,"status")));
+  const unread=data.unreadUpdates??alerts.filter(row=>!row.read_at).length;
+  const stats:{key:string;icon:string;label:string;count:number}[]=data.collaborationOverview?[
+    {key:"tasks",icon:"check",label:"Open tasks",count:data.taskSummary?.open??0},
+    {key:"calls",icon:"video",label:"Upcoming meetings",count:meetings.length},
+    {key:"messages",icon:"message",label:"Conversations",count:(data.conversations??[]).filter(row=>!row.archived).length},
+    {key:"notifications",icon:"bell",label:"Unread updates",count:unread},
+  ]:[
+    {key:"tasks",icon:"check",label:"Open tasks",count:tasks.length},
+    {key:"shifts",icon:"shift",label:"Upcoming shifts",count:data.shifts?.length??0},
+    {key:"timesheets",icon:"list",label:"Draft timesheets",count:data.drafts??0},
+    {key:"notifications",icon:"bell",label:"Unread updates",count:unread},
+  ];
+  const management=data.management;
+  const managementCards=[
+    ["employees","users","Active employees",management?.people?.active],
+    ["scheduling","clock","Clocked in now",management?.attendance?.clocked_in],
+    ["approvals","list","Timesheets to review",management?.attendance?.submitted_timesheets],
+    ["audit","shield","Active sessions",management?.security?.sessions],
+  ].filter(([key,,,count])=>typeof count==="number"&&can(String(key)));
+
+  return <div className="workspace-overview">
+    {stats.some(item=>can(item.key))&&<section className="overview-metrics" aria-label="Your activity">
+      {stats.filter(item=>can(item.key)).map(({key,icon,label,count})=><a className="overview-metric" href={`/staff/${key}`} key={key}>
+        <span className="icon-tile"><Icon name={icon} size={19}/></span><Icon name="external" className="overview-metric-arrow" size={16}/>
+        <strong>{count.toLocaleString("en-CA")}</strong><span>{label}</span>
+      </a>)}
+    </section>}
+    {can("attendance")&&<section className="overview-worktime" aria-label="Attendance status">
+      <span className="icon-tile"><Icon name="clock" size={18}/></span>
+      <div><strong>{data.active?data.active.break_started?"On a break":"Clocked in":"Clocked out"}</strong><small>{data.active?.starts_at?`Shift started ${dateText(data.active.starts_at,true,actor.timeZone)}`:"Clock in when your work begins."}</small></div>
+      {data.active||data.managedWorktime?<a href="/staff/attendance" className="btn btn-outline btn-small">Open attendance <Icon name="right" size={15}/></a>:<Quick path="attendance/in" refresh={refresh} variant="blue">Clock in</Quick>}
+    </section>}
+    <div className="overview-panels">
+      <div className="overview-primary">
+        {data.collaborationOverview&&can("calls")&&<Panel title="Upcoming meetings" action={<a className="text-link" href="/staff/calls">All meetings <Icon name="right" size={15}/></a>}>
+          {meetings.length?<ul className="overview-events">{meetings.slice(0,5).map(row=><li key={value(row,"id")}><a href={`/staff/calls?meeting=${encodeURIComponent(value(row,"id"))}`}>
+            <span className="icon-tile"><Icon name={row.mode==="Audio"?"phone":"video"} size={17}/></span>
+            <span><strong>{row.title}</strong><small>{dateText(row.starts_at,true,actor.timeZone)}</small></span>
+            <Icon name="next" size={15}/>
+          </a></li>)}</ul>:<Empty title="No upcoming meetings" body="Scheduled meetings and active calls will appear here." icon="calendar"/>}
+        </Panel>}
+        {can("tasks")&&<Panel title={data.collaborationOverview?"Your tasks":"Upcoming tasks"} action={<a className="text-link" href="/staff/tasks">All tasks <Icon name="right" size={15}/></a>}>
+          {tasks.length?<Table rows={tasks.slice(0,5)} columns={[column("title","Task"),dateColumn("due_date","Due"),statusColumn]}/>:<Empty title="No open tasks" body="New assignments will appear here." icon="check"/>}
+          {!!data.taskSummary&&(data.taskSummary.overdue>0||data.taskSummary.today>0)&&<p className="overview-task-note">
+            {data.taskSummary.today>0&&<span>{data.taskSummary.today} due or starting today</span>}
+            {data.taskSummary.overdue>0&&<span className="overview-overdue">{data.taskSummary.overdue} overdue</span>}
+          </p>}
+        </Panel>}
+      </div>
+      {can("notifications")&&<Panel title="Recent updates" action={<a className="text-link" href="/staff/notifications">All updates <Icon name="right" size={15}/></a>}>
+        {alerts.length?<ul className="overview-activity">{alerts.slice(0,6).map(row=><li key={value(row,"id")}><a href={value(row,"href")||"/staff/notifications"}>
+          <span className="icon-tile"><Icon name="bell" size={16}/></span>
+          <span><strong>{row.title}{!row.read_at&&<span className="overview-unread"><span className="sr-only">Unread</span></span>}</strong><small>{row.body}</small><small>{dateText(row.created_at,true,actor.timeZone)}</small></span>
+        </a></li>)}</ul>:<Empty title="You’re all caught up" body="New assignments, invitations and decisions will appear here." icon="bell"/>}
       </Panel>}
-      <Panel title="Recent updates" action={<a className="text-link" href={"/staff/notifications"}>View notifications <Icon name="right" size={15}/></a>}>
-        {(data.alerts??[]).length?<div className="notification-list">{(data.alerts??[]).slice(0,5).map((row)=><a href={value(row,"href")} key={value(row,"id")}><span className="icon-tile"><Icon name="bell" size={16}/></span><div><strong>{row.title}</strong><small>{row.body}</small></div><Icon name="next" size={16}/></a>)}</div>
-          :<Empty title="You’re all caught up" body="New assignments and decisions will appear here." icon="bell"/>}
-      </Panel>
     </div>
-  </>;
+    {managementCards.length>0&&<Panel title="Organization snapshot" note="Current records across your organization.">
+      <div className="overview-management">{managementCards.map(([key,icon,label,count])=><a key={key} href={`/staff/${key}`}><Icon name={String(icon)} size={18}/><span>{label}</span><strong>{count}</strong><Icon name="next" size={15}/></a>)}</div>
+    </Panel>}
+  </div>;
 }
 
 function Tasks({actor,data,refresh}:{actor:Viewer;data:ViewData;refresh:()=>void}){
@@ -233,19 +278,20 @@ function LegacyDocumentView({actor,data,refresh,admin=false}:{actor:Viewer;data:
   </Panel>;
 }
 
-export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:string;actor:Viewer;data:ViewData;refresh:()=>void;setQuery:(q:string)=>void}){
+export function WorkspaceViews({section,actor,allowed,data,refresh,setQuery}:{section:string;actor:Viewer;allowed:readonly string[];data:ViewData;refresh:()=>void;setQuery:(q:string)=>void}){
   const rows=data.rows??[];
   if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
   if(section==="privacy")return <StaffPrivacy data={data as PrivacyData} refresh={refresh}/>;
-  if(section==="dashboard")return <Overview actor={actor} data={data} refresh={refresh}/>;
+  if(section==="dashboard")return <Overview actor={actor} allowed={allowed} data={data} refresh={refresh}/>;
   if(section==="tasks")return data.managedTasks?<TaskWorkspace actor={actor} initial={data}/>:<Tasks actor={actor} data={data} refresh={refresh}/>;
   if(["attendance","shifts","timesheets","leave"].includes(section))return <TimeViews section={section} actor={actor} data={data} refresh={refresh}/>;
   if(section==="calendar"&&data.managedCalendar&&data.calendar)return <StaffCalendar data={data.calendar} refresh={refresh} setQuery={setQuery}/>;
   if(section==="calendar")return <Calendar actor={actor} data={data}/>;
   if(section==="messages")return <Messages actor={actor} data={data} refresh={refresh}/>;
   if(section==="documents")return <DocumentView actor={actor} data={data} refresh={refresh}/>;
+  if(section==="projects"&&data.managedProjects)return <ProjectsWorkspace data={data as unknown as ProjectsData} refresh={refresh} setQuery={setQuery}/>;
   if(section==="projects")return <Panel title="Projects">{manages(actor)&&<Disclosure title="Create project"><ActionForm path="projects/add" fields={[field("name","Project name"),field("description","Description","textarea",false)]} submit="Create project" refresh={refresh}/></Disclosure>}
     <Table rows={rows} columns={[column("name","Project"),column("description","Description"),column("tasks","Tasks"),statusColumn]} empty="No projects assigned"/></Panel>;
   if(section==="calls")return <Calls actor={actor} data={data} refresh={refresh}/>;
@@ -286,7 +332,7 @@ export function WorkspaceViews({section,actor,data,refresh,setQuery}:{section:st
           submit="Save contact details" refresh={refresh} reset={false}/>
       </Panel>
       <Panel title="Profile photo" note="Upload a PNG, JPEG, or WebP under 1 MB.">
-        <ActionForm path="profile/photo" file fields={[{ name:"photo",label:"Choose a photo",type:"file",required:true }]} submit="Upload photo" refresh={refresh}/>
+        <ActionForm path="profile/photo" file fields={[{ name:"photo",label:"Choose a photo",type:"file",accept:"image/png,image/jpeg,image/webp",required:true }]} submit="Upload photo" refresh={refresh}/>
         {photo&&<Quick path="profile/remove-photo" refresh={refresh}>Remove photo</Quick>}
       </Panel>
       {actor.role!=="guest"&&<Panel title="My compensation">

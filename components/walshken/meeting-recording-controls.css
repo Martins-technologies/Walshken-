@@ -1,0 +1,88 @@
+.recording-policy-form fieldset {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  margin: 0;
+  padding: 10px 12px;
+}
+
+.recording-policy-form legend {
+  font-size: 12px;
+  font-weight: 650;
+  padding-inline: 4px;
+}
+
+.recording-policy-form label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.recording-policy-form input[type="checkbox"] {
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  flex: none;
+}
+
+.recording-policy-form .staff-fields {
+  gap: 14px;
+}
+
+.recording-policy-form .recording-policy-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 12px;
+  background: #edf4ff;
+  color: #1d418d;
+}
+
+.recording-policy-form .recording-policy-main > svg {
+  flex: none;
+  margin-top: 5px;
+}
+
+.recording-policy-form .recording-policy-main p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.recording-policy-form fieldset label {
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 4px 0;
+}
+
+.recording-policy-form fieldset label + label {
+  margin-top: 4px;
+}
+
+.recording-policy-form input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #2654c1;
+}
+
+.recording-policy-form .text-link {
+  font-size: inherit;
+}
+
+.call-live-recording-banner:not(:empty) {
+  padding: 9px 14px;
+  color: #fff3f5;
+  background: #642734;
+}
+
+.call-live-recording-banner .recording-indicator {
+  color: inherit;
+  font-size: 13px;
+}
+
+.call-live-recording-banner .recording-indicator i {
+  flex: none;
+  background: #ff9cae;
+  box-shadow: 0 0 0 4px #ffffff25;
+}
