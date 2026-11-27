@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { meetingLocalCandidates } from "./meeting-time";
+import { privateCalendarFile } from "./private-calendar";
 import { guardClientAppointmentsForStaff } from "./client-appointment-conflicts";
 import { actionScope } from "./staff-authority";
 import { all, audit, cookieValue, datetime, digest, email, fail, id, json, notify, now, one, pick, run, str, timeZone, type Actor, type Db } from "./server";
@@ -348,25 +349,9 @@ async function guestSessionView(db: Db, session: GuestSession) {
 }
 
 function calendarInvitation(session:GuestSession) {
-  const stamp=(value:string)=>new Date(value).toISOString().replace(/[-:]/g,"").replace(/\.\d{3}Z$/,"Z");
-  const escape=(value:string)=>value.replace(/\\/g,"\\\\").replace(/\r\n|[\r\n]/g,"\\n").replace(/[,;]/g,match=>"\\"+match).replace(/[\x00-\x08\x0B-\x1F\x7F]/g,"");
-  const fold=(line:string)=>{
-    const lines=[] as string[];
-    let current="", length=0;
-    for(const symbol of line){
-      const bytes=Buffer.byteLength(symbol);
-      if(length+bytes>75){lines.push(current);current=" ";length=1;}
-      current+=symbol;
-      length+=bytes;
-    }
-    return [...lines,current].join("\r\n");
-  };
-  const uid=createHash("sha256").update(`meeting-calendar-v1:${session.org_id}:${session.id}`).digest("hex");
   const note=`${session.guest_description}\n\nScheduled time zone: ${session.guest_time_zone}\nUse your original secure Walshken invitation to join.`.trim();
-  const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Walshken//Private Meetings//EN","CALSCALE:GREGORIAN","METHOD:PUBLISH","BEGIN:VEVENT",
-    `UID:${uid}@walshken`, `DTSTAMP:${stamp(now())}`, `SEQUENCE:${session.guest_revision}`, `DTSTART:${stamp(session.starts_at)}`, `DTEND:${stamp(session.ends_at)}`,
-    `SUMMARY:${escape(session.title)}`, `DESCRIPTION:${escape(note)}`, "STATUS:CONFIRMED", "CLASS:PRIVATE", "END:VEVENT", "END:VCALENDAR"];
-  return new Response(lines.map(fold).join("\r\n")+"\r\n",{headers:{"Content-Type":"text/calendar; charset=utf-8", "Content-Disposition":'attachment; filename="walshken-meeting.ics"',"Cache-Control":"private, no-store","X-Content-Type-Options":"nosniff"}});
+  return privateCalendarFile({identity:`meeting-calendar-v1:${session.org_id}:${session.id}`,sequence:session.guest_revision,startsAt:session.starts_at,
+    endsAt:session.ends_at,title:session.title,description:note,filename:"walshken-meeting.ics"});
 }
 
 export async function guestMeetingAction(db: Db, request: Request, action: string, data: Record<string,unknown>): Promise<Response> {

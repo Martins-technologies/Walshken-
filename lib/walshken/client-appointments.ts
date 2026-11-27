@@ -2,6 +2,7 @@ import { formatAppointmentTime } from "./client-appointment-time";
 import { clientCaseFor, notifyCaseStaff, recordCaseEvent, staffCaseFor, type ClientCase } from "./client-cases";
 import { startClientCall, type CallViewer } from "./client-calls";
 import { notifyClient } from "./client-notifications";
+import { privateCalendarFile } from "./private-calendar";
 import { scheduledMeetingTime } from "./meeting-invitations";
 import { all, audit, fail, id, integer, json, now, one, pick, run, str, timeZone, type Db } from "./server";
 
@@ -239,13 +240,9 @@ export async function updateClientAppointment(db:Db, viewer:CallViewer, caseId:s
 export async function appointmentCalendar(db:Db,viewer:CallViewer,caseId:string,appointmentId:string) {
   const row=await caseFor(db,viewer,caseId), item=await appointmentById(db,row,appointmentId);
   if (item.status==="Cancelled") return fail(409,"This appointment was cancelled.");
-  const stamp=(value:string)=>value.replace(/[:-]/g,"").replace(/\.\d{3}Z$/,"Z");
-  const content=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Walshken//Client appointments//EN",
-    "BEGIN:VEVENT",`UID:${item.id}@walshken`,`SEQUENCE:${item.revision-1}`,`DTSTAMP:${stamp(now())}`,
-    `DTSTART:${stamp(item.starts_at)}`,`DTEND:${stamp(item.ends_at)}`,"SUMMARY:Walshken consultation",
-    "DESCRIPTION:Sign in to the secure Walshken portal to view or join.", "END:VEVENT","END:VCALENDAR",""].join("\r\n");
-  return new Response(content,{headers:{"Content-Type":"text/calendar; charset=utf-8",
-    "Content-Disposition":"attachment; filename=walshken-consultation.ics","Cache-Control":"private, no-store"}});
+  return privateCalendarFile({identity:"client-appointment:"+item.id,sequence:item.revision-1,startsAt:item.starts_at,
+    endsAt:item.ends_at,title:"Walshken consultation",description:"Sign in to the secure Walshken portal to view or join.",
+    filename:"walshken-consultation.ics"});
 }
 
 export async function maintainClientAppointmentReminders(db:Db, org:string) {

@@ -150,7 +150,10 @@ export async function uploadClientDocument(db:Db,viewer:Viewer,request:Request) 
   if(!newCaseDocument)await scoped(db,viewer,tx=>document(tx,row,documentId));
   const inspected=await checkedFile(db,filename,bytes);
   const versionId=id(),key=`walshken-client/${row.id}/${documentId}/${versionId}`,backend=await clientDocumentBackend(db),uploadedAt=now();
-  await scoped(db,viewer,tx=>run(tx,"INSERT INTO client_upload_pending_objects(storage_key,org_id,customer_id,storage_backend,created_at) VALUES(?,?,?,?,?)",key,row.org_id,row.customer_id,backend,uploadedAt));
+  await scoped(db,viewer,async tx=>{
+    await one(tx,"SELECT id FROM organizations WHERE id=? FOR SHARE",row.org_id);
+    await run(tx,"INSERT INTO client_upload_pending_objects(storage_key,org_id,customer_id,storage_backend,created_at) VALUES(?,?,?,?,?)",key,row.org_id,row.customer_id,backend,uploadedAt);
+  });
   try {
     if(backend==="preview-db")await scoped(db,viewer,tx=>storeClientObject(tx,row.org_id,row.customer_id,key,backend,bytes,inspected.mime));
     else await storeClientObject(db,row.org_id,row.customer_id,key,backend,bytes,inspected.mime);
