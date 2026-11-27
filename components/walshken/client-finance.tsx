@@ -294,7 +294,7 @@ function AgreementResponse({ agreement, busy, answer }: {
     }, () => fetchFinance("/api/customer/reauthenticate", { password }));
     if (!result) passwordInput?.focus();
   }
-  return <form className={styles.form} onSubmit={submit} aria-busy={busy}>
+  return <form method="post" className={styles.form} onSubmit={submit} aria-busy={busy}>
     <h3>{response === "sign" ? "Provide your electronic signature" : "Confirm your decision"}</h3>
     <div className={styles.fields}>
       <label>Name on your verified account<input name="name" autoComplete="name" minLength={2} maxLength={160} required/></label>
@@ -441,7 +441,7 @@ function InvoiceForm({ invoice, pending, save }: {
       items: lines.map(line => ({ description: line.description, quantity: Number(line.quantity), unitMinor: toMinor(line.price), taxBps: toMinor(line.tax) })),
     });
   }
-  return <form className={styles.form} onSubmit={submit} aria-busy={pending}>
+  return <form method="post" className={styles.form} onSubmit={submit} aria-busy={pending}>
     <div className={styles.fields}>
       <label>Legal issuer name<input name="issuerName" maxLength={180} defaultValue={invoice?.issuer_name} required/></label>
       <label>Tax registration number <small>Optional</small><input name="issuerTaxNumber" maxLength={100} defaultValue={invoice?.issuer_tax_number || ""}/></label>
@@ -473,7 +473,7 @@ function InvoiceForm({ invoice, pending, save }: {
 function AgreementForm({ agreement, pending, save }: {
   agreement?: Agreement; pending: boolean; save: (data: Record<string, unknown>) => Promise<unknown>;
 }) {
-  return <form className={styles.form} aria-busy={pending} onSubmit={event => {
+  return <form method="post" className={styles.form} aria-busy={pending} onSubmit={event => {
     event.preventDefault();
     const values = new FormData(event.currentTarget);
     void save({
@@ -573,7 +573,7 @@ export function StaffClientFinance({ caseId }: { caseId: string }) {
       {dialog.type === "agreement-form" && <AgreementForm agreement={dialog.agreement} pending={pending} save={save}/>}
       {dialog.type === "invoice-view" && <InvoiceBreakdown invoice={dialog.invoice}/>}
       {dialog.type === "agreement-view" && <AgreementTerms agreement={dialog.agreement}/>}
-      {decision && "id" in dialog && <form className={styles.form} onSubmit={event => {
+      {decision && "id" in dialog && <form method="post" className={styles.form} onSubmit={event => {
         event.preventDefault();
         void save({ action: dialog.type, id: dialog.id, reason: new FormData(event.currentTarget).get("reason") });
       }}>

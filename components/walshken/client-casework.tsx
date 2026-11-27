@@ -45,7 +45,7 @@ function Controls({ fields, action, label, initial, submit, children }: {
     try { if(await submit(action,{...body,...initial}))form.reset(); }
     finally { setSaving(false); }
   }
-  return <form onSubmit={send} className={styles.form}>
+  return <form method="post" onSubmit={send} className={styles.form}>
     {fields.length>0&&<div className={styles.fields}>{fields.map(field=><FieldInput key={field.name} field={field}/>)}</div>}
     {children}
     <button className="btn btn-blue btn-small" type="submit" disabled={saving}>{saving?"Saving…":label}</button>
@@ -233,7 +233,7 @@ export function ClientCasework() {
         {registry?.canCreate&&<><button type="button" aria-pressed={tab==="registrations"} onClick={()=>setTab("registrations")}>Client registrations</button>
           <button type="button" aria-pressed={tab==="privacy"} onClick={()=>setTab("privacy")}>Privacy and retention</button></>}
       </nav>
-      {(tab==="cases"||tab==="registrations")&&<form className={styles.search} onSubmit={event=>{event.preventDefault();setQuery(find.trim());}}>
+      {(tab==="cases"||tab==="registrations")&&<form method="post" className={styles.search} onSubmit={event=>{event.preventDefault();setQuery(find.trim());}}>
         <label><Search size={17}/><input value={find} onChange={event=>setFind(event.target.value)} type="search" maxLength={100} aria-label="Search client cases" placeholder={tab==="cases"?"Search by reference, case, or client":"Search registrations by name or email"}/></label>
         <button className="btn btn-outline btn-small">Search</button>
       </form>}

@@ -61,7 +61,7 @@ function NewCase({done,cancel}:{done:(id:string)=>void;cancel:()=>void}){
     finally{setBusy(false);}
   }
   return <section className="client-card"><div className="client-card-heading"><div><h2>Start a new case</h2><p>Tell your Walshken team the immigration service you need.</p></div></div>
-    <form className="client-form client-form-grid" onSubmit={submit}>
+    <form method="post" className="client-form client-form-grid" onSubmit={submit}>
       <label>Case title<input name="title" maxLength={160} required/></label>
       <label>Destination country<select name="country" required defaultValue=""><option value="" disabled>Select a country or territory</option>{countries.map(item=><option key={item.code} value={item.code}>{item.name}</option>)}</select></label>
       <label className="client-full">Service or application type<input name="service" maxLength={150} placeholder="For example, study permit" required/></label>
@@ -87,7 +87,7 @@ function Messages({details,refresh}:{details:CaseDetails;refresh:()=>void}) {
     <div className="client-chat">
       {details.messages.length?details.messages.map(item=><article key={item.id} className={item.direction==="Client"?"client-chat-own":"client-chat-received"}><header><strong>{item.direction==="Client"?"You":item.display_name}</strong><small>{dateLabel(item.created_at)}</small></header><p>{item.body}</p></article>):<ClientEmpty title="No messages yet" icon="message"/>}
     </div>
-    {details.case.communication_enabled?<form className="client-form" onSubmit={send}><label>Write a message<textarea value={text} onChange={e=>setText(e.target.value)} maxLength={4000} rows={3} required/></label>
+    {details.case.communication_enabled?<form method="post" className="client-form" onSubmit={send}><label>Write a message<textarea value={text} onChange={e=>setText(e.target.value)} maxLength={4000} rows={3} required/></label>
       {error&&<p className="client-alert" role="alert">{error}</p>}<div><button className="btn btn-blue" disabled={busy||!text.trim()}>Send message <Icon name="send" size={15}/></button></div>
     </form>:<p className="client-inline"><Icon name="lock" size={17}/> Your case team will let you know when messaging is available.</p>}
   </section>;
@@ -267,7 +267,7 @@ function VerifyExisting({email,done}:{email:string;done:()=>void}){
       else {const res=await clientRequest<{challengeId:string;message:string}>("/api/customer/verification",{});setChallenge(res.challengeId);setNotice(res.message);}
     }catch(e){setError((e as Error).message);}finally{setBusy(false);}
   }
-  return <section className="client-card"><div className="client-card-heading"><div><h2>Verify your email to continue</h2><p>A one-time code will be sent to {email}.</p></div></div><form className="client-form" onSubmit={request}>
+  return <section className="client-card"><div className="client-card-heading"><div><h2>Verify your email to continue</h2><p>A one-time code will be sent to {email}.</p></div></div><form method="post" className="client-form" onSubmit={request}>
     {challenge&&<label>One-time code<input name="code" autoComplete="one-time-code" inputMode="numeric" maxLength={6} pattern="[0-9]{6}" required/></label>}
     {notice&&<p role="status" className="client-success">{notice}</p>}{error&&<p className="client-alert" role="alert">{error}</p>}
     <div className="client-form-actions"><button className="btn btn-blue" disabled={busy}>{busy?"Please wait…":challenge?"Verify email":"Send the code"}</button>{challenge&&<button type="button" className="client-text" onClick={()=>setChallenge("")}>Request a new code</button>}</div>

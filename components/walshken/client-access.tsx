@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Brand, Icon } from "./brand";
 import "./client-portal.css";
 
@@ -17,10 +17,12 @@ type AccessReply={challengeId?:string;message?:string;verified?:boolean;resendAf
 export function ClientAccess({mode:initial}:{mode:Mode}){
   const [mode,setMode]=useState(initial),[challenge,setChallenge]=useState(""),[email,setEmail]=useState(""),[busy,setBusy]=useState(false);
   const [notice,setNotice]=useState(""),[error,setError]=useState(""),[visible,setVisible]=useState(false);
+  const [ready,setReady]=useState(false);
+  useEffect(()=>setReady(true),[]);
   const challengeForm=mode==="verify"||mode==="reset-code";
   async function handle(event:FormEvent<HTMLFormElement>){
     event.preventDefault();
-    if(busy)return;
+    if(!ready||busy)return;
     setBusy(true);setError("");setNotice("");
     const form=Object.fromEntries(new FormData(event.currentTarget));
     try{
@@ -37,7 +39,7 @@ export function ClientAccess({mode:initial}:{mode:Mode}){
     finally{setBusy(false);}
   }
   async function resend(){
-    if(busy)return;
+    if(!ready||busy)return;
     setError("");setNotice("");setBusy(true);
     try{
       const response=await clientRequest<AccessReply>("/api/customer/resend",{challengeId:challenge});
@@ -54,7 +56,7 @@ export function ClientAccess({mode:initial}:{mode:Mode}){
       <span className="client-symbol"><Icon name="lock" size={21}/></span>
       <h1 id="client-access-heading">{titles[mode]}</h1>
       <p>{challengeForm?"Use the code sent to your email.":mode==="reset"?"Enter the email address associated with your account.":mode==="register"?"Use an email address you can access for verification.":"Access your cases, documents and updates."}</p>
-      <form className="client-form" key={mode} onSubmit={handle} aria-busy={busy}>
+      <form method="post" className="client-form" key={mode} onSubmit={handle} aria-busy={busy}>
         {mode==="register"&&<label>Full legal name<input name="name" required maxLength={100} autoComplete="name"/></label>}
         {!challengeForm&&<label>Email address<input type="email" name="email" autoComplete="username" autoCapitalize="none" spellCheck={false} defaultValue={email} required maxLength={254}/></label>}
         {challengeForm&&<label>One-time code<input name="code" inputMode="numeric" autoComplete="one-time-code" required pattern="[0-9]{6}" maxLength={6}/></label>}
@@ -62,7 +64,7 @@ export function ClientAccess({mode:initial}:{mode:Mode}){
         {(mode==="register"||mode==="reset-code")&&<label>Confirm password<input type="password" name="confirmPassword" autoComplete="new-password" minLength={12} maxLength={160} required/></label>}
         {error&&<p className="client-alert" role="alert">{error}</p>}
         {notice&&<p className="client-success" role="status">{notice}</p>}
-        <button className="btn btn-blue client-auth-submit" type="submit" disabled={busy}>{busy?"Please wait…":{login:"Sign in",register:"Send verification code",reset:"Send reset code",verify:"Verify and sign in","reset-code":"Save new password"}[mode]}<Icon name="right" size={17}/></button>
+        <button className="btn btn-blue client-auth-submit" type="submit" disabled={!ready||busy}>{busy?"Please wait…":{login:"Sign in",register:"Send verification code",reset:"Send reset code",verify:"Verify and sign in","reset-code":"Save new password"}[mode]}<Icon name="right" size={17}/></button>
       </form>
       <div className="client-auth-links">
        {challengeForm&&<button type="button" className="client-text" disabled={busy||!challenge} onClick={()=>void resend()}>Send another code</button>}

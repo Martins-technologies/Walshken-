@@ -285,7 +285,7 @@ export function ClientCallSettings() {
     {status&&<p className={styles.notice} role="status">{status}</p>}
     {configuration&&!configuration.configured&&<p className={styles.notice}>Connect and test LiveKit in <a href="/staff/integrations">Integrations</a> to receive calls.</p>}
     {!configuration&&!error&&<p className={styles.empty} role="status">Loading company routes…</p>}
-    {editing!==null&&configuration&&<form key={editing} className={styles.settings} onSubmit={event=>void save(event)}>
+    {editing!==null&&configuration&&<form method="post" key={editing} className={styles.settings} onSubmit={event=>void save(event)}>
       <label>Company display name<input name="name" minLength={2} maxLength={100} required defaultValue={current?.name}/></label>
       <label>Route type<select name="kind" defaultValue={current?.kind??"Office"}><option>Office</option><option>Support</option></select></label>
       <label>Assigned receiver<select name="employee" required defaultValue={current?.employee_id??""}><option value="">Choose an employee</option>

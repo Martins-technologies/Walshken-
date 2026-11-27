@@ -156,7 +156,7 @@ function UploadBox({caseId,requests,replacement,selectedRequest,close,updated}:{
   }
   return <section className="client-doc-card client-doc-upload">
     <header><span className="icon-tile"><Icon name="attachment"/></span><div><h3>{replacement?"Submit a replacement":"Submit documents"}</h3><p>{replacement?`The existing version of ${replacement.filename} remains in your case history.`:"Add PDF, JPEG or PNG files. Each file can be up to 3 MB."}</p></div>{replacement&&<button className="btn btn-outline btn-small" type="button" disabled={busy} onClick={close}>Cancel replacement</button>}</header>
-    <form onSubmit={send}>
+    <form method="post" onSubmit={send}>
       {!replacement&&<div className="client-doc-upload-fields">
         <label>Document category<select value={category} onChange={event=>setCategory(event.target.value)} disabled={busy}>{clientDocumentCategories.map(item=><option key={item}>{item}</option>)}</select></label>
         <label>Document request<select value={requirement} onChange={event=>setRequirement(event.target.value)} disabled={busy}><option value="">No specific request</option>{requests.filter(item=>["Open","Submitted","Replacement requested"].includes(item.status)).map(item=><option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
@@ -249,7 +249,7 @@ function ClientCaseDocuments({caseId,staff,onChanged}:{caseId:string;staff:boole
     {viewer&&<SecureDocumentViewer key={viewer.version.id} item={viewer.item} version={viewer.version} caseId={caseId} staff={staff} canDownload={!!data?.canDownload} close={()=>setViewer(null)}/>}
     {action&&<dialog ref={dialog} className="client-doc-dialog" aria-label={labels[action.type]} onCancel={closeAction}>
       <header><div><h2>{labels[action.type]}</h2>{action.item&&<p>{action.item.filename}</p>}</div><button type="button" className="icon-button" aria-label="Close" onClick={closeAction}><Icon name="close"/></button></header>
-      <form className="client-doc-decision" onSubmit={apply}>
+      <form method="post" className="client-doc-decision" onSubmit={apply}>
         {action.type==="policy"?<>
           <label>Retention for new documents (days)<input name="retention" type="number" min={1} max={36500} defaultValue={data?.policy?.retain_days??365} required/></label>
           <label>Reviewed policy basis<textarea name="basis" maxLength={1500} defaultValue={data?.policy?.policy_basis??""} required/></label>

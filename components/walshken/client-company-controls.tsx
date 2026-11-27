@@ -77,7 +77,7 @@ export function ClientCompanyControls({customerId,caseId}:{customerId:string;cas
       <summary>Verify client profile fields</summary>
       <p>Review information against approved evidence. Verified fields require an authorized correction before the client can edit them.</p>
       {!profile?<button className="btn btn-outline btn-small" type="button" disabled={!!busy} onClick={()=>void load()}>{busy==="load"?"Loading…":"Open profile for verification"}</button>:
-        <form className={styles.form} onSubmit={save}>
+        <form method="post" className={styles.form} onSubmit={save}>
           <div className={styles.fields}>
             {Object.entries(labels).filter(([field])=>profile.profile[field]?.length).map(([field,label])=><label key={field} className={styles.choice}>
               <input type="checkbox" checked={field==="email"||fields.includes(field)} disabled={field==="email"||!!busy}
@@ -92,7 +92,7 @@ export function ClientCompanyControls({customerId,caseId}:{customerId:string;cas
     <details className={styles.disclosure}>
       <summary>Publish a client announcement</summary>
       <p>The selected client will see this message in their portal. Optional email alerts include a sign-in link without the announcement text.</p>
-      <form className={styles.form} key={customerId+caseId} onSubmit={publish}>
+      <form method="post" className={styles.form} key={customerId+caseId} onSubmit={publish}>
         {caseId&&<label>Link to the case or notification center<select name="scope" defaultValue="case"><option value="case">This case</option><option value="client">Client notification center</option></select></label>}
         <label>Title<input name="title" required maxLength={150}/></label>
         <label>Client-facing message<textarea name="body" maxLength={600} rows={4} required/></label>

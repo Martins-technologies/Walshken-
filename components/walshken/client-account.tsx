@@ -58,7 +58,7 @@ export function ClientAccount(){
     <section className="client-card"><div className="client-card-heading"><div><h2>Profile completion</h2><p>Based on the required details saved to your account.</p></div><strong>{data.completion}%</strong></div>
       <progress aria-label="Profile completion" value={data.completion} max={100}/><p className="client-small">To change a company-verified field, request a correction in <Link href="/customer/security">Security & privacy</Link>.</p>
     </section>
-    <form key={data.version} onSubmit={save}>
+    <form method="post" key={data.version} onSubmit={save}>
       {groups.map(([title,fields])=><section className="client-card" key={title}><div className="client-card-heading"><h2>{title}</h2></div><div className="client-form client-form-grid">{fields.map(field=><ProfileField key={field} field={field} data={data}/>)}</div></section>)}
       <div className="client-form-actions"><button className="btn btn-blue" disabled={busy}>{busy?"Saving…":"Save profile"}</button>{notice&&<p role="status" className="client-success">{notice}</p>}</div>
     </form>
@@ -109,15 +109,15 @@ export function ClientSecurity({cases,person}:{cases:ClientCase[];person:{email:
     </section>
     <section className="client-card"><div className="client-card-heading"><div><h2>Email & password</h2><p>Signed in as {person.email}</p></div></div>
       <div className="client-form-actions"><Link className="client-text" href="/customer/reset">Reset password <Icon name="right" size={16}/></Link></div>
-      <details className="client-disclosure"><summary>Confirm your password for sensitive actions</summary><form className="client-form" onSubmit={event=>form(event,"/api/customer/reauthenticate")}><label>Password<input name="password" type="password" autoComplete="current-password" required/></label><div><button className="btn btn-blue" disabled={busy}>Confirm password</button></div></form></details>
-      <details className="client-disclosure"><summary>Change password</summary><form className="client-form" onSubmit={event=>form(event,"/api/customer/password",{},()=>window.location.assign("/customer/sign-in"))}>
+      <details className="client-disclosure"><summary>Confirm your password for sensitive actions</summary><form method="post" className="client-form" onSubmit={event=>form(event,"/api/customer/reauthenticate")}><label>Password<input name="password" type="password" autoComplete="current-password" required/></label><div><button className="btn btn-blue" disabled={busy}>Confirm password</button></div></form></details>
+      <details className="client-disclosure"><summary>Change password</summary><form method="post" className="client-form" onSubmit={event=>form(event,"/api/customer/password",{},()=>window.location.assign("/customer/sign-in"))}>
         <label>Current password<input name="currentPassword" type="password" autoComplete="current-password" required maxLength={160}/></label>
         <label>New password<input name="newPassword" type="password" autoComplete="new-password" required minLength={12} maxLength={160}/></label>
         <label>Confirm new password<input name="confirmPassword" type="password" autoComplete="new-password" required minLength={12} maxLength={160}/></label>
         <div><button className="btn btn-blue" disabled={busy}>Change password and sign out</button></div>
       </form></details>
       <details className="client-disclosure"><summary>Change email address</summary>
-        <form className="client-form" key={emailChallenge||"init"} onSubmit={event=>form(event,emailChallenge?"/api/customer/email-change-verify":"/api/customer/email-change",emailChallenge?{challengeId:emailChallenge}:{},data=>{setEmailChallenge(data.challengeId??"");if(emailChallenge)window.location.reload();})}>
+        <form method="post" className="client-form" key={emailChallenge||"init"} onSubmit={event=>form(event,emailChallenge?"/api/customer/email-change-verify":"/api/customer/email-change",emailChallenge?{challengeId:emailChallenge}:{},data=>{setEmailChallenge(data.challengeId??"");if(emailChallenge)window.location.reload();})}>
           {emailChallenge?<label>One-time code<input name="code" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" required/></label>:<>
             <label>New email address<input name="newEmail" type="email" maxLength={254} required/></label>
             <label>Current password<input name="currentPassword" type="password" autoComplete="current-password" required/></label>
@@ -131,7 +131,7 @@ export function ClientSecurity({cases,person}:{cases:ClientCase[];person:{email:
       <div className="client-form-actions"><button className="btn btn-outline" disabled={busy||decision?.decision==="Accepted"} onClick={()=>void send("/api/client-cases",{action:"consent",decision:"Accepted",policyRevision:privacy.privacyPolicy?.id})}>Record consent</button><button className="client-text" disabled={busy||decision?.decision!=="Accepted"} onClick={()=>void send("/api/client-cases",{action:"consent",decision:"Withdrawn",policyRevision:privacy.privacyPolicy?.id})}>Withdraw consent</button>{decision&&<span className="client-badge">{decision.decision} · {dateLabel(decision.created_at)}</span>}</div></>:<p className="client-small">No privacy notice has been published. You can still submit a privacy request.</p>}
     </section>
     <section className="client-card"><div className="client-card-heading"><div><h2>Privacy requests</h2><p>Request a copy, correction, deletion or account closure for company review.</p></div></div>
-      <form className="client-form client-form-grid" onSubmit={event=>form(event,"/api/client-cases",{action:"privacy-request"})}>
+      <form method="post" className="client-form client-form-grid" onSubmit={event=>form(event,"/api/client-cases",{action:"privacy-request"})}>
        <label>Request type<select name="type" value={requestType} onChange={e=>setRequestType(e.target.value)}>{["Data access","Data export","Document deletion","Account closure","Correction"].map(type=><option key={type}>{type}</option>)}</select></label>
        <label>Case scope<select name="case" required={requestType==="Document deletion"} defaultValue=""><option value="">Entire account</option>{cases.map(item=><option value={item.id} key={item.id}>{item.reference} · {item.title}</option>)}</select></label>
        <label className="client-full">Request details<textarea name="reason" rows={3} maxLength={2000} required/></label>
