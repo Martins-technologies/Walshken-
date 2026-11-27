@@ -1,9 +1,12 @@
+import { ClientPage } from "@/components/walshken/client-page";
+import { clientPortalEnabled } from "@/lib/walshken/client-feature";
 import { CustomerDashboard, requireCustomerPage } from "@/components/walshken/customer-pages";
 import { CustomerForm } from "@/components/walshken/customer-form";
 
 export const metadata = { title: "Customer profile" };
 
 export default async function CustomerProfile() {
+  if (clientPortalEnabled()) return <ClientPage section="profile"/>;
   const { customer } = await requireCustomerPage();
   return <CustomerDashboard current="profile" title="Profile" description="Manage your name and password.">
     <div className="customer-profile-grid">

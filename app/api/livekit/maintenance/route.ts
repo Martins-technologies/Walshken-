@@ -1,4 +1,9 @@
 import {processInternalMeetingReminders} from "@/lib/walshken/meeting-invitations";
+import { maintainClientCalls } from "@/lib/walshken/client-calls";
+import { clientPortalEnabled } from "@/lib/walshken/client-feature";
+import { maintainClientDocuments } from "@/lib/walshken/client-documents";
+import { processClientNotificationEmails } from "@/lib/walshken/client-notifications";
+import { purgeExpiredClientChallenges } from "@/lib/walshken/client-auth";
 import {processMeetingInvitationEmails} from "@/lib/walshken/meeting-invitation-email";
 import {maintainProjects} from "@/lib/walshken/projects";
 import {processNotificationEmails} from "@/lib/walshken/notification-email";
@@ -16,10 +21,16 @@ export async function GET(request:Request){
     const result=await maintainMeetings(db);
     const projects=await maintainProjects(db);
     const meetingReminders=await processInternalMeetingReminders(db,orgId);
+    const clientPortal = clientPortalEnabled() ? {
+      calls: await maintainClientCalls(db,orgId),
+      documents: await maintainClientDocuments(db,orgId),
+      expiredChallenges: await purgeExpiredClientChallenges(db),
+      notifications: await processClientNotificationEmails(db,Math.max(0,Math.min(8500,41000-(Date.now()-started)))),
+    } : undefined;
     const [notificationEmails,meetingInvitationEmails]=await Promise.all([
       processNotificationEmails(db,Math.max(0,Math.min(12000,45000-(Date.now()-started)))),
       processMeetingInvitationEmails(db,Math.max(0,Math.min(11000,45000-(Date.now()-started)))),
     ]);
-    return json({...result,projects,meetingReminders,notificationEmails,meetingInvitationEmails},result.errors.length?503:200);
+    return json({...result,projects,meetingReminders,notificationEmails,meetingInvitationEmails,clientPortal},result.errors.length?503:200);
   }catch(error){return handleError(error);}
 }

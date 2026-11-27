@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+import { clientPortalEnabled } from "@/lib/walshken/client-feature";
 import { CustomerDashboard, requireCustomerPage } from "@/components/walshken/customer-pages";
 import { CustomerForm } from "@/components/walshken/customer-form";
 import { countries } from "@/lib/walshken/catalog";
@@ -6,6 +8,7 @@ import { id, loadCatalog } from "@/lib/walshken/server";
 export const metadata = { title: "New customer request" };
 
 export default async function NewCustomerRequest() {
+  if (clientPortalEnabled()) redirect("/customer/cases");
   const [{ customer }, catalog] = await Promise.all([requireCustomerPage(), loadCatalog()]);
   return <CustomerDashboard current="new" title="New request" description="Tell us what you need and where you need support.">
     <section className="customer-panel customer-form-panel" aria-label="New inquiry">

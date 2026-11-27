@@ -22,7 +22,20 @@ async function retainedObjects(db:Db){
 }
 
 export async function verifyStorageRotation(db:Db,key:string,value:RecordingStorage,enabled:boolean){
- const next=validateStorage(value),retained=await retainedObjects(db);
+ const next=validateStorage(value);
+ if(key==="client-document-storage"){
+  const exists=await one<{versions:boolean;staged:boolean}>(db,"SELECT to_regclass('client_document_versions') IS NOT NULL AS versions,to_regclass('client_upload_pending_objects') IS NOT NULL AS staged");
+  const retained=!!(exists?.versions&&await one(db,"SELECT v.id FROM client_document_versions v JOIN client_documents d ON d.id=v.document_id WHERE d.deleted_at IS NULL AND v.storage_backend='s3' LIMIT 1")||exists?.staged&&await one(db,"SELECT storage_key FROM client_upload_pending_objects WHERE storage_backend='s3' LIMIT 1"));
+  const saved=await integrationSettings(db,key,false),prior=saved?validateStorage(saved as RecordingStorage):null;
+  if(retained&&(!prior||!sameLocation(prior,next)))return fail(409,"Retained client files require their existing storage location. Rotate credentials for the same bucket or complete a planned migration.");
+  for(const key of ["recording-storage",process.env.WALSHKEN_DOCUMENT_STORAGE_ID??"document-storage"]){
+   const setting=await integrationSettings(db,key,false);
+   if(setting&&sameLocation(validateStorage(setting as RecordingStorage),next))return fail(400,"Choose a separate private bucket for client documents.");
+  }
+  if(enabled||retained)await verifyRecordingStorage(next);
+  return;
+ }
+ const retained=await retainedObjects(db);
  const saved=await integrationSettings(db,key,false);
  const current=saved?validateStorage(saved as RecordingStorage):null;
  const documentKey=process.env.WALSHKEN_DOCUMENT_STORAGE_ID??'document-storage';

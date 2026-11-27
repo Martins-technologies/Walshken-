@@ -1,0 +1,205 @@
+.client-doc-shell {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  color: #172642;
+}
+.client-doc-card {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  border: 1px solid #dde6f3;
+  border-radius: 16px;
+  background: #fff;
+  padding: clamp(14px, 2.1vw, 25px);
+}
+.client-doc-card header,
+.client-doc-dialog header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.client-doc-card header > div,
+.client-doc-dialog header > div {
+  min-width: 0;
+  flex: 1;
+}
+.client-doc-card h3,
+.client-doc-dialog h2 {
+  margin: 0;
+  font-weight: 750;
+  letter-spacing: -.025em;
+}
+.client-doc-card h3 { font-size: 17px; }
+.client-doc-card header p,
+.client-doc-dialog header p,
+.client-doc-empty {
+  margin: 5px 0 0;
+  font-size: 13px;
+  color: #52617a;
+}
+.client-doc-upload form,
+.client-doc-decision {
+  display: grid;
+  gap: 14px;
+}
+.client-doc-upload form > button,
+.client-doc-decision form > button,
+.client-doc-decision > button { justify-self: start; }
+.client-doc-upload-fields {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 12px;
+}
+.client-doc-upload-fields > label:last-child { grid-column: 1/-1; }
+.client-doc-upload-fields label,
+.client-doc-decision label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-weight: 640;
+  font-size: 13px;
+}
+.client-doc-upload-fields label > span { font-weight: 450; color: #586982; }
+.client-doc-upload-fields select,
+.client-doc-upload-fields textarea,
+.client-doc-decision select,
+.client-doc-decision textarea,
+.client-doc-decision input:not([type=checkbox]),
+.client-scan-dialog footer select {
+  width: 100%;
+  border: 1px solid #d7e2f3;
+  border-radius: 8px;
+  min-height: 43px;
+  padding: 8px 10px;
+  background: #f8faff;
+  color: #172642;
+}
+.client-doc-decision .client-doc-check,
+.client-doc-dialog footer label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-weight: 550;
+  font-size: 13px;
+}
+.client-doc-drop {
+  display: grid;
+  gap: 9px;
+  justify-items: center;
+  padding: 17px 12px;
+  text-align: center;
+  border: 1px dashed #9bb4de;
+  border-radius: 12px;
+  background: #f5f8ff;
+}
+.client-doc-drop.drag-over { background: #dbe8ff; }
+.client-doc-drop > div,
+.client-doc-row-actions,
+.client-doc-dialog footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px 10px;
+}
+.client-doc-drop input[hidden] { display: none; }
+.client-doc-list,
+.client-doc-queue { list-style: none; padding: 0; margin: 0; }
+.client-doc-list > li,
+.client-doc-queue > li {
+  display: flex;
+  gap: 8px 12px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  border-top: 1px solid #e5ebf5;
+  padding: 12px 0;
+}
+.client-doc-list > li:first-child,
+.client-doc-queue > li:first-child { border-top: 0; }
+.client-doc-list > li > div:first-child,
+.client-doc-queue > li > div:first-child { flex: 1 0 min(180px,100%); min-width: 0; }
+.client-doc-list strong,
+.client-doc-list small,
+.client-doc-queue strong,
+.client-doc-queue small { display: block; overflow-wrap: anywhere; }
+.client-doc-list small,
+.client-doc-queue small { margin-top: 2px; color: #52617a; font-size: 12px; }
+.client-doc-queue .client-doc-file-error { color: #a1283b; }
+.client-doc-queue progress { display: block; width: min(230px,100%); accent-color: #2458df; margin-top: 4px; }
+.client-doc-tag { display: inline-block; border-radius: 999px; padding: 4px 8px; font-size: 11px; font-weight: 650; line-height: 1.35; background: #edf3ff; color: #214589; }
+.client-doc-list > .client-doc-record {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.client-doc-record-head { display: flex; gap: 10px; align-items: flex-start; justify-content: space-between; }
+.client-doc-record-head > div { min-width: 0; }
+.client-doc-record-head > span { flex: none; max-width: 38%; }
+.client-doc-row-actions .text-link { border: 0; padding: 7px; background: transparent; font-size: 12px; }
+.client-doc-history {
+  background: #f5f8ff;
+  padding: 11px;
+  border-radius: 10px;
+  display: grid;
+  gap: 10px;
+}
+.client-doc-history > div { display: flex; align-items: center; justify-content: space-between; gap: 9px; flex-wrap: wrap; }
+.client-doc-history > div > span { min-width: 0; }
+.client-doc-history ul { padding-left: 19px; }
+.client-doc-history details > summary { cursor: pointer; }
+.client-doc-status { background: #eef4ff; padding: 11px 14px; border-radius: 10px; color: #244786; }
+.client-doc-dialog {
+  width: min(660px,calc(100% - 18px));
+  max-height: 92dvh;
+  border: 1px solid #d9e3f4;
+  border-radius: 16px;
+  padding: clamp(14px,2.5vw,24px);
+  color: #172642;
+  background: #fff;
+  overflow: auto;
+  overscroll-behavior: contain;
+  box-shadow: 0 20px 70px #071f5945;
+}
+.client-doc-dialog::backdrop { background: #101f3d9e; backdrop-filter: blur(3px); }
+.client-doc-dialog header { margin-bottom: 14px; }
+.client-doc-dialog header h2 { font-size: 23px; overflow-wrap: anywhere; }
+.client-doc-dialog footer { margin-top: 11px; }
+.client-doc-dialog footer > label select { min-width: 100px; }
+.client-secure-doc { width: min(835px,calc(100% - 18px)); }
+.client-doc-pages { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; font-variant-numeric: tabular-nums; }
+.client-doc-mask {
+  margin: 0;
+  background: #eaf0fa;
+  border: 1px solid #d5e0f2;
+  border-radius: 12px;
+  min-height: 28vh;
+  max-height: 60dvh;
+  overflow: auto;
+  color: #284577;
+  user-select: none;
+}
+.client-doc-mask > div { display: grid; justify-items: center; gap: 8px; padding: 40px 15px; text-align: center; }
+.client-doc-mask > img { display: block; margin: 0 auto; width: min(100%,650px); }
+.client-doc-safety { color: #52617a; font-size: 12px; margin-top: 11px; }
+.client-scan-frame { position: relative; width: fit-content; max-width: 100%; margin: 0 auto 14px; }
+.client-scan-frame canvas { display: block; max-width: 100%; width: auto; max-height: 54dvh; border-radius: 5px; }
+.client-scan-shade { position: absolute; inset: 0; background: #4278fb2a; pointer-events: none; }
+.client-scan-corner { position: absolute; inline-size: 28px; block-size: 28px; transform: translate(-50%,-50%); border-radius: 50%; border: 3px solid #fff; background: #2054ce; box-shadow: 0 1px 6px #11274e80; touch-action: none; }
+.client-doc-dialog input[type=checkbox] { accent-color: #2458df; }
+@media (max-width: 540px) {
+  .client-doc-card header { flex-wrap: wrap; }
+  .client-doc-card header > button { margin-left: 58px; }
+  .client-doc-upload-fields { grid-template-columns: minmax(0,1fr); }
+  .client-doc-upload-fields select,
+  .client-doc-upload-fields textarea,
+  .client-doc-decision select,
+  .client-doc-decision textarea,
+  .client-doc-decision input:not([type=checkbox]) { font-size: 16px; }
+  .client-doc-record-head { flex-wrap: wrap; }
+  .client-doc-record-head > div { flex-basis: 100%; }
+  .client-doc-record-head > span { max-width: 100%; }
+  .client-doc-mask { max-height: 57dvh; }
+}
+@media print {
+  .client-secure-doc, .client-doc-mask { display: none !important; }
+}

@@ -1,3 +1,5 @@
+import { ClientPage } from "@/components/walshken/client-page";
+import { clientPortalEnabled } from "@/lib/walshken/client-feature";
 import Link from "next/link";
 import { CustomerDashboard, requireCustomerPage } from "@/components/walshken/customer-pages";
 import { Icon } from "@/components/walshken/brand";
@@ -7,7 +9,8 @@ import { customerInquiries } from "@/lib/walshken/customer";
 export const metadata = { title: "My requests" };
 const formatDate = new Intl.DateTimeFormat("en", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
-export default async function CustomerPage({ searchParams }: { searchParams: Promise<{ page?: string; sent?: string }> }) {
+export default async function CustomerPage({ searchParams }: { searchParams: Promise<{ page?: string; sent?: string; legacy?: string }> }) {
+  if (clientPortalEnabled() && (await searchParams).legacy !== "1") return <ClientPage section="overview"/>;
   const [{ db, customer }, query] = await Promise.all([requireCustomerPage(), searchParams]);
   const requestedPage = Number(query.page);
   const page = Number.isSafeInteger(requestedPage) && requestedPage > 0 && requestedPage <= 1000 ? requestedPage : 1;
@@ -39,8 +42,8 @@ export default async function CustomerPage({ searchParams }: { searchParams: Pro
         </details>)}
       </div>
       {(page > 1 || inquiries.length > 20) && <nav className="customer-pagination" aria-label="Request history pages">
-        {page > 1 && <Link className="text-link" href={`/customer?page=${page - 1}`}>Previous</Link>}
-        {inquiries.length > 20 && page < 1000 && <Link className="text-link" href={`/customer?page=${page + 1}`}>Next</Link>}
+        {page > 1 && <Link className="text-link" href={`/customer?page=${page - 1}${query.legacy ? "&legacy=1" : ""}`}>Previous</Link>}
+        {inquiries.length > 20 && page < 1000 && <Link className="text-link" href={`/customer?page=${page + 1}${query.legacy ? "&legacy=1" : ""}`}>Next</Link>}
       </nav>}
     </section>
   </CustomerDashboard>;

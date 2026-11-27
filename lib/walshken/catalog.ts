@@ -46,6 +46,9 @@ export const messageReactions = ["👍","❤️","🎉","✅","👀"] as const;
 export const taskStatuses = ["Not Started", "In Progress", "Waiting for Review", "On Hold", "Completed", "Cancelled"] as const;
 
 export const providers = [
+  { id: "client-document-storage", name: "Private client document storage", category: "Document management", description: "A private client-only bucket for immigration originals and versions.", fields: [["endpoint", "S3 endpoint"], ["region", "Region"], ["bucket", "Private client bucket"], ["accessKey", "S3 access key"], ["secretKey", "S3 secret key"]] },
+  { id:"stripe", name:"Stripe", category:"Client billing", description:"Use Stripe-hosted checkout. Register the client finance webhook in Stripe and provide its signing secret. Preview accepts sandbox keys only.", fields:[["apiKey","Stripe secret API key"],["webhookSecret","Stripe endpoint signing secret"]] },
+
   { id: "document-storage-review", name: "Private document storage", category: "Document management", description: "A separate private bucket for documents. Access is checked by the portal on every request.", fields: [["endpoint", "S3 endpoint"], ["region", "Region"], ["bucket", "Private bucket name"], ["accessKey", "S3 access key"], ["secretKey", "S3 secret key"]] },
   { id: "livekit", name: "LiveKit", category: "Video & audio", description: "Secure browser calls, meetings, screen sharing and verified attendance.", fields: [["url", "LiveKit WebSocket URL"], ["apiKey", "API key"], ["apiSecret", "API secret"]] },
   { id: "recording-storage", name: "Private recording storage", category: "Meeting recordings", description: "Private Supabase, S3 or R2 bucket. Credentials stay encrypted on the server.", fields: [["endpoint", "S3 endpoint"], ["region", "Region"], ["bucket", "Private bucket name"], ["accessKey", "S3 access key"], ["secretKey", "S3 secret key"]] },
@@ -57,6 +60,7 @@ export const providers = [
 
 export const staffNav = [
   { title: "Workspace", items: [["dashboard", "Overview", "layout"], ["messages", "Messages", "message"], ["calls", "Calls & meetings", "video"], ["tasks", "My tasks", "check"], ["projects", "Projects", "project"], ["calendar", "Calendar", "calendar"]] },
+  { title: "Client services", items: [["client-casework", "Client casework", "briefcase"]] },
   { title: "People & time", items: [["attendance", "Attendance", "clock"], ["shifts", "Shifts", "shift"], ["timesheets", "Timesheets", "list"], ["salary", "Salary & payslips", "wallet"], ["holiday-calendar", "Holiday calendar", "calendar"], ["leave", "Leave requests", "leave"], ["documents", "Documents", "file"], ["directory", "Team directory", "users"], ["notifications", "Notifications", "bell"], ["profile", "My profile", "user"], ["privacy", "Privacy & records", "shield"]] },
 ] as const;
 

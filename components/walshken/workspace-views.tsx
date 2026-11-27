@@ -1,4 +1,5 @@
 "use client";
+import {ClientCasework} from "./client-casework";
 import {ProjectsWorkspace,type ProjectsData} from "./projects";
 import {StaffPrivacy,type PrivacyData} from "./staff-privacy";
 import {StaffCalendar} from "./staff-calendar";
@@ -20,7 +21,7 @@ import type { SiteCatalog } from "@/lib/walshken/public-catalog";
 import type { Viewer } from "./workspace";
 import { ActionForm, api, dateText, Disclosure, Empty, hours, initials, money, options, Panel, Quick, Status, Table, value, type Field, type RecordRow } from "./ui";
 
-export type ViewData = {
+export type ViewData = {clientBilling?:boolean;
   managedProjects?:boolean;
   unreadUpdates?:number; managedWorktime?:boolean;
   management?:{people?:RecordRow|null;attendance?:RecordRow|null;work?:RecordRow|null;security?:RecordRow|null}|null;
@@ -283,6 +284,7 @@ export function WorkspaceViews({section,actor,allowed,data,refresh,setQuery}:{se
   if(data.managedHolidays)return <HolidayWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedPayroll)return <PayrollWorkspace actor={actor} data={data} refresh={refresh} setQuery={setQuery}/>;
   if(data.managedWorkforce)return <WorkforceWorkspace section={section} actor={actor} initial={data}/>;
+  if(section==="client-casework")return <ClientCasework/>;
   if(section==="privacy")return <StaffPrivacy data={data as PrivacyData} refresh={refresh}/>;
   if(section==="dashboard")return <Overview actor={actor} allowed={allowed} data={data} refresh={refresh}/>;
   if(section==="tasks")return data.managedTasks?<TaskWorkspace actor={actor} initial={data}/>:<Tasks actor={actor} data={data} refresh={refresh}/>;

@@ -3,6 +3,11 @@ import { spawnSync } from "node:child_process";
 const readiness = { WALSHKEN_TEST_READINESS: "1", WALSHKEN_TEST_EMPLOYMENT: "1" };
 const enterprise = { ...readiness, WALSHKEN_TEST_ENTERPRISE: "1", WALSHKEN_TEST_ENTERPRISE_ONLY: "1" };
 const suites = {
+  "client-cases": ["tests/verify-client-cases.mjs"],
+  "client-calls": ["tests/verify-client-calls.mjs"],
+  "client-documents": ["tests/verify-client-documents.mjs"],
+  "client-finance": ["tests/verify-client-finance.mjs"],
+  "client-identity": ["tests/verify-client-identity.mjs"],
   "public-seo": ["tests/verify-public-seo.mjs"],
   staff: ["tests/verify-staff.mjs"],
   "management-teams": ["tests/verify-staff.mjs", { WALSHKEN_TEST_MANAGEMENT_TEAMS: "1" }],

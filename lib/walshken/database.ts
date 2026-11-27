@@ -23,15 +23,30 @@ export function databaseAtCapacity(error: unknown) {
 }
 
 async function connect(pool: Pool) {
+  async function acquire() {
+    const client = await pool.connect();
+    if (process.env.VERCEL_ENV !== "preview" || process.env.WALSHKEN_CLIENT_PORTAL_ENABLED !== "1") return client;
+    try {
+      const {rows: [scope]} = await client.query("SELECT current_schema() AS schema_name, current_user AS login_name");
+      const expected = process.env.WALSHKEN_CLIENT_PREVIEW_SCHEMA;
+      if (!expected || scope?.schema_name !== expected || scope?.login_name !== `${expected}_runtime`) {
+        throw new Error("Client Portal Preview is missing an isolated database connection");
+      }
+      return client;
+    } catch (error) {
+      client.release(true);
+      throw error;
+    }
+  }
   for (const delay of [250, 750, 1_500]) {
     try {
-      return await pool.connect();
+      return await acquire();
     } catch (error) {
       if (!databaseAtCapacity(error)) throw error;
       await wait(delay + Math.floor(Math.random() * 250));
     }
   }
-  return pool.connect();
+  return acquire();
 }
 
 function postgresAdapter(pool: Pool): Adapter {

@@ -1,0 +1,16 @@
+.panel {display:grid;align-content:start;gap:12px;padding:18px;border:1px solid #d8e4f2;border-radius:13px;background:#fff;min-width:0}
+.panel h3 {display:flex;align-items:center;gap:8px;margin:0;font-size:1rem;color:#172b48}
+.panel h3 svg {color:#194cab;flex:none}
+.disclosure {border:1px solid #d8e4f2;border-radius:9px;padding:12px;color:#243c5d;background:#f9fbff}
+.disclosure summary {cursor:pointer;font-weight:700}
+.disclosure p {margin:10px 0;color:#465c79;font-size:.88rem;line-height:1.5}
+.form {display:grid;gap:12px;margin-top:12px}
+.form>label {display:grid;gap:5px;font-size:.86rem;font-weight:690}
+.form :is(input:not([type="checkbox"]),textarea,select){width:100%;min-height:42px;padding:8px;border:1px solid #a7bbd5;border-radius:7px;background:#fff;color:#172b48;font:inherit}
+.form :is(input,textarea,select):focus-visible,.disclosure summary:focus-visible {outline:2px solid #2362bd;outline-offset:2px}
+.fields {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,175px),1fr));gap:8px}
+.choice {display:flex;align-items:start;gap:7px;padding:8px;border:1px solid #deebf6;border-radius:7px;background:#fff;font-size:.8rem}
+.choice input{margin-top:4px}
+.value {display:block;color:#465c79;white-space:pre-wrap;overflow-wrap:anywhere}
+.error,.success{margin:0;padding:8px 10px;border-radius:7px;font-size:.86rem}
+.error{background:#fff0f2;color:#842537}.success{background:#eaf6f0;color:#145037}

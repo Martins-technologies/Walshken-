@@ -1,3 +1,5 @@
+import {clientPortalEnabled} from "./client-feature";
+import {validateStripeSettings,verifyStripeConnection} from "./client-finance-payments";
 import {requireEmployeeAction,requireOrganizationAction} from './staff-authority';
 import {managementTeamsEnabled,organizationMembershipAction} from './staff-unit-memberships';
 import {integrationSettings} from "./integration-settings";
@@ -363,12 +365,18 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     await throttle(db,`integration-test:${actor.id}`,12,60000);
     const provider=providers.find(provider=>provider.id===data.provider);
     if(!provider)return fail(400,'Choose a registered integration.');
+    if(provider.id==='stripe'&&!clientPortalEnabled())return fail(404,'Client billing is unavailable.');
     const key=provider.id==='payroll-calculator-review'?calculatorIntegrationId():provider.id;
     const settings=await integrationSettings(db,key);
     if(!settings)return fail(409,'Save and enable this integration before testing it.');
     try{
+      if(provider.id==='stripe'){
+        await verifyStripeConnection(settings);
+        await audit(db,actor,'Integration connection test succeeded','integration',key).run();
+        return json({ok:true,message:'Stripe accepted the API key. A verified webhook delivery checks the signing secret separately.'});
+      }
       if(provider.id==='livekit')await verifyLiveKitConnection(settings as LiveKitSettings);
-      else if(['recording-storage','document-storage-review'].includes(provider.id))await verifyRecordingStorage(settings as RecordingStorage);
+      else if(['recording-storage','document-storage-review','client-document-storage'].includes(provider.id))await verifyRecordingStorage(settings as RecordingStorage);
       else if(provider.id==='payroll-calculator-review')await verifyCalculatorConnection(settings as CalculatorSettings);
       else if(provider.id==='malware-scanner')await verifyScanner(settings as {endpoint:string;apiKey:string});
       else return fail(409,'This provider requires a recipient-specific delivery test.');
@@ -385,10 +393,18 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
     const provider = providers.find((item) => item.id === data.provider);
     if (!provider) return fail(400,"Choose a listed integration.");
     const integrationId = provider.id==="payroll-calculator-review" ? calculatorIntegrationId() : provider.id;
+    if(provider.id==="stripe"){
+      if(!clientPortalEnabled())return fail(404,"Client billing is unavailable.");
+      if(await one(db,"SELECT id FROM client_payments WHERE org_id=? AND status IN ('Creating','Pending','Processing') LIMIT 1",actor.org_id)){
+        return fail(409,"Resolve open Stripe payment attempts before rotating or disabling the connection.");
+      }
+    }
+
     if(provider.id==="document-storage-review"){
       if(!documentsEnabled())return fail(404,"Document storage is not enabled on this deployment.");
     }
     if(provider.id==="livekit"&&await one(db,"SELECT id FROM meetings WHERE provider='livekit' AND provider_room IS NOT NULL AND ended_at IS NULL AND cancelled_at IS NULL LIMIT 1"))return fail(409,"End active LiveKit meetings before changing the connection.");
+    if(provider.id==="livekit"&&clientPortalEnabled()&&await one(db,"SELECT id FROM client_calls WHERE org_id=? AND room_created_at IS NOT NULL AND room_closed_at IS NULL LIMIT 1",actor.org_id))return fail(409,"End active client calls and let their rooms close before changing the LiveKit connection.");
     if(provider.id==="livekit"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Wait for recordings to finish before changing the LiveKit connection.");
     if(provider.id==="recording-storage"&&action==="save"&&await one(db,"SELECT id FROM meeting_recordings WHERE status IN ('Starting','Active','Stopping') LIMIT 1"))return fail(409,"Stop active recordings before rotating storage credentials.");
     if (action === "disable") {
@@ -405,13 +421,17 @@ export async function adminAction(db: Db, actor: Actor, area: string, action: st
       validateLiveKit(settings as LiveKitSettings);
       if(data.enabled==="1") await verifyLiveKitConnection(settings as LiveKitSettings);
     }
-    if(provider.id==="recording-storage"||provider.id==="document-storage-review") {
+    if(["recording-storage","document-storage-review","client-document-storage"].includes(provider.id)) {
       validateStorage(settings as RecordingStorage);
-      if(provider.id==="document-storage-review"&&settings.bucket==="walshken-call-recordings")return fail(400,"Use a separate private document bucket.");
+      if(["document-storage-review","client-document-storage"].includes(provider.id)&&settings.bucket==="walshken-call-recordings")return fail(400,"Use a separate private document bucket.");
       await verifyStorageRotation(db,integrationId,settings as RecordingStorage,data.enabled==="1");
     }
     if(provider.id==="payroll-calculator-review"){if(!payrollEnabled())return fail(404,"Payroll is not enabled here.");validateCalculatorSettings(settings as CalculatorSettings);if(data.enabled==="1")await verifyCalculatorConnection(settings as CalculatorSettings);}
     if (provider.id==="resend") validateEmailSettings(settings as {apiKey:string;from:string});
+    if (provider.id==="stripe") {
+      validateStripeSettings(settings);
+      if(data.enabled==="1")await verifyStripeConnection(settings);
+    }
     if (provider.id==="malware-scanner" && data.enabled==="1") await verifyScanner(settings as {endpoint:string;apiKey:string});
     const protectedValue = await encryptSettings(integrationId, settings);
     await db.batch([

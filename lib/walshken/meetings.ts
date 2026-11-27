@@ -1,4 +1,6 @@
 import { ParticipantInfo_Kind } from "@livekit/protocol";
+import { clientCallWebhook, isClientCallRoom } from "./client-calls";
+import { clientPortalEnabled } from "./client-feature";
 import { EgressStatus, EncodedFileType, FileOutput, Output, S3Upload, StartEgressRequest, StorageConfig, TemplateSource, WebhookReceiver, type EgressInfo } from "livekit-server-sdk";
 import { teamOptions } from "./collaboration";
 import { deleteRecordingObject, egressClient, isMissing, liveKitSettings, participantToken, providerCall, publishSources, recordingStorage, roomClient, signedRecording } from "./livekit";
@@ -524,6 +526,7 @@ export async function liveKitWebhook(db:Db,request:Request){
   try{event=await new WebhookReceiver(settings.apiKey,settings.apiSecret).receive(raw,request.headers.get("authorization")??"");}catch{return fail(401,"Invalid LiveKit webhook signature.");}
   const room=event.room?.name??event.egressInfo?.roomName;
   if(!event.id||!room)return json({ok:true});
+  if(isClientCallRoom(room))return clientPortalEnabled()?clientCallWebhook(db,event,room,settings):json({ok:true});
   const found=await one<Meeting>(db,"SELECT * FROM meetings WHERE provider='livekit' AND provider_room=?",room);if(!found)return json({ok:true});
   await db.transaction(async tx=>{
     const m=await one<Meeting>(tx,"SELECT * FROM meetings WHERE id=? FOR UPDATE",found.id);if(!m)return;

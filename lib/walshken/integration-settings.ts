@@ -1,6 +1,6 @@
 import {all,decryptSettings,fail,one,type Db,type Row} from './server';
 
-const serverProviders=new Set(['livekit','recording-storage','document-storage-review']);
+const serverProviders=new Set(['livekit','recording-storage','document-storage-review','client-document-storage']);
 function serverSettings():Record<string,Record<string,string>>{
  const raw=process.env.WALSHKEN_SERVER_INTEGRATIONS;
  if(!raw)return {};

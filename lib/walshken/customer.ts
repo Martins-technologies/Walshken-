@@ -1,58 +1,49 @@
 import { randomBytes } from "node:crypto";
+import { clientPortalEnabled } from "./client-feature";
+import { makeClientPassword, readClientPassword, registerClient, signInClient } from "./client-auth";
+import { clientSecurityEvent, clientSessionResponse, customerCookie, customerSessionSeconds, endClientSessions, rawClientSession, signOutClient, validCustomerToken, type Customer } from "./client-sessions";
+import { updateCustomerProfile } from "./client-profile";
 import { passwordHash, passwordMatches } from "./passwords";
 import {
-  all, cookieValue, country, digest, email, fail, id, json, loadCatalog, now, one, run, sessionSet, str, throttle,
+  all, country, digest, email, fail, id, json, loadCatalog, now, one, run, sessionSet, str, throttle,
   type Db,
 } from "./server";
 import type { InquiryStatus } from "./customer-status";
 
-type Customer = { id: string; name: string; email: string };
+export { clientPortalEnabled } from "./client-feature";
+export { clientActor, customerToken, type ClientActor, type Customer } from "./client-sessions";
 type Inquiry = {
   id: string; country: string; service: string | null; service_name: string | null; message: string;
   status: InquiryStatus; created_at: string; updated_at: string | null; customer_update: string | null;
 };
 
-const customerCookie = "walshken_customer";
-const sessionSeconds = 43_200;
-const validToken = /^[0-9a-f]{64}$/;
 const clientIp = (request: Request) => request.headers.get("x-vercel-forwarded-for") ?? "local";
 
-export function customerToken(header: string | null) {
-  return cookieValue(header, customerCookie);
-}
-
-export async function customerFor(db: Db, token: string) {
-  if (!validToken.test(token)) return null;
+export async function customerFor(db: Db, token: string): Promise<(Customer & {verifiedAt?:string|null;sessionId?:string})|null> {
+  if (clientPortalEnabled()) {
+    const session=await rawClientSession(db,token);
+    return session?{id:session.id,name:session.name,email:session.email,verifiedAt:session.verifiedAt,sessionId:session.sessionId}:null;
+  }
+  if (!validCustomerToken.test(token)) return null;
   return one<Customer>(db, `SELECT c.id,c.name,c.email FROM customers c JOIN customer_sessions s ON s.customer_id=c.id
     WHERE s.id=? AND s.expires_at>?`, await digest(token), now());
 }
 
-function readPassword(value: unknown) {
-  if (typeof value !== "string" || !value || value.length > 160) return fail(400, "Enter a valid password.");
-  return value;
-}
-
-function newPassword(value: unknown, confirmation: unknown) {
-  const password = readPassword(value);
-  if (password.length < 12) return fail(400, "Use a password of at least 12 characters.");
-  if (password !== confirmation) return fail(400, "The passwords must match.");
-  return password;
-}
-
 async function startSession(db: Db, customerId: string, token: string) {
   await run(db, "DELETE FROM customer_sessions WHERE customer_id=? AND expires_at<=?", customerId, now());
-  const expires = new Date(Date.now() + sessionSeconds * 1000).toISOString();
+  const expires = new Date(Date.now() + customerSessionSeconds * 1000).toISOString();
   await run(db, "INSERT INTO customer_sessions (id,customer_id,expires_at) VALUES (?,?,?)", await digest(token), customerId, expires);
 }
 
 function sessionResponse(request: Request, token: string, status = 200) {
-  return json({ ok: true }, status, { "Set-Cookie": sessionSet(request, token, token ? sessionSeconds : 0, customerCookie) });
+  return json({ ok: true }, status, { "Set-Cookie": sessionSet(request, token, token ? customerSessionSeconds : 0, customerCookie) });
 }
 
 export async function customerSignUp(request: Request, db: Db, data: Record<string, unknown>) {
+  if(clientPortalEnabled())return registerClient(db,request,data);
   const name = str(data.name, "full name", 100);
   const mailbox = email(data.email);
-  const password = newPassword(data.password, data.confirmPassword);
+  const password = makeClientPassword(data.password, data.confirmPassword);
   await throttle(db, `customer-signup-ip:${clientIp(request)}`, 10, 3_600_000);
   await throttle(db, `customer-signup-email:${mailbox}`, 4, 3_600_000);
 
@@ -69,8 +60,9 @@ export async function customerSignUp(request: Request, db: Db, data: Record<stri
 }
 
 export async function customerSignIn(request: Request, db: Db, data: Record<string, unknown>) {
+  if(clientPortalEnabled())return signInClient(db,request,data);
   const mailbox = email(data.email);
-  const password = readPassword(data.password);
+  const password = readClientPassword(data.password);
   await throttle(db, `customer-login-ip:${clientIp(request)}`, 30, 300_000);
   await throttle(db, `customer-login-email:${mailbox}`, 6, 300_000);
   const account = await one<{ id: string; password_hash: string }>(db, "SELECT id,password_hash FROM customers WHERE email=?", mailbox);
@@ -86,7 +78,8 @@ export async function customerSignIn(request: Request, db: Db, data: Record<stri
 }
 
 export async function customerSignOut(request: Request, db: Db, token: string) {
-  if (validToken.test(token)) await run(db, "DELETE FROM customer_sessions WHERE id=?", await digest(token));
+  if(clientPortalEnabled())return signOutClient(db,request,token);
+  if (validCustomerToken.test(token)) await run(db, "DELETE FROM customer_sessions WHERE id=?", await digest(token));
   return sessionResponse(request, "");
 }
 
@@ -117,22 +110,29 @@ export async function submitCustomerInquiry(request: Request, db: Db, actor: Cus
 }
 
 export async function changeCustomerProfile(db: Db, actor: Customer, data: Record<string, unknown>) {
+  if(clientPortalEnabled())return updateCustomerProfile(db,actor,data);
   await run(db, "UPDATE customers SET name=? WHERE id=?", str(data.name, "full name", 100), actor.id);
   return json({ ok: true, message: "Profile saved." });
 }
 
 export async function changeCustomerPassword(request: Request, db: Db, actor: Customer, token: string, data: Record<string, unknown>) {
-  const current = readPassword(data.currentPassword);
-  const password = newPassword(data.newPassword, data.confirmPassword);
+  const current = readClientPassword(data.currentPassword);
+  const password = makeClientPassword(data.newPassword, data.confirmPassword);
   if (current === password) return fail(400, "Choose a different password.");
   await throttle(db, `customer-password:${actor.id}`, 6, 300_000);
   const hash = await passwordHash(password);
   await db.transaction(async (tx) => {
     const account = await one<{ password_hash: string }>(tx, "SELECT password_hash FROM customers WHERE id=? FOR UPDATE", actor.id);
-    if (!account || !(await customerFor(tx, token))) return fail(401, "Sign in to change your password.");
+    const currentSession = await customerFor(tx,token);
+    if (!account || currentSession?.id!==actor.id || clientPortalEnabled()&&!currentSession.verifiedAt) return fail(401, "Sign in to change your password.");
     if (!await passwordMatches(current, account.password_hash)) return fail(401, "Current password is incorrect.");
     await run(tx, "UPDATE customers SET password_hash=? WHERE id=?", hash, actor.id);
-    await run(tx, "DELETE FROM customer_sessions WHERE customer_id=?", actor.id);
+    if(clientPortalEnabled()){
+      await endClientSessions(tx,actor.id);
+      await clientSecurityEvent(tx,actor.id,currentSession.sessionId??null,"Password changed",{
+        title:"Your password was changed",body:"The password was changed and previous account sessions were signed out.",
+      });
+    }else await run(tx, "DELETE FROM customer_sessions WHERE customer_id=?", actor.id);
   });
-  return sessionResponse(request, "");
+  return clientPortalEnabled()?clientSessionResponse(request,"",{ok:true,message:"Password changed. Sign in with your new password."}):sessionResponse(request, "");
 }

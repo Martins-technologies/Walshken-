@@ -37,7 +37,7 @@ export async function scanStaffUpload(db: Db, bytes: Buffer,actor:Actor,name:str
   if(employmentEngineEnabled())return quarantinedUpload(db,actor,bytes,name,()=>scanBytes(db,bytes));
   if(await scanBytes(db,bytes)==='infected')return fail(422,'This file did not pass malware screening.');
 }
-async function scanBytes(db:Db,bytes:Buffer):Promise<'clean'|'infected'> {
+export async function scanBytes(db:Db,bytes:Buffer):Promise<'clean'|'infected'> {
   const row = await one<{configuration:string}>(db,"SELECT configuration FROM integrations WHERE id='malware-scanner' AND enabled=1");
   if (!row) return fail(503,"Upload scanning is unavailable. Ask your administrator to connect the malware scanner.");
   const settings = await decryptSettings("malware-scanner",row.configuration) as ScannerSettings;

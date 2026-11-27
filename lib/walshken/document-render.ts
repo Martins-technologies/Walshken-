@@ -101,7 +101,7 @@ export async function inspectDocument(filename:string,bytes:Buffer):Promise<Insp
  }catch(error){fail(400,error instanceof Error&&/password/i.test(error.message)?"Remove the document password before uploading.":`This file cannot be safely previewed. ${error instanceof Error?error.message.slice(0,160):"Check the file format."}`);}
  return {mime,pages,sha256:createHash("sha256").update(bytes).digest("hex"),filename:name};
 }
-export async function renderDocumentPage(filename:string,bytes:Buffer,pageNumber:number,watermark:string){
+export async function renderDocumentPage(filename:string,bytes:Buffer,pageNumber:number,watermark:string|readonly [string,string]){
  const extension=filename.split(".").pop()?.toLowerCase();let canvas=createCanvas(1200,1600),context=canvas.getContext("2d");
  context.fillStyle="#fff";context.fillRect(0,0,canvas.width,canvas.height);
  if(extension==="pdf"){
@@ -120,7 +120,27 @@ export async function renderDocumentPage(filename:string,bytes:Buffer,pageNumber
   if(pageNumber!==1)return fail(404,"Preview page is unavailable.");const image=await validImage(bytes),scale=Math.min(1400/image.width,1800/image.height,1);
   canvas=createCanvas(Math.max(300,Math.ceil(image.width*scale)),Math.max(150,Math.ceil(image.height*scale)));context=canvas.getContext("2d");context.fillStyle="#fff";context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(image,0,0,image.width*scale,image.height*scale);
  }
- if(watermark){
+ if(typeof watermark!=="string"){
+  const [label,identity]=watermark;
+  const from=canvas,footerHeight=44;
+  canvas=createCanvas(from.width,from.height+footerHeight);
+  context=canvas.getContext("2d");
+  context.fillStyle="#fff";context.fillRect(0,0,canvas.width,canvas.height);
+  context.drawImage(from,0,0);
+  context.save();context.beginPath();context.rect(0,0,from.width,from.height);context.clip();
+  context.globalAlpha=.17;context.fillStyle="#17294c";
+  const textSize=Math.max(12,Math.min(24,Math.round(from.width/36)));
+  context.textAlign="center";
+  for(let y=from.height*.14;y<from.height;y+=Math.min(250,from.height*.27)){
+   context.save();context.translate(from.width/2,y);context.rotate(-Math.PI/14);
+   context.font=`bold ${textSize}px Walshken, sans-serif`;context.fillText(label,0,0,from.width*.87);
+   context.font=`${Math.max(11,textSize-3)}px Walshken, sans-serif`;context.fillText(identity,0,textSize+5,from.width*.86);
+   context.restore();
+  }
+  context.restore();
+  context.fillStyle="#32445f";context.font="bold 11px Walshken, sans-serif";context.fillText(label,10,from.height+17,from.width-20);
+  context.font="11px Walshken, sans-serif";context.fillText(identity,10,from.height+33,from.width-20);
+ }else if(watermark){
   context.save();context.globalAlpha=0.15;context.fillStyle="#17294c";context.font=`bold ${Math.max(14,Math.min(23,canvas.width/36))}px Walshken, sans-serif`;
   for(let y=80;y<canvas.height;y+=230){context.save();context.translate(12,y);context.rotate(-Math.PI/12);context.fillText(watermark,0,0);context.restore();}context.restore();
   context.fillStyle="#fff";context.fillRect(0,canvas.height-35,canvas.width,35);context.fillStyle="#32445f";context.font=`${Math.max(10,Math.min(13,canvas.width/70))}px Walshken, sans-serif`;context.fillText(watermark,10,canvas.height-12);

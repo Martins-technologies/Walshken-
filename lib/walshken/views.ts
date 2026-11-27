@@ -26,11 +26,13 @@ import { meetingViews, meetings } from "./meetings";
 import { meetingInvitesEnabled } from "./meeting-invitations";
 import { adminNav, staffNav } from "./catalog";
 import { messageViews, teamOptions } from "./collaboration";
+import { clientPortalEnabled } from "./client-feature";
 import { all, canManage, canPayroll, canSuper, fail, json, loadCatalog, needsStaffMfa, now, one, requireStaff, requireSuper, scope, staffMfaRequired, type Actor, type Db, type Row } from "./server";
 import { localDate, timeRows } from "./work";
 
 const known = new Set<string>([...staffNav.flatMap((group)=>group.items.map((item)=>item[0])),...adminNav.map((item)=>item[0])]);
 export function canOpen(actor:Actor,section:string){
+  if(section==="client-casework")return clientPortalEnabled()&&actor.role!=="guest";
   if(section==="privacy")return enterpriseEnabled()&&actor.role!=="guest";
   if(section==="governance") return staffReadinessEnabled() && canSuper(actor);
   if(section==="reports"&&performanceEnabled()&&actor.role!=="guest"&&hasAction(actor,"performance.read"))return true;
@@ -72,6 +74,7 @@ async function notifications(db:Db,actor:Actor){
 
 export async function view(db:Db,actor:Actor,section:string,params:URLSearchParams){
   if(!canOpen(actor,section)) return fail(403,"You do not have access to this section.");
+  if(section==="client-casework")return json({});
   if(section==="privacy")return privacyData(db,actor);
   if(section==="governance") return governanceData(db,actor);
   if(holidaysEnabled()&&["holidays","holiday-calendar"].includes(section))return holidayData(db,actor,params);
@@ -214,7 +217,7 @@ export async function view(db:Db,actor:Actor,section:string,params:URLSearchPara
       inquiries:section==="website"?await all(db,"SELECT id,kind,name,email,country,service,message,created_at,status,customer_update,CASE WHEN customer_id IS NOT NULL THEN 1 ELSE 0 END AS customer_request FROM inquiries ORDER BY created_at DESC LIMIT 120"):[],
     });
   }
-  if(section==="integrations") return json({readiness:staffReadinessEnabled(),meetingInviteEmail:meetingInvitesEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await integrationStatuses(db,actor.org_id),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
+  if(section==="integrations") return json({clientBilling:clientPortalEnabled(),readiness:staffReadinessEnabled(),meetingInviteEmail:meetingInvitesEnabled(),calculatorId:calculatorIntegrationId(),documentStorageEnabled:documentsEnabled(),documentBucket:documentsEnabled()?process.env.WALSHKEN_DOCUMENT_BUCKET:undefined,rows:await integrationStatuses(db,actor.org_id),secureStorage:Boolean(process.env.WALSHKEN_INTEGRATION_KEY||process.env.WALSHKEN_INTEGRATION_KEY_V2),encryptionMigrationReady:Boolean(process.env.WALSHKEN_ALLOW_LEGACY_MIGRATION==="1"&&process.env.WALSHKEN_INTEGRATION_KEY&&process.env.WALSHKEN_INTEGRATION_KEY_V2)});
   if(section==="reports"){
     const scoped=scope(actor);
     const today=localDate(now(),actor.time_zone);
